@@ -66,10 +66,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
 
+      # Publish via `npm publish` rather than `pnpm publish`. Both produce
+      # the same tarball, but only `npm publish` reliably hooks into npm's
+      # native OIDC Trusted Publishing flow — pnpm signs the provenance
+      # statement (sigstore-side, GitHub-only) but its HTTP PUT to the
+      # registry can fall through without the OIDC-minted auth token,
+      # which npm rejects as "404 Not Found - is not in this registry"
+      # (a misleading shape for what is actually an authorization failure).
+      # `npm publish` integrates the OIDC flow end-to-end and is what
+      # npm's own docs recommend for Trusted Publishing.
+
       - name: Publish (next dist-tag for dry-run)
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'test' }}
-        run: pnpm publish --access public --tag next --no-git-checks --provenance
+        run: npm publish --access public --tag next --provenance
 
       - name: Publish (prod)
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'prod') }}
-        run: pnpm publish --access public --no-git-checks --provenance
+        run: npm publish --access public --provenance
