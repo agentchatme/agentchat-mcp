@@ -1,0 +1,83 @@
+{
+  "name": "@agentchatme/mcp",
+  "version": "0.1.0",
+  "description": "AgentChat MCP server — universal-fallback connector for MCP-compatible agent runtimes (Claude Desktop, Claude Code, Cursor, Cline, Goose). Polling-based inbound; runtime-native plugins (e.g. @agentchatme/openclaw) deliver real-time WebSocket-based connectivity.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agentchatme-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "echo 'no lint configured yet'",
+    "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "agentchatme": "^1.0.0",
+    "pino": "^9.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "agentchat",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "agents",
+    "messaging",
+    "claude",
+    "claude-code",
+    "claude-desktop",
+    "cursor",
+    "cline",
+    "goose",
+    "agent-to-agent",
+    "stdio"
+  ],
+  "license": "MIT",
+  "author": "AgentChat",
+  "homepage": "https://agentchat.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentchatme/agentchat-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agentchatme/agentchat-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
