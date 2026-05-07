@@ -11,15 +11,15 @@ import { PACKAGE_VERSION } from './version.js'
 //   1. Validate env (AGENTCHAT_API_KEY required). Fail fast with a
 //      human-readable error to stderr if missing.
 //   2. Construct logger to stderr. stdout is reserved for JSON-RPC.
-//   3. Authenticate against AgentChat by calling getMe(). Confirms the
-//      key is valid before we bind the stdio transport — this turns a
-//      misconfigured key into a clear startup failure rather than a
-//      confusing tool-call failure later.
+//   3. Authenticate with AgentChat (with bounded retry on transient
+//      ConnectionError so a network blip during MCP-host startup doesn't
+//      kill the server permanently). Fail fast on UnauthorizedError —
+//      that's configuration, not transient.
 //   4. Build the MCP server, register tools, connect stdio.
-//   5. Wire SIGTERM/SIGINT handlers for graceful shutdown.
-//
-// Any failure in steps 1–3 exits with code 1 after writing a structured
-// error message to stderr. The MCP host surfaces the stderr to the user.
+//   5. Wire SIGTERM/SIGINT handlers for graceful shutdown — drain
+//      in-flight tool calls (deadline 10s) before closing the transport.
+
+const SHUTDOWN_DRAIN_MS = 10_000
 
 async function main(): Promise<void> {
   let env: ReturnType<typeof loadEnv>
@@ -52,11 +52,11 @@ async function main(): Promise<void> {
       )
       process.exit(1)
     }
-    logger.fatal({ err }, 'failed to authenticate with AgentChat at startup')
+    logger.fatal({ err }, 'failed to authenticate with AgentChat after retries')
     process.exit(1)
   }
 
-  const built = buildServer(booted, logger)
+  const built = buildServer(booted, env, logger)
 
   // Wire shutdown BEFORE serve so signals received during the connect()
   // race land cleanly.
@@ -64,15 +64,30 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return
     shuttingDown = true
-    logger.info({ signal }, 'shutting down')
+    logger.info({ signal }, 'shutdown initiated')
+
+    // 1. Drain in-flight tool calls. New calls arriving past this point
+    //    will land on a server that is closing — they fail at the MCP
+    //    transport layer, which the host can interpret. We do not start
+    //    closing the transport until in-flight has drained (or hit the
+    //    deadline) so we don't yank a tool out of its work.
+    try {
+      await built.drain(SHUTDOWN_DRAIN_MS)
+    } catch (err) {
+      logger.warn({ err }, 'drain errored; proceeding to close')
+    }
+
+    // 2. Close the MCP server transport.
     try {
       await built.close()
-    } finally {
-      // Force-exit after a small drain budget. stdio MCP servers are
-      // subprocess of the host; the host has already gone away by this
-      // point, so we don't need to wait long.
-      setTimeout(() => process.exit(0), 1_000).unref()
+    } catch (err) {
+      logger.warn({ err }, 'close errored')
     }
+
+    // 3. Force-exit shortly after. Anything still on the event loop at
+    //    this point is a leaked timer/handle that would block exit
+    //    indefinitely.
+    setTimeout(() => process.exit(0), 1_000).unref()
   }
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('SIGINT', () => void shutdown('SIGINT'))
@@ -94,4 +109,14 @@ async function main(): Promise<void> {
   // alive. The shutdown path above takes over on signal or stdin close.
 }
 
-void main()
+void main().catch((err: unknown) => {
+  // Catch-all for anything that escapes main()'s own try/catches. We
+  // don't have a logger constructed in every failure path so write to
+  // stderr unconditionally before exiting non-zero.
+  process.stderr.write(
+    `\nFatal: agentchat-mcp main loop rejected with ${
+      err instanceof Error ? err.message : String(err)
+    }\n\n`,
+  )
+  process.exit(1)
+})

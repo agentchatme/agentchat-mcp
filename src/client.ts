@@ -1,57 +1,88 @@
-import { AgentChatClient } from 'agentchatme'
+import { AgentChatClient, ConnectionError, UnauthorizedError } from 'agentchatme'
 import type { Logger } from 'pino'
 import type { Env } from './env.js'
-import { PACKAGE_VERSION } from './version.js'
 
-// ─── AgentChat SDK client wrapper ──────────────────────────────────────────
+// ─── AgentChat SDK client wrapper + bootstrap ──────────────────────────────
 //
 // The published `agentchatme` SDK already gives us:
-//   - retry on transient HTTP failures with exponential backoff
+//   - retry on transient HTTP failures with exponential backoff (per-request)
 //   - Retry-After honoring on 429s
 //   - typed error classes for every documented error code
 //   - idempotent send via auto-generated client_msg_id
-//   - circuit breaker on sustained server outage
 //
-// We just construct the client with our env config, attach a startup
-// auth-validation call, and expose it. Tool handlers consume this directly.
+// What this module adds:
+//   - boot-time auth validation against `GET /v1/agents/me`
+//   - bounded retry on the boot call so a transient network blip during
+//     MCP-host startup (e.g. a laptop coming out of sleep) doesn't kill
+//     the server permanently
+//   - a clear typed boundary for what an authenticated client looks like
 
 export interface BootedClient {
   client: AgentChatClient
   selfHandle: string
 }
 
+export interface BootRetryOptions {
+  /** Maximum total attempts including the first one. Default 3. */
+  maxAttempts?: number
+  /** Backoff schedule in ms before each retry. Default [2000, 5000]. */
+  backoffMs?: number[]
+}
+
 /**
  * Construct the SDK client and verify the API key works by calling
- * `GET /v1/agents/me`. Failing fast at startup (before stdio is hooked
- * up) means a misconfigured AGENTCHAT_API_KEY produces a clear error
- * the user sees in their MCP host's logs, rather than a confusing
- * runtime failure on the first tool call.
+ * `GET /v1/agents/me`. Retries on transient `ConnectionError` (DNS, socket
+ * reset, TLS timeout) — which is the kind of failure that happens when an
+ * MCP host boots in the same second the user's network restarts. Does NOT
+ * retry on `UnauthorizedError`: a bad key is configuration, not transient.
+ *
+ * Throws the last error after exhausting the schedule.
  */
-export async function bootClient(env: Env, logger: Logger): Promise<BootedClient> {
+export async function bootClient(
+  env: Env,
+  logger: Logger,
+  options: BootRetryOptions = {},
+): Promise<BootedClient> {
+  const maxAttempts = options.maxAttempts ?? 3
+  const backoffMs = options.backoffMs ?? [2_000, 5_000]
+
   const client = new AgentChatClient({
     apiKey: env.AGENTCHAT_API_KEY,
     baseUrl: env.AGENTCHAT_API_BASE,
   })
 
-  // The User-Agent is set by the SDK from its own version string; we don't
-  // override it because the published SDK already identifies itself
-  // distinctly. Future enhancement: extend the SDK to accept a UA suffix
-  // so server-side analytics can break out MCP traffic from raw SDK use.
-  void PACKAGE_VERSION
-
   logger.info({ apiBase: env.AGENTCHAT_API_BASE }, 'authenticating with AgentChat')
 
-  const me = await client.getMe().catch((err: unknown) => {
-    // Don't wrap with mapAgentChatError here — at boot time we want the
-    // raw error class on the throw so the entry point can decide how to
-    // present it (single startup line, vs MCP error frames).
-    throw err
-  })
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      const delay = backoffMs[attempt - 2] ?? backoffMs[backoffMs.length - 1] ?? 5_000
+      logger.warn(
+        { attempt, delay, of: maxAttempts },
+        'boot auth retry — transient connection error',
+      )
+      await sleep(delay)
+    }
+    try {
+      const me = await client.getMe()
+      logger.info(
+        { handle: me.handle, status: me.status, attempts: attempt },
+        'authenticated; ready to serve tool calls',
+      )
+      return { client, selfHandle: me.handle }
+    } catch (err) {
+      // Auth failures are configuration errors, not transient — fail fast.
+      if (err instanceof UnauthorizedError) throw err
+      // Other non-network errors (rate-limit at boot, server 5xx) — fail
+      // fast as well; retrying through them either changes nothing or
+      // makes things worse.
+      if (!(err instanceof ConnectionError)) throw err
+      lastErr = err
+    }
+  }
+  throw lastErr
+}
 
-  logger.info(
-    { handle: me.handle, status: me.status },
-    'authenticated; ready to serve tool calls',
-  )
-
-  return { client, selfHandle: me.handle }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

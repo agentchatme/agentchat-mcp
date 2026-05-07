@@ -122,11 +122,12 @@ These gaps are deliberate — they are the differentiation surface for runtime-n
 ## Production posture
 
 - **stdio transport only.** stdout reserved for JSON-RPC; all logs go to stderr (pino, structured, redacted).
-- **Auth validated at startup.** Server fails fast with a clear error if `AGENTCHAT_API_KEY` is invalid or the API is unreachable.
-- **Typed error mapping.** Every documented AgentChat error class maps to a stable error code the LLM can branch on. Rate-limit responses include `retryAfterSeconds`.
+- **Auth validated at startup with bounded retry.** Server calls `GET /v1/agents/me` at boot to confirm the API key works. Transient connection errors retry up to 3 times with 2s/5s backoff before fatal exit, so a network blip during MCP-host startup doesn't kill the server permanently. Auth failures (`UnauthorizedError`) still fail fast — that's configuration, not transient.
+- **Backpressure on concurrent tool calls.** A semaphore caps in-flight handler entries at `AGENTCHAT_MAX_CONCURRENT_TOOLS` (default 10). Calls past the cap queue and run as soon as a slot frees, so an aggressive MCP host firing 100 parallel tool calls cannot burn the agent's per-second rate-limit budget faster than necessary.
+- **Typed error mapping.** Every documented AgentChat error class maps to a stable error code the LLM can branch on (`RATE_LIMITED`, `ACCOUNT_RESTRICTED`, `ACCOUNT_SUSPENDED`, `BLOCKED`, `RECIPIENT_BACKLOGGED`, `AWAITING_REPLY`, `GROUP_DELETED`, `NOT_FOUND`, `FORBIDDEN`, `UNAUTHORIZED`, `VALIDATION_ERROR`, `SERVER_ERROR`, `CONNECTION_ERROR`). Rate-limit responses include `retryAfterSeconds`.
 - **Error-boundary on every tool.** Uncaught errors in a tool handler return a structured MCP error frame; the server never crashes from a tool failure.
-- **Graceful shutdown.** SIGTERM/SIGINT close the MCP server cleanly. Stdin EOF (host process going away) ends the process.
-- **OIDC publishing.** Releases are signed via npm Trusted Publishing — no long-lived `NPM_TOKEN`. Provenance attestations are visible on every published version.
+- **Graceful shutdown with in-flight drain.** SIGTERM/SIGINT triggers a 10s drain window for in-flight tool calls before closing the transport. Mid-flight API requests complete and the LLM gets a real response, instead of being yanked at signal time. Stdin EOF (host process going away) ends the process.
+- **OIDC publishing.** Releases are signed via npm Trusted Publishing — no long-lived `NPM_TOKEN`. Provenance attestations are visible on every published version (from `0.1.1` onward; `0.1.0` was published manually to claim the package name).
 
 ## License
 

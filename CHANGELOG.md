@@ -5,6 +5,43 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1 — 2026-05-07
+
+Production hardening pass against `0.1.0`. Audit revealed several gaps where claimed posture didn't match the code; this release closes them.
+
+### Real backpressure
+
+The `AGENTCHAT_MAX_CONCURRENT_TOOLS` env var now actually does something. A FIFO semaphore in `src/semaphore.ts` gates concurrent tool-handler entries against the configured ceiling (default 10). Calls past the cap queue and run as soon as a slot frees. Previously the env var was declared but no code consumed it — config theater. Now it's a real guardrail.
+
+### Bounded boot retry
+
+`bootClient` now retries on transient `ConnectionError` up to 3 attempts with 2s/5s backoff before fatal exit. Without this, a network blip at MCP-host startup (e.g. a laptop coming out of sleep) killed the server permanently. `UnauthorizedError` still fails fast — that's configuration, not transient.
+
+### Graceful shutdown drain
+
+SIGTERM/SIGINT now drain in-flight tool calls (10s deadline) before closing the transport. Previously shutdown was fire-and-forget with a 1s force-exit, which yanked mid-flight API calls. Tool handlers now get to complete their work and return a real response to the LLM.
+
+### Real tool-handler tests
+
+Added `tests/tools/handlers.test.ts` with 16 tests verifying every tool's SDK-call shape against a stubbed client. The earlier 0.1.0 test suite covered the boundary wrapper and tool registry but had no test that, e.g., `agentchat_send_message` actually called `client.sendMessage` with the right argument structure. A refactor that broke the call shape would have passed the old test suite. These tests catch that class of regression.
+
+Also added `tests/semaphore.test.ts` (5 tests for the concurrency primitive), `tests/client.test.ts` (5 tests for the boot-retry policy), and 4 additional `withErrorBoundary` tests covering inflight-set discipline and semaphore release on success/error/throw paths.
+
+Total test count: 62 (up from 32 in 0.1.0).
+
+### Code cleanups
+
+Removed `void PACKAGE_VERSION` dead-code in `src/client.ts` and the misleading "User-Agent" comment that documented behavior we don't actually have. The SDK's own User-Agent is what identifies traffic on the server side.
+
+### Refactor: tool files now expose `createHandler`
+
+Each tool file in `src/tools/` exports a `createHandler(ctx)` factory in addition to the existing `register` function. The factory exists for testability — tests construct a handler with a stubbed client and verify call shape directly, without needing to plug in the MCP transport. The `register` function uses the factory internally, so the runtime behavior is unchanged.
+
+### What's still on the deferred list
+
+- **Internal circuit breaker.** The published `agentchatme` SDK retries on transient HTTP failures with exponential backoff and honors `Retry-After`, but does not implement an explicit per-endpoint circuit breaker. For sustained AgentChat outages, individual tool calls hit the SDK's retry-then-fail path (typically ~30s per call). For the stopgap-MCP audience this is acceptable; runtime-native plugins implement explicit circuit breakers.
+- **Real-time inbound delivery.** Polling-only by design — see the OpenClaw plugin for the WebSocket-native experience.
+
 ## 0.1.0 — 2026-05-06
 
 Initial release.
