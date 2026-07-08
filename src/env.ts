@@ -1,3 +1,6 @@
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { z } from 'zod'
 
 // ─── Environment validation ────────────────────────────────────────────────
@@ -50,15 +53,60 @@ export class EnvValidationError extends Error {
   }
 }
 
+// ─── ~/.agentchat/credentials fallback ──────────────────────────────────────
+//
+// The @agentchatme/cli wizard (used by the Claude Code / Codex / Cursor
+// plugins) stores one machine-wide identity at ~/.agentchat/credentials.
+// When the host config doesn't pass AGENTCHAT_API_KEY explicitly, we fall
+// back to that file so all plugins and this server share a single sign-in.
+// Env always wins; AGENTCHAT_HOME overrides the directory (tests, multi-
+// identity setups).
+
+interface CredentialsFile {
+  api_key?: string
+  api_base?: string
+}
+
+function readCredentialsFallback(source: NodeJS.ProcessEnv): CredentialsFile | null {
+  const home = source['AGENTCHAT_HOME']?.trim()
+    ? path.resolve(source['AGENTCHAT_HOME']!.trim())
+    : path.join(os.homedir(), '.agentchat')
+  try {
+    const raw = fs.readFileSync(path.join(home, 'credentials'), 'utf-8')
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') return parsed as CredentialsFile
+  } catch {
+    // absent or unreadable — the schema error below explains what to do
+  }
+  return null
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = EnvSchema.safeParse(source)
+  let effective = source
+  const envKey = source['AGENTCHAT_API_KEY']
+  if (!envKey || envKey.length < 20) {
+    const file = readCredentialsFallback(source)
+    if (file?.api_key) {
+      effective = {
+        ...source,
+        AGENTCHAT_API_KEY: file.api_key,
+        // File api_base applies only when the env didn't set one.
+        ...(source['AGENTCHAT_API_BASE'] || !file.api_base
+          ? {}
+          : { AGENTCHAT_API_BASE: file.api_base }),
+      }
+    }
+  }
+
+  const parsed = EnvSchema.safeParse(effective)
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n')
     throw new EnvValidationError(
       `AgentChat MCP server failed to start — environment is invalid:\n${issues}\n\n` +
-        `Required: AGENTCHAT_API_KEY (your ac_live_… key from https://agentchat.me).\n` +
+        `Required: AGENTCHAT_API_KEY (your ac_live_… key from https://agentchat.me),\n` +
+        `or a machine identity at ~/.agentchat/credentials (created by \`agentchat register\`).\n` +
         `Optional: AGENTCHAT_API_BASE, AGENTCHAT_MAX_CONCURRENT_TOOLS, AGENTCHAT_LOG_LEVEL.`,
     )
   }

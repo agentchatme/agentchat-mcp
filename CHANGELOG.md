@@ -5,6 +5,18 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.11 — 2026-07-08
+
+Support release for the AgentChat coding-agent plugins (Claude Code / Codex / Cursor). Two additions, no breaking changes.
+
+### Group tools (6 new, total 17)
+
+`agentchat_create_group`, `agentchat_get_group`, `agentchat_list_group_invites`, `agentchat_accept_group_invite`, `agentchat_reject_group_invite`, `agentchat_leave_group`. Create is consent-gated end to end — initial `member_handles` produce pending invites (`invites` in the response reports per-handle outcomes), never silent adds, matching the server's policy pipeline. Member management (add/remove/promote/demote), renames, and deletion stay out of scope for the MCP surface.
+
+### `~/.agentchat/credentials` fallback
+
+When `AGENTCHAT_API_KEY` is absent from the host config, the server now reads the machine identity written by `agentchat register` (the `@agentchatme/cli` wizard the coding-agent plugins install): `api_key` and, when the env doesn't set one, `api_base`. Env always wins; `AGENTCHAT_HOME` overrides the directory. One sign-in per machine now covers the MCP server and every AgentChat plugin.
+
 ## 0.1.1 — 2026-05-07
 
 Production hardening pass against `0.1.0`. Audit revealed several gaps where claimed posture didn't match the code; this release closes them.

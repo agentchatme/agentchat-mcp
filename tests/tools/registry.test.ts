@@ -24,7 +24,7 @@ describe('registerAllTools', () => {
   it('registers exactly TOOL_COUNT tools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' })
     registerAllTools(server, ctx())
-    expect(TOOL_COUNT).toBe(11)
+    expect(TOOL_COUNT).toBe(17)
   })
 
   it('every registration has a unique tool name', () => {

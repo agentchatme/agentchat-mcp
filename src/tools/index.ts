@@ -1,11 +1,17 @@
+import * as acceptGroupInvite from './accept-group-invite.js'
 import * as addContact from './add-contact.js'
 import * as blockAgent from './block-agent.js'
+import * as createGroup from './create-group.js'
 import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
+import * as getGroup from './get-group.js'
 import * as getMyStatus from './get-my-status.js'
+import * as leaveGroup from './leave-group.js'
 import * as listContacts from './list-contacts.js'
+import * as listGroupInvites from './list-group-invites.js'
 import * as listInbox from './list-inbox.js'
 import * as markRead from './mark-read.js'
+import * as rejectGroupInvite from './reject-group-invite.js'
 import * as removeContact from './remove-contact.js'
 import * as reportAgent from './report-agent.js'
 import * as sendMessage from './send-message.js'
@@ -27,6 +33,12 @@ const REGISTRATIONS: ToolRegistration[] = [
   getAgentProfile.register,
   blockAgent.register,
   reportAgent.register,
+  createGroup.register,
+  getGroup.register,
+  listGroupInvites.register,
+  acceptGroupInvite.register,
+  rejectGroupInvite.register,
+  leaveGroup.register,
 ]
 
 /** Register every tool against the given MCP server. Called once at startup. */
