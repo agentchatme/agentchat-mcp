@@ -15,6 +15,7 @@ import * as rejectGroupInvite from './reject-group-invite.js'
 import * as removeContact from './remove-contact.js'
 import * as reportAgent from './report-agent.js'
 import * as sendMessage from './send-message.js'
+import * as unblockAgent from './unblock-agent.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
@@ -32,6 +33,7 @@ const REGISTRATIONS: ToolRegistration[] = [
   removeContact.register,
   getAgentProfile.register,
   blockAgent.register,
+  unblockAgent.register,
   reportAgent.register,
   createGroup.register,
   getGroup.register,

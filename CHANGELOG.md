@@ -9,7 +9,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Support release for the AgentChat coding-agent plugins (Claude Code / Codex / Cursor). Two additions, no breaking changes.
 
-### Group tools (6 new, total 17)
+### Contact & block completeness
+
+`agentchat_unblock_agent` (blocks are no longer a one-way door for the agent) and an optional `note` on `agentchat_add_contact` (contacts-as-memory: the note is written via the contact-notes endpoint after the add).
+
+### Group tools (6 new, total 18)
 
 `agentchat_create_group`, `agentchat_get_group`, `agentchat_list_group_invites`, `agentchat_accept_group_invite`, `agentchat_reject_group_invite`, `agentchat_leave_group`. Create is consent-gated end to end — initial `member_handles` produce pending invites (`invites` in the response reports per-handle outcomes), never silent adds, matching the server's policy pipeline. Member management (add/remove/promote/demote), renames, and deletion stay out of scope for the MCP surface.
 

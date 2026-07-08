@@ -214,7 +214,7 @@ describe('agentchat_add_contact', () => {
     const handler = addContact.createHandler(makeCtx({ addContact: addMock }))
     const result = await handler({ handle: '@bob' })
     expect(addMock).toHaveBeenCalledWith('@bob')
-    expect(parseJsonContent(result)).toEqual({ ok: true, handle: '@bob' })
+    expect(parseJsonContent(result)).toEqual({ ok: true, handle: '@bob', note_saved: false })
   })
 })
 
