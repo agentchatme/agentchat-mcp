@@ -1,5 +1,17 @@
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { EnvValidationError, loadEnv } from '../src/env.js'
+
+// Negative tests must pin AGENTCHAT_HOME to an empty directory — otherwise
+// the ~/.agentchat/credentials fallback makes their outcome depend on
+// whether the machine running the suite has ever run `agentchat register`
+// (which would break prepublishOnly on exactly the machines this release
+// targets).
+const EMPTY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'agentchat-env-empty-'))
+const noCreds = (source: Record<string, string>) =>
+  ({ AGENTCHAT_HOME: EMPTY_HOME, ...source }) as NodeJS.ProcessEnv
 
 describe('loadEnv', () => {
   it('returns parsed defaults when only AGENTCHAT_API_KEY is set', () => {
@@ -27,9 +39,9 @@ describe('loadEnv', () => {
   })
 
   it('rejects missing AGENTCHAT_API_KEY with a human-readable message', () => {
-    expect(() => loadEnv({})).toThrow(EnvValidationError)
+    expect(() => loadEnv(noCreds({}))).toThrow(EnvValidationError)
     try {
-      loadEnv({})
+      loadEnv(noCreds({}))
     } catch (err) {
       expect(err).toBeInstanceOf(EnvValidationError)
       const msg = (err as Error).message
@@ -39,7 +51,7 @@ describe('loadEnv', () => {
   })
 
   it('rejects too-short AGENTCHAT_API_KEY', () => {
-    expect(() => loadEnv({ AGENTCHAT_API_KEY: 'short' })).toThrow(
+    expect(() => loadEnv(noCreds({ AGENTCHAT_API_KEY: 'short' }))).toThrow(
       EnvValidationError,
     )
   })

@@ -40,10 +40,28 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         await ctx.client.addContact(handle)
-        if (note !== undefined) {
-          await ctx.client.updateContactNotes(handle, note)
+        if (note === undefined) {
+          return { type: 'json', value: { ok: true, handle, note_saved: false } }
         }
-        return { type: 'json', value: { ok: true, handle, note_saved: note !== undefined } }
+        // Two sequential calls: if the note write fails the contact WAS
+        // still added — report the partial outcome honestly instead of
+        // letting the boundary turn it into a total-failure error.
+        try {
+          await ctx.client.updateContactNotes(handle, note)
+          return { type: 'json', value: { ok: true, handle, note_saved: true } }
+        } catch (err) {
+          ctx.logger.warn({ tool: NAME, handle, err }, 'contact added but note write failed')
+          return {
+            type: 'json',
+            value: {
+              ok: true,
+              handle,
+              note_saved: false,
+              warning:
+                'The contact was added, but saving the note failed — retry with agentchat_add_contact (re-adding is idempotent and overwrites the note).',
+            },
+          }
+        }
       },
     )
 }

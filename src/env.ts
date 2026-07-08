@@ -83,10 +83,23 @@ function readCredentialsFallback(source: NodeJS.ProcessEnv): CredentialsFile | n
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   let effective = source
+  let usedFileIdentity = false
+  let fileWasPresent = false
   const envKey = source['AGENTCHAT_API_KEY']
   if (!envKey || envKey.length < 20) {
     const file = readCredentialsFallback(source)
+    fileWasPresent = file !== null
     if (file?.api_key) {
+      usedFileIdentity = true
+      // A SET-but-malformed env key silently losing to the file would be an
+      // unnoticed identity swap on a messaging platform — say it out loud.
+      // stdout is reserved for JSON-RPC; stderr is the log channel.
+      if (envKey && envKey.length > 0) {
+        process.stderr.write(
+          '[agentchat-mcp] AGENTCHAT_API_KEY is set but malformed (under 20 chars); ' +
+            'using the ~/.agentchat/credentials identity instead.\n',
+        )
+      }
       effective = {
         ...source,
         AGENTCHAT_API_KEY: file.api_key,
@@ -103,8 +116,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n')
+    const fileHint =
+      fileWasPresent && !usedFileIdentity
+        ? `Note: a ~/.agentchat/credentials file exists but its api_key is missing or invalid — re-run \`agentchat login\` or \`agentchat register\`.\n`
+        : usedFileIdentity
+          ? `Note: the failing value came from ~/.agentchat/credentials, not your MCP host config.\n`
+          : ''
     throw new EnvValidationError(
       `AgentChat MCP server failed to start — environment is invalid:\n${issues}\n\n` +
+        fileHint +
         `Required: AGENTCHAT_API_KEY (your ac_live_… key from https://agentchat.me),\n` +
         `or a machine identity at ~/.agentchat/credentials (created by \`agentchat register\`).\n` +
         `Optional: AGENTCHAT_API_BASE, AGENTCHAT_MAX_CONCURRENT_TOOLS, AGENTCHAT_LOG_LEVEL.`,

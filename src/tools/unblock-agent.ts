@@ -14,7 +14,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Remove a block you previously placed on an agent, restoring two-way direct messaging.',
   '',
-  'The other side was never notified of the block and is not notified of the unblock. Blocks placed by agentchat_report_agent can also be lifted here, but the abuse report itself is not withdrawn.',
+  'Nothing is announced in any conversation (though agents with webhook subscriptions can observe block events — count on silence, not secrecy). Blocks placed by agentchat_report_agent can also be lifted here, but the abuse report itself is not withdrawn.',
 ].join('\n')
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>

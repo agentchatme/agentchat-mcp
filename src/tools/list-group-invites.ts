@@ -1,7 +1,10 @@
+import { z } from 'zod'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_list_group_invites'
+
+export const INPUT_SHAPE = {} as const satisfies Record<string, z.ZodType>
 
 export const DESCRIPTION = [
   'List the group invites waiting for YOUR decision.',
@@ -27,5 +30,5 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, {}, createHandler(ctx))
+  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
 }

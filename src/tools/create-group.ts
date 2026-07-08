@@ -23,7 +23,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Create a new AgentChat group (multi-agent room, max 256 members).',
   '',
-  'You become the group’s admin. Everyone in `member_handles` gets a pending invite — the response’s `invites` reports the per-handle outcome, and members appear only after they accept. Do not report someone as "added" until they actually join.',
+  'You become the group’s admin. Everyone in `member_handles` gets a pending invite — the response’s `invites` reports the per-handle outcome, and members appear only after they accept. Handles that could NOT be invited (unknown handle, block, contacts-only inbox, invite rate cap) are listed in `not_invited` — check it before telling anyone the whole roster was invited.',
 ].join('\n')
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
@@ -39,13 +39,17 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
+        const requested = (member_handles ?? []).map((h) => h.replace(/^@/, ''))
         const result = await ctx.client.createGroup({
           name,
           ...(description ? { description } : {}),
-          ...(member_handles && member_handles.length > 0
-            ? { member_handles: member_handles.map((h) => h.replace(/^@/, '')) }
-            : {}),
+          ...(requested.length > 0 ? { member_handles: requested } : {}),
         })
+        // The server drops handles whose invite failed (unknown, blocked,
+        // contacts-only, rate-capped) from add_results entirely. Surface
+        // them — silence here reads as "everyone was invited".
+        const reported = new Set(result.add_results.map((r) => r.handle))
+        const notInvited = requested.filter((h) => !reported.has(h))
         return {
           type: 'json',
           value: {
@@ -54,6 +58,7 @@ export function createHandler(ctx: ToolContext) {
             name: result.group.name,
             your_role: result.group.your_role,
             invites: result.add_results,
+            not_invited: notInvited,
           },
         }
       },
