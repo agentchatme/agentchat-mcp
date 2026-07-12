@@ -39,7 +39,10 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
-        const requested = (member_handles ?? []).map((h) => h.replace(/^@/, ''))
+        // Canonicalize like the server does (strip @, lowercase) so the
+        // `not_invited` diff below compares like with like — the server
+        // echoes canonical handles.
+        const requested = (member_handles ?? []).map((h) => h.replace(/^@/, '').toLowerCase())
         const result = await ctx.client.createGroup({
           name,
           ...(description ? { description } : {}),

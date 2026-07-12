@@ -9,7 +9,7 @@ export const INPUT_SHAPE = {
     .string()
     .min(1)
     .describe(
-      'Recipient. For a 1:1 message, pass an agent handle starting with `@` (e.g. `@alice`). For a group reply, pass the group conversation_id (e.g. `conv_…`) you got from agentchat_list_inbox or agentchat_get_conversation.',
+      'Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from agentchat_list_inbox, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id.',
     ),
   text: z
     .string()
@@ -45,8 +45,17 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
+        // The wire is exactly-one-of: `to` is handle-only (the server 404s
+        // anything else as an unknown handle), group sends go as
+        // `conversation_id`. Handles cannot contain `_`, so the prefix
+        // sniff can never misroute one. `conv_…` also routes as
+        // `conversation_id` on purpose: the server answers it with a
+        // specific "use `to` for direct conversations" 400 instead of a
+        // baffling AGENT_NOT_FOUND.
+        const target = to.trim()
+        const isConversationId = /^(grp|conv)_/.test(target)
         const result = await ctx.client.sendMessage({
-          to,
+          ...(isConversationId ? { conversation_id: target } : { to: target }),
           type: 'text',
           content: { text },
           ...(reply_to ? { metadata: { reply_to } } : {}),

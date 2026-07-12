@@ -73,6 +73,50 @@ describe('agentchat_send_message', () => {
     })
   })
 
+  it('routes grp_… targets as conversation_id — `to` is handle-only on the wire', async () => {
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: {
+        id: 'msg_2',
+        conversation_id: 'grp_team',
+        seq: 7,
+        created_at: '2026-07-13T00:00:00Z',
+      },
+    })
+    const handler = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+    const result = await handler({ to: 'grp_team', text: 'hello group' })
+
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      conversation_id: 'grp_team',
+      type: 'text',
+      content: { text: 'hello group' },
+    })
+    expect(sendMessageMock.mock.calls[0]![0]).not.toHaveProperty('to')
+    expect(result.isError).toBeFalsy()
+  })
+
+  it('routes conv_… targets as conversation_id too, so the server can answer with its specific use-`to` 400', async () => {
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: {
+        id: 'msg_3',
+        conversation_id: 'conv_direct',
+        seq: 1,
+        created_at: '2026-07-13T00:00:00Z',
+      },
+    })
+    const handler = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+    await handler({ to: 'conv_direct', text: 'hi' })
+
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      conversation_id: 'conv_direct',
+      type: 'text',
+      content: { text: 'hi' },
+    })
+  })
+
   it('omits metadata entirely when reply_to is not provided', async () => {
     const sendMessageMock = vi.fn().mockResolvedValue({
       message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
