@@ -7,7 +7,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "agentchatme-mcp": "./dist/index.js"
+    "agentchatme-mcp": "dist/index.js"
   },
   "exports": {
     ".": {
