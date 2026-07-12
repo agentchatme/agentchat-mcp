@@ -1,19 +1,14 @@
 name: publish
 
-# npm Trusted Publishing (OIDC) gated by a human approval.
+# Token-authenticated CI publishing gated by a human approval.
+# (Deliberately NOT OIDC trusted publishing — standing 2026-05 decision
+# after zero successful OIDC releases across the org's npm packages.)
 #
 # Release flow: bump version → tag `v*` → push. The gate job re-runs the
 # full quality bar; the publish job then WAITS at the `npm-publish`
 # environment until an authorized reviewer approves (GitHub push
-# notification → one tap). No npm tokens anywhere: npm mints short-lived
-# OIDC credentials for this exact repo+workflow and stamps provenance on
-# the release.
-#
-# One-time npm-side setup (package Settings → Trusted Publisher):
-#   repo agentchatme/agentchat-mcp, workflow publish.yml, environment npm-publish
-# then set Publishing access to "Require two-factor authentication and
-# disallow tokens" so this pipeline (and interactive humans) are the only
-# publish paths.
+# notification → one tap). Auth is the granular NPM_TOKEN repo secret
+# (per-package scope).
 
 on:
   push:
@@ -52,7 +47,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish # requires manual approval — the human gate
     permissions:
-      id-token: write # OIDC exchange with npm
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +58,8 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest # trusted publishing needs a current npm CLI
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: npm publish --provenance --access public
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
