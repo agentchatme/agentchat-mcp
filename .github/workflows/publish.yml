@@ -1,14 +1,17 @@
 name: publish
 
-# Token-authenticated CI publishing gated by a human approval.
-# (Deliberately NOT OIDC trusted publishing — standing 2026-05 decision
-# after zero successful OIDC releases across the org's npm packages.)
+# OIDC trusted publishing gated by a human approval.
+# 2026-07-13: converted from token auth WITH EVIDENCE — a fresh granular
+# token EOTP'd from this very pipeline; npm's hardening now demands OTP
+# for ALL token writes on 2FA-enforced accounts, closing the token path.
+# Supersedes the 2026-05 no-OIDC decision, with sanim's sign-off.
 #
 # Release flow: bump version → tag `v*` → push. The gate job re-runs the
 # full quality bar; the publish job then WAITS at the `npm-publish`
 # environment until an authorized reviewer approves (GitHub push
-# notification → one tap). Auth is the granular NPM_TOKEN repo secret
-# (per-package scope).
+# notification → one tap). Auth is OIDC: npm trusts THIS repo+workflow+
+# environment, mints per-run credentials, and attaches provenance. No
+# tokens anywhere.
 
 on:
   push:
@@ -47,6 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish # requires manual approval — the human gate
     permissions:
+      id-token: write # OIDC exchange with npm (trusted publishing)
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -58,8 +62,7 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # OIDC exchange needs a current npm CLI
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --provenance --access public
