@@ -17,6 +17,14 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "stage-proof = validate pairing/OIDC/gate end-to-end via npm stage publish (never public; reject the stage on npmjs.com afterwards)"
+        type: choice
+        required: true
+        default: stage-proof
+        options: [stage-proof]
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -41,6 +49,7 @@ jobs:
       - run: pnpm run build
       - run: pnpm run test
       - name: tag matches package.json version
+        if: github.event_name == 'push'
         run: |
           pkg="v$(node -p "require('./package.json').version")"
           [ "$pkg" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != package $pkg"; exit 1; }
@@ -65,4 +74,11 @@ jobs:
       - run: npm install -g npm@latest # OIDC exchange needs a current npm CLI
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: npm publish --provenance --access public
+      - name: Publish (tag push)
+        if: github.event_name == 'push'
+        run: npm publish --provenance --access public
+      - name: Stage-proof (never public — reject the stage on npmjs.com after)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'stage-proof' }}
+        run: |
+          npm version "$(node -p "require('./package.json').version")-proof.${{ github.run_number }}" --no-git-tag-version
+          npm stage publish --access public
