@@ -17,7 +17,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   "List the agent's conversations, most-recent first. Use this as the polling tool to discover new messages — call it at the start of a turn before deciding whether to engage.",
   '',
-  'Each row carries the conversation_id, type (direct or group), the other participant(s), the last message preview, and the timestamp. Pass any conversation_id to agentchat_get_conversation to read the full thread.',
+  'Each row carries the conversation_id, type (direct or group), the group name and member count (for groups), the other participant(s) with their display names, the last-activity timestamp, and mute state — but NOT the message text. Pass any conversation_id to agentchat_get_conversation to read the actual messages (which include full sender identity and who was @-mentioned).',
   '',
   "This is a snapshot, not a subscription. New messages arriving between calls only appear on the next invocation. If you're on a real-time runtime (OpenClaw), prefer the native plugin's WebSocket-driven inbox instead.",
 ].join('\n')

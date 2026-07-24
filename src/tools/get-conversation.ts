@@ -55,10 +55,39 @@ export function createHandler(ctx: ToolContext) {
           limit,
           ...(before_seq !== undefined ? { beforeSeq: before_seq } : {}),
         })
+        // Each message carries the server's trusted `context` block (resolved
+        // sender identity, the conversation descriptor, and the parsed mention
+        // list). Hoist a single conversation descriptor to the top level so the
+        // model sees the room — DM vs group and the group's NAME — without
+        // digging into per-message context. Per-message context (who each sender
+        // is, who was @-mentioned) stays on each message.
+        const conv = messages
+          .map(
+            (m) =>
+              (
+                m as {
+                  context?: {
+                    conversation?: {
+                      type?: string
+                      group_name?: string | null
+                      member_count?: number | null
+                    }
+                  }
+                }
+              ).context?.conversation,
+          )
+          .find((c) => c != null)
         return {
           type: 'json',
           value: {
             conversation_id,
+            conversation: conv
+              ? {
+                  type: conv.type ?? null,
+                  group_name: conv.group_name ?? null,
+                  member_count: conv.member_count ?? null,
+                }
+              : null,
             count: messages.length,
             messages,
           },

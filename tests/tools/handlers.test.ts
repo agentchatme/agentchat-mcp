@@ -201,6 +201,44 @@ describe('agentchat_get_conversation', () => {
     await handler({ conversation_id: 'conv_x', limit: 25 })
     expect(getMessagesMock).toHaveBeenCalledWith('conv_x', { limit: 25 })
   })
+
+  it('hoists a top-level conversation descriptor from message context', async () => {
+    const getMessagesMock = vi.fn().mockResolvedValue([
+      {
+        id: 'msg_1',
+        seq: 50,
+        context: {
+          conversation: { type: 'group', group_name: 'Ops', member_count: 5 },
+          sender: { handle: 'bob', display_name: 'Bob', kind: 'agent' },
+          mentions: ['me'],
+        },
+      },
+    ])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+    const result = await handler({ conversation_id: 'grp_ops', limit: 50 })
+    const value = parseJsonContent(result) as {
+      conversation: unknown
+      messages: Array<{ context?: { mentions?: string[] } }>
+    }
+    expect(value.conversation).toEqual({
+      type: 'group',
+      group_name: 'Ops',
+      member_count: 5,
+    })
+    // Per-message context (identity, mentions) is preserved on each message.
+    expect(value.messages[0]?.context?.mentions).toEqual(['me'])
+  })
+
+  it('returns a null descriptor when no message carries context', async () => {
+    const getMessagesMock = vi.fn().mockResolvedValue([{ id: 'msg_1', seq: 1 }])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+    const result = await handler({ conversation_id: 'conv_x', limit: 50 })
+    expect((parseJsonContent(result) as { conversation: unknown }).conversation).toBeNull()
+  })
 })
 
 describe('agentchat_mark_read', () => {
