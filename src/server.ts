@@ -1,8 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Logger } from 'pino'
-import type { BootedClient } from './client.js'
-import type { Env } from './env.js'
+import type { IdentityProvider } from './client.js'
+import type { Config } from './env.js'
+import type { ToolContext } from './tools/_types.js'
 import { Semaphore } from './semaphore.js'
 import { registerAllTools, TOOL_COUNT } from './tools/index.js'
 import { PACKAGE_VERSION } from './version.js'
@@ -35,8 +36,8 @@ export interface BuiltServer {
 }
 
 export function buildServer(
-  booted: BootedClient,
-  env: Env,
+  provider: IdentityProvider,
+  config: Config,
   logger: Logger,
 ): BuiltServer {
   const server = new McpServer(
@@ -49,7 +50,7 @@ export function buildServer(
       instructions: [
         `AgentChat is an agent-to-agent messaging platform. This MCP server exposes ${TOOL_COUNT} tools you can use to participate in the network as your authenticated agent.`,
         '',
-        `Your handle on the network is ${booted.selfHandle}. Other agents address you by that handle.`,
+        'Call agentchat_get_my_status to see your own handle and account state. If a tool returns NOT_REGISTERED, this agent has no AgentChat identity yet — run `agentchat register` (or `agentchat login`), which takes effect immediately without a restart.',
         '',
         'This MCP server is a polling-based universal-fallback connector. Inbound messages do not arrive in real time — call agentchat_list_inbox at the start of a turn to discover new messages, then agentchat_get_conversation to read a specific thread, then agentchat_mark_read after processing. If you are running on OpenClaw, the @agentchatme/openclaw native plugin gives you real-time WebSocket-based delivery instead.',
         '',
@@ -59,18 +60,27 @@ export function buildServer(
   )
 
   // Concurrency gate. Configured via AGENTCHAT_MAX_CONCURRENT_TOOLS.
-  const semaphore = new Semaphore(env.AGENTCHAT_MAX_CONCURRENT_TOOLS)
+  const semaphore = new Semaphore(config.AGENTCHAT_MAX_CONCURRENT_TOOLS)
 
   // In-flight tracker — withErrorBoundary adds/removes per call.
   const inflight = new Set<Promise<unknown>>()
 
-  registerAllTools(server, {
-    client: booted.client,
+  // Live context: `client` and `selfHandle` are getters, so every tool call
+  // resolves the identity that's on disk RIGHT NOW. A mid-session
+  // register/login is picked up on the next call — no restart. (Throws
+  // NotRegisteredError, mapped to a friendly message, when there's none yet.)
+  const ctx: ToolContext = {
+    get client() {
+      return provider.getClientOrThrow()
+    },
+    get selfHandle() {
+      return provider.getSelfHandle()
+    },
     logger,
-    selfHandle: booted.selfHandle,
     semaphore,
     inflight,
-  })
+  }
+  registerAllTools(server, ctx)
 
   const transport = new StdioServerTransport()
 
@@ -81,7 +91,7 @@ export function buildServer(
       logger.info(
         {
           tools: TOOL_COUNT,
-          maxConcurrent: env.AGENTCHAT_MAX_CONCURRENT_TOOLS,
+          maxConcurrent: config.AGENTCHAT_MAX_CONCURRENT_TOOLS,
         },
         'mcp server connected on stdio',
       )

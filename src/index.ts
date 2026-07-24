@@ -1,6 +1,5 @@
-import { UnauthorizedError } from 'agentchatme'
-import { bootClient } from './client.js'
-import { EnvValidationError, loadEnv } from './env.js'
+import { IdentityProvider } from './client.js'
+import { EnvValidationError, loadConfig } from './env.js'
 import { createLogger } from './log.js'
 import { buildServer } from './server.js'
 import { PACKAGE_VERSION } from './version.js'
@@ -22,41 +21,41 @@ import { PACKAGE_VERSION } from './version.js'
 const SHUTDOWN_DRAIN_MS = 10_000
 
 async function main(): Promise<void> {
-  let env: ReturnType<typeof loadEnv>
+  let config: ReturnType<typeof loadConfig>
   try {
-    env = loadEnv()
+    config = loadConfig()
   } catch (err) {
     if (err instanceof EnvValidationError) {
-      // Friendly stderr write — no logger yet, the env failure happened
-      // before we could construct one.
+      // Friendly stderr write — no logger yet, the failure happened before we
+      // could construct one. (Only CONFIG can fail here; a missing identity
+      // never blocks startup — see below.)
       process.stderr.write(`\n${err.message}\n\n`)
       process.exit(1)
     }
     throw err
   }
 
-  const logger = createLogger({ level: env.AGENTCHAT_LOG_LEVEL })
+  const logger = createLogger({ level: config.AGENTCHAT_LOG_LEVEL })
 
   logger.info(
     { version: PACKAGE_VERSION, node: process.versions.node },
     'agentchat-mcp starting',
   )
 
-  let booted: Awaited<ReturnType<typeof bootClient>>
-  try {
-    booted = await bootClient(env, logger)
-  } catch (err) {
-    if (err instanceof UnauthorizedError) {
-      logger.fatal(
-        'AGENTCHAT_API_KEY rejected by api.agentchat.me. The key may be invalid, rotated, revoked, or pointed at a different environment via AGENTCHAT_API_BASE.',
-      )
-      process.exit(1)
-    }
-    logger.fatal({ err }, 'failed to authenticate with AgentChat after retries')
-    process.exit(1)
+  // The identity is resolved lazily, per tool call. The server starts whether
+  // or not one exists yet: a fresh install has no key until `agentchat
+  // register` runs mid-session, and we pick that up on the next tool call with
+  // NO restart. Just log which state we booted in.
+  const provider = new IdentityProvider(config, logger)
+  if (provider.hasIdentity()) {
+    logger.info('AgentChat identity present')
+  } else {
+    logger.warn(
+      'no AgentChat identity yet — tools return NOT_REGISTERED until you run `agentchat register` (or `login`); it takes effect immediately, no restart',
+    )
   }
 
-  const built = buildServer(booted, env, logger)
+  const built = buildServer(provider, config, logger)
 
   // Wire shutdown BEFORE serve so signals received during the connect()
   // race land cleanly.

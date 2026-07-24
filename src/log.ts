@@ -1,5 +1,5 @@
 import pino, { type Logger } from 'pino'
-import type { Env } from './env.js'
+import type { Config } from './env.js'
 
 // ─── Structured logging to stderr ──────────────────────────────────────────
 //
@@ -19,7 +19,7 @@ import type { Env } from './env.js'
 // cannot leak conversations.
 
 export interface LoggerConfig {
-  level: Env['AGENTCHAT_LOG_LEVEL']
+  level: Config['AGENTCHAT_LOG_LEVEL']
 }
 
 export function createLogger(config: LoggerConfig): Logger {

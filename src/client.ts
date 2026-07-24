@@ -1,88 +1,87 @@
-import { AgentChatClient, ConnectionError, UnauthorizedError } from 'agentchatme'
+import { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
-import type { Env } from './env.js'
+import { resolveIdentity, type Config } from './env.js'
 
-// ─── AgentChat SDK client wrapper + bootstrap ──────────────────────────────
+// ─── Lazy identity provider ─────────────────────────────────────────────────
 //
-// The published `agentchatme` SDK already gives us:
-//   - retry on transient HTTP failures with exponential backoff (per-request)
-//   - Retry-After honoring on 429s
-//   - typed error classes for every documented error code
-//   - idempotent send via auto-generated client_msg_id
+// Tools no longer capture a client fixed at boot. They read `ctx.client` at
+// call time; that getter comes here, and here we resolve the identity FRESHLY
+// each call. Result: a mid-session `agentchat register` / `login` / `recover`
+// is picked up on the very next tool call — no restart, no reconnect.
 //
-// What this module adds:
-//   - boot-time auth validation against `GET /v1/agents/me`
-//   - bounded retry on the boot call so a transient network blip during
-//     MCP-host startup (e.g. a laptop coming out of sleep) doesn't kill
-//     the server permanently
-//   - a clear typed boundary for what an authenticated client looks like
+// Cost is negligible: resolving is a cheap credentials-file read, and the SDK
+// client is rebuilt ONLY when the key actually changes (rare — a sign-in).
+// Client construction is synchronous (no network), so this stays inside the
+// synchronous getter the tools use. selfHandle comes straight from the
+// credentials file (the CLI writes it); a bare AGENTCHAT_API_KEY deploy has no
+// handle on disk, so we fetch it once in the background.
 
-export interface BootedClient {
-  client: AgentChatClient
-  selfHandle: string
+/** Thrown when a tool runs before any identity exists. Mapped to a friendly
+ *  "register first" message in errors.ts — never crashes the server. */
+export class NotRegisteredError extends Error {
+  constructor() {
+    super('no AgentChat identity configured')
+    this.name = 'NotRegisteredError'
+  }
 }
 
-export interface BootRetryOptions {
-  /** Maximum total attempts including the first one. Default 3. */
-  maxAttempts?: number
-  /** Backoff schedule in ms before each retry. Default [2000, 5000]. */
-  backoffMs?: number[]
-}
+export class IdentityProvider {
+  private key: string | null = null
+  private client: AgentChatClient | null = null
+  private handle = '?'
 
-/**
- * Construct the SDK client and verify the API key works by calling
- * `GET /v1/agents/me`. Retries on transient `ConnectionError` (DNS, socket
- * reset, TLS timeout) — which is the kind of failure that happens when an
- * MCP host boots in the same second the user's network restarts. Does NOT
- * retry on `UnauthorizedError`: a bad key is configuration, not transient.
- *
- * Throws the last error after exhausting the schedule.
- */
-export async function bootClient(
-  env: Env,
-  logger: Logger,
-  options: BootRetryOptions = {},
-): Promise<BootedClient> {
-  const maxAttempts = options.maxAttempts ?? 3
-  const backoffMs = options.backoffMs ?? [2_000, 5_000]
+  constructor(
+    private readonly config: Config,
+    private readonly logger: Logger,
+  ) {}
 
-  const client = new AgentChatClient({
-    apiKey: env.AGENTCHAT_API_KEY,
-    baseUrl: env.AGENTCHAT_API_BASE,
-  })
+  /** For a friendly boot log — is an identity resolvable right now? */
+  hasIdentity(): boolean {
+    return resolveIdentity() !== null
+  }
 
-  logger.info({ apiBase: env.AGENTCHAT_API_BASE }, 'authenticating with AgentChat')
-
-  let lastErr: unknown
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (attempt > 1) {
-      const delay = backoffMs[attempt - 2] ?? backoffMs[backoffMs.length - 1] ?? 5_000
-      logger.warn(
-        { attempt, delay, of: maxAttempts },
-        'boot auth retry — transient connection error',
-      )
-      await sleep(delay)
+  private refresh(): void {
+    const id = resolveIdentity()
+    if (!id) {
+      this.key = null
+      this.client = null
+      this.handle = '?'
+      return
     }
-    try {
-      const me = await client.getMe()
-      logger.info(
-        { handle: me.handle, status: me.status, attempts: attempt },
-        'authenticated; ready to serve tool calls',
-      )
-      return { client, selfHandle: me.handle }
-    } catch (err) {
-      // Auth failures are configuration errors, not transient — fail fast.
-      if (err instanceof UnauthorizedError) throw err
-      // Other non-network errors (rate-limit at boot, server 5xx) — fail
-      // fast as well; retrying through them either changes nothing or
-      // makes things worse.
-      if (!(err instanceof ConnectionError)) throw err
-      lastErr = err
+    if (id.apiKey === this.key) return
+
+    // Key changed (or first use) — rebuild. Synchronous, no I/O.
+    this.key = id.apiKey
+    this.client = new AgentChatClient({
+      apiKey: id.apiKey,
+      baseUrl: id.apiBase ?? this.config.AGENTCHAT_API_BASE,
+    })
+    this.handle = id.handle ?? '?'
+    this.logger.info({ handle: this.handle }, 'AgentChat identity loaded')
+
+    // Env-key deploys carry no handle on disk — resolve it once, non-blocking.
+    if (!id.handle) {
+      const c = this.client
+      void c
+        .getMe()
+        .then((me) => {
+          if (this.client === c) this.handle = me.handle
+        })
+        .catch(() => {
+          // Leave '?' — a genuinely bad key surfaces on the first real call.
+        })
     }
   }
-  throw lastErr
-}
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  /** The client for whatever identity is on disk now; throws if there's none. */
+  getClientOrThrow(): AgentChatClient {
+    this.refresh()
+    if (!this.client) throw new NotRegisteredError()
+    return this.client
+  }
+
+  getSelfHandle(): string {
+    this.refresh()
+    return this.handle
+  }
 }

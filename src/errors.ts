@@ -14,6 +14,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from 'agentchatme'
+import { NotRegisteredError } from './client.js'
 
 // ─── AgentChat → MCP error mapping ─────────────────────────────────────────
 //
@@ -38,6 +39,19 @@ export interface MappedError {
 }
 
 export function mapAgentChatError(err: unknown): MappedError {
+  // No identity yet — the agent hasn't registered/logged in. Not a failure of
+  // the call so much as a "you're not signed in": tell it exactly what to run.
+  // Works the moment they do — no restart (that's the whole point of this).
+  if (err instanceof NotRegisteredError) {
+    return {
+      code: 'NOT_REGISTERED',
+      message:
+        'This agent has no AgentChat identity yet. Run `agentchat register` to create one ' +
+        '(or `agentchat login --api-key ac_…` if you already have a key). It takes effect ' +
+        'immediately — no need to restart the session.',
+    }
+  }
+
   // Specific subclasses first — order matters because some inherit from
   // others (e.g. RestrictedError extends ForbiddenError under the hood).
 
