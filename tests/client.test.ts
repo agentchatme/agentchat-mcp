@@ -23,6 +23,8 @@ vi.mock('agentchatme', async () => {
 })
 
 import { IdentityProvider, NotRegisteredError } from '../src/client.js'
+import { withMcpClientIdentity } from '../src/client-identity.js'
+import { PACKAGE_VERSION } from '../src/version.js'
 
 const config = {
   AGENTCHAT_API_BASE: 'https://api.agentchat.me',
@@ -86,5 +88,28 @@ describe('IdentityProvider', () => {
     p.getClientOrThrow()
     expect(ctorSpy).toHaveBeenCalledTimes(2)
     expect(ctorSpy).toHaveBeenLastCalledWith(expect.objectContaining({ apiKey: KEY2 }))
+  })
+})
+
+describe('MCP client identity', () => {
+  it('attaches stable MCP name and version headers', async () => {
+    const seen = new Headers()
+    const fetchImpl = async (
+      _input: Parameters<typeof fetch>[0],
+      init?: RequestInit,
+    ) => {
+      new Headers(init?.headers).forEach((value, key) => seen.set(key, value))
+      return new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    await withMcpClientIdentity(fetchImpl as typeof fetch)(
+      'https://api.agentchat.me/v1/messages/sync',
+    )
+
+    expect(seen.get('x-agentchat-client')).toBe('mcp')
+    expect(seen.get('x-agentchat-client-version')).toBe(PACKAGE_VERSION)
   })
 })

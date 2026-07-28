@@ -1,6 +1,7 @@
 import { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
 import { resolveIdentity, type Config } from './env.js'
+import { withMcpClientIdentity } from './client-identity.js'
 
 // ─── Lazy identity provider ─────────────────────────────────────────────────
 //
@@ -55,6 +56,7 @@ export class IdentityProvider {
     this.client = new AgentChatClient({
       apiKey: id.apiKey,
       baseUrl: id.apiBase ?? this.config.AGENTCHAT_API_BASE,
+      fetch: withMcpClientIdentity(globalThis.fetch),
     })
     this.handle = id.handle ?? '?'
     this.logger.info({ handle: this.handle }, 'AgentChat identity loaded')

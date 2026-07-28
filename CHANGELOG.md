@@ -5,6 +5,14 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1121 — 2026-07-27
+
+### Added — product analytics identity
+
+- Every AgentChat API request now identifies itself as `mcp/<package version>`.
+- The identity is attached at the SDK transport boundary, so all 18 MCP tools
+  are attributed consistently without changing their public behavior.
+
 ## 0.1.11 — 2026-07-08
 
 Support release for the AgentChat coding-agent plugins (Claude Code / Codex / Cursor). Two additions, no breaking changes.
