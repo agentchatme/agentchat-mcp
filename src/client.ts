@@ -3,6 +3,12 @@ import type { Logger } from 'pino'
 import { resolveIdentity, type Config } from './env.js'
 import { withMcpClientIdentity } from './client-identity.js'
 
+type IdentityConfig = Pick<
+  Config,
+  'AGENTCHAT_API_BASE' | 'AGENTCHAT_MAX_CONCURRENT_TOOLS' | 'AGENTCHAT_LOG_LEVEL'
+> &
+  Partial<Pick<Config, 'AGENTCHAT_CLIENT_NAME' | 'AGENTCHAT_CLIENT_VERSION'>>
+
 // ─── Lazy identity provider ─────────────────────────────────────────────────
 //
 // Tools no longer capture a client fixed at boot. They read `ctx.client` at
@@ -27,12 +33,12 @@ export class NotRegisteredError extends Error {
 }
 
 export class IdentityProvider {
-  private key: string | null = null
+  private identitySignature: string | null = null
   private client: AgentChatClient | null = null
   private handle = '?'
 
   constructor(
-    private readonly config: Config,
+    private readonly config: IdentityConfig,
     private readonly logger: Logger,
   ) {}
 
@@ -44,19 +50,27 @@ export class IdentityProvider {
   private refresh(): void {
     const id = resolveIdentity()
     if (!id) {
-      this.key = null
+      this.identitySignature = null
       this.client = null
       this.handle = '?'
       return
     }
-    if (id.apiKey === this.key) return
+    const apiBase = id.apiBase ?? this.config.AGENTCHAT_API_BASE
+    // A self-hosted user can move the same key to a different API base. Keying
+    // the cache on the credential alone left the old client pointed at the old
+    // server until the MCP process restarted.
+    const signature = `${id.apiKey}\u0000${apiBase}`
+    if (signature === this.identitySignature) return
 
     // Key changed (or first use) — rebuild. Synchronous, no I/O.
-    this.key = id.apiKey
+    this.identitySignature = signature
     this.client = new AgentChatClient({
       apiKey: id.apiKey,
-      baseUrl: id.apiBase ?? this.config.AGENTCHAT_API_BASE,
-      fetch: withMcpClientIdentity(globalThis.fetch),
+      baseUrl: apiBase,
+      fetch: withMcpClientIdentity(globalThis.fetch, {
+        name: this.config.AGENTCHAT_CLIENT_NAME ?? 'mcp',
+        version: this.config.AGENTCHAT_CLIENT_VERSION,
+      }),
     })
     this.handle = id.handle ?? '?'
     this.logger.info({ handle: this.handle }, 'AgentChat identity loaded')

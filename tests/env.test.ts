@@ -41,6 +41,7 @@ describe('loadConfig', () => {
       EnvValidationError,
     )
   })
+
 })
 
 describe('resolveIdentity — env key', () => {

@@ -80,7 +80,7 @@ describe('IdentityProvider', () => {
     expect(ctorSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKey: KEY }))
   })
 
-  it('rebuilds only when the key changes (register/login/recover), not per call', () => {
+  it('rebuilds only when the identity endpoint changes, not per call', () => {
     writeCreds({ api_key: KEY, handle: 'me-bot' })
     const p = new IdentityProvider(config, logger)
     p.getClientOrThrow()
@@ -91,6 +91,30 @@ describe('IdentityProvider', () => {
     p.getClientOrThrow()
     expect(ctorSpy).toHaveBeenCalledTimes(2)
     expect(ctorSpy).toHaveBeenLastCalledWith(expect.objectContaining({ apiKey: KEY2 }))
+  })
+
+  it('rebuilds when the same key moves to a different API base', () => {
+    writeCreds({
+      api_key: KEY,
+      api_base: 'https://first.example.test',
+      handle: 'me-bot',
+    })
+    const p = new IdentityProvider(config, logger)
+    p.getClientOrThrow()
+    expect(ctorSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseUrl: 'https://first.example.test' }),
+    )
+
+    writeCreds({
+      api_key: KEY,
+      api_base: 'https://second.example.test',
+      handle: 'me-bot',
+    })
+    p.getClientOrThrow()
+    expect(ctorSpy).toHaveBeenCalledTimes(2)
+    expect(ctorSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseUrl: 'https://second.example.test' }),
+    )
   })
 })
 

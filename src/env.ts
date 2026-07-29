@@ -23,6 +23,14 @@ const ConfigSchema = z.object({
   AGENTCHAT_LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'])
     .default('info'),
+  AGENTCHAT_CLIENT_NAME: z
+    .string()
+    .regex(/^[a-z][a-z0-9_-]{0,31}$/)
+    .default('mcp'),
+  AGENTCHAT_CLIENT_VERSION: z
+    .string()
+    .regex(/^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/)
+    .optional(),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

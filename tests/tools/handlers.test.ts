@@ -129,6 +129,25 @@ describe('agentchat_send_message', () => {
     expect(callArgs).not.toHaveProperty('metadata')
   })
 
+  it('forwards message text without inspecting or censoring its content', async () => {
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
+    })
+    const text = `credential-shaped test data: ac_live_${'a'.repeat(32)}`
+    const handler = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+
+    const result = await handler({ to: '@bob', text })
+
+    expect(result.isError).toBeFalsy()
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      to: '@bob',
+      type: 'text',
+      content: { text },
+    })
+  })
+
   it('surfaces backlog warning in the JSON payload when present', async () => {
     const sendMessageMock = vi.fn().mockResolvedValue({
       message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
@@ -143,6 +162,7 @@ describe('agentchat_send_message', () => {
       backlog_warning: { undelivered_count: 8500 },
     })
   })
+
 })
 
 describe('agentchat_list_inbox', () => {
@@ -239,6 +259,7 @@ describe('agentchat_get_conversation', () => {
     const result = await handler({ conversation_id: 'conv_x', limit: 50 })
     expect((parseJsonContent(result) as { conversation: unknown }).conversation).toBeNull()
   })
+
 })
 
 describe('agentchat_mark_read', () => {

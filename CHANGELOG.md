@@ -5,13 +5,25 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.11212 — 2026-07-30
+
+### Fixed
+
+- Client identity now includes the effective API base, so moving the same key
+  between self-hosted endpoints takes effect without restarting the MCP process.
+- Coding-agent integrations can attach their own client name/version headers
+  without changing interactive MCP defaults.
+
 ## 0.1.11211 — 2026-07-29
 
 ### Security
 
-- Raised the Model Context Protocol SDK floor to `1.30.0`, removing vulnerable
-  transitive Hono and URI-parser versions from the production dependency tree.
-  The AgentChat tool surface and stdio transport behavior are unchanged.
+- Raised the Model Context Protocol SDK floor to `1.30.0` and refreshed
+  dependency overrides. The SDK still carries
+  `@hono/node-server@1.19.14`; its Windows static-file advisory is unreachable
+  in this stdio-only package and is documented as a reviewed exception in
+  `SECURITY.md`. The AgentChat tool surface and stdio transport behavior are
+  unchanged.
 
 ## 0.1.1121 — 2026-07-27
 
