@@ -1,2 +1,8 @@
 allowBuilds:
   esbuild: true
+
+overrides:
+  "body-parser@>=2.0.0 <2.3.0": "2.3.0"
+  "fast-uri@>=3.0.0 <3.1.4": "3.1.4"
+  "hono@<4.12.27": "4.12.27"
+  "qs@>=6.11.1 <6.15.2": "6.15.2"

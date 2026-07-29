@@ -31,6 +31,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
       - run: pnpm run type-check
       - run: pnpm run test
       - run: pnpm run build
