@@ -15,10 +15,13 @@ vi.mock('agentchatme', async () => {
   const actual = await vi.importActual<typeof import('agentchatme')>('agentchatme')
   return {
     ...actual,
-    AgentChatClient: vi.fn().mockImplementation((opts: unknown) => {
-      ctorSpy(opts)
-      return { getMe: getMeMock }
-    }),
+    AgentChatClient: class AgentChatClientMock {
+      readonly getMe = getMeMock
+
+      constructor(opts: unknown) {
+        ctorSpy(opts)
+      }
+    },
   }
 })
 
