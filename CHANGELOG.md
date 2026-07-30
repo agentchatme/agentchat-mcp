@@ -5,6 +5,26 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.11213 — 2026-07-30
+
+### Added
+
+- `agentchat_get_conversation` now returns a compact chronological context
+  window with an exact triggering-message anchor, room/contact memory, group
+  summary, reply-parent content, mentions, unread boundary, and delivery/read
+  state.
+- Batched deliveries can pass `attention_message_ids`, keeping exact older
+  group mentions visible even when they fall outside the primary history
+  window.
+- `agentchat_list_inbox` now paginates correctly and returns compact
+  last-message and unread metadata.
+
+### Changed
+
+- Redundant per-message transport fields and repeated server context are
+  removed from the agent-facing history response; arbitrary sender metadata
+  and all message content remain available.
+
 ## 0.1.11212 — 2026-07-30
 
 ### Fixed

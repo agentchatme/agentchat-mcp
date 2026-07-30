@@ -1,6 +1,6 @@
 {
   "name": "@agentchatme/mcp",
-  "version": "0.1.11212",
+  "version": "0.1.11213",
   "description": "AgentChat MCP server — universal-fallback connector for MCP-compatible agent runtimes (Claude Desktop, Claude Code, Cursor, Cline, Goose). Polling-based inbound; runtime-native plugins (e.g. @agentchatme/openclaw) deliver real-time WebSocket-based connectivity.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "agentchatme": "^1.0.0",
+    "agentchatme": "^1.0.2212",
     "pino": "^9.5.0",
     "zod": "^3.23.0"
   },

@@ -175,9 +175,9 @@ describe('agentchat_list_inbox', () => {
     const handler = listInbox.createHandler(
       makeCtx({ listConversations: listMock }),
     )
-    const result = await handler({ limit: 25 })
+    const result = await handler({ limit: 25, offset: 0 })
 
-    expect(listMock).toHaveBeenCalled()
+    expect(listMock).toHaveBeenCalledWith({ limit: 26, offset: 0 })
     const payload = parseJsonContent(result) as {
       count: number
       has_more: boolean
@@ -193,7 +193,7 @@ describe('agentchat_list_inbox', () => {
     const handler = listInbox.createHandler(
       makeCtx({ listConversations: listMock }),
     )
-    const result = await handler({ limit: 25 })
+    const result = await handler({ limit: 25, offset: 0 })
     const payload = parseJsonContent(result) as { has_more: boolean; count: number }
     expect(payload.has_more).toBe(false)
     expect(payload.count).toBe(2)
@@ -222,42 +222,258 @@ describe('agentchat_get_conversation', () => {
     expect(getMessagesMock).toHaveBeenCalledWith('conv_x', { limit: 25 })
   })
 
-  it('hoists a top-level conversation descriptor from message context', async () => {
+  it('anchors the window, orders it chronologically, and returns compact social context', async () => {
     const getMessagesMock = vi.fn().mockResolvedValue([
       {
-        id: 'msg_1',
-        seq: 50,
+        id: 'msg_2',
+        conversation_id: 'grp_ops',
+        // The server-authored context is the canonical identity source when
+        // legacy/top-level sender data disagrees.
+        sender: 'test',
+        seq: 51,
+        type: 'text',
+        content: { text: 'new question' },
+        metadata: { reply_to: 'msg_1' },
+        status: 'delivered',
+        created_at: '2026-07-29T01:00:00Z',
         context: {
           conversation: { type: 'group', group_name: 'Ops', member_count: 5 },
           sender: { handle: 'bob', display_name: 'Bob', kind: 'agent' },
-          mentions: ['me'],
+          mentions: ['test'],
+        },
+      },
+      {
+        id: 'msg_1',
+        conversation_id: 'grp_ops',
+        sender: 'alice',
+        seq: 50,
+        type: 'text',
+        content: { text: 'original context' },
+        metadata: {},
+        status: 'read',
+        created_at: '2026-07-29T00:59:00Z',
+        context: {
+          conversation: { type: 'group', group_name: 'Ops', member_count: 5 },
+          sender: { handle: 'alice', display_name: 'Alice', kind: 'agent' },
+          mentions: [],
         },
       },
     ])
-    const handler = getConversation.createHandler(
-      makeCtx({ getMessages: getMessagesMock }),
-    )
-    const result = await handler({ conversation_id: 'grp_ops', limit: 50 })
-    const value = parseJsonContent(result) as {
-      conversation: unknown
-      messages: Array<{ context?: { mentions?: string[] } }>
-    }
-    expect(value.conversation).toEqual({
+    const contextMock = vi.fn().mockResolvedValue({
+      conversation_id: 'grp_ops',
       type: 'group',
-      group_name: 'Ops',
-      member_count: 5,
+      group: {
+        name: 'Ops',
+        description: 'Production operations',
+        member_count: 5,
+        your_role: 'member',
+      },
+      counterparty: null,
+      relationship: null,
+      unread: { count: 3, oldest_seq: 51, newest_seq: 53 },
     })
-    // Per-message context (identity, mentions) is preserved on each message.
-    expect(value.messages[0]?.context?.mentions).toEqual(['me'])
+    const checkContactMock = vi.fn().mockResolvedValue({
+      is_contact: true,
+      added_at: '2026-07-01T00:00:00Z',
+      notes: 'Owns deployment coordination',
+    })
+    const handler = getConversation.createHandler(
+      makeCtx({
+        getMessages: getMessagesMock,
+        getConversationContext: contextMock,
+        checkContact: checkContactMock,
+      } as never),
+    )
+    const result = await handler({
+      conversation_id: 'grp_ops',
+      limit: 30,
+      around_message_id: 'msg_2',
+    })
+    const value = parseJsonContent(result) as {
+      conversation: {
+        group: { description: string }
+      }
+      focus: {
+        sender_relationship: { note: string }
+      }
+      unread: { count: number }
+      messages: Array<{
+        message_id: string
+        sender: { handle: string }
+        mentioned_you: boolean
+        delivery: { scope: string }
+        reply_to?: { parent: { content: { text: string } } }
+      }>
+    }
+    expect(getMessagesMock).toHaveBeenCalledWith('grp_ops', {
+      limit: 30,
+      aroundMessageId: 'msg_2',
+    })
+    expect(value.messages.map((message) => message.message_id)).toEqual([
+      'msg_1',
+      'msg_2',
+    ])
+    expect(value.messages[1]?.sender.handle).toBe('@bob')
+    expect(value.messages[1]?.delivery.scope).toBe('your_receipt')
+    expect(value.messages[1]?.mentioned_you).toBe(true)
+    expect(value.messages[1]?.reply_to?.parent.content.text).toBe(
+      'original context',
+    )
+    expect(value.conversation.group.description).toBe('Production operations')
+    expect(value.focus.sender_relationship.note).toBe(
+      'Owns deployment coordination',
+    )
+    expect(value.unread.count).toBe(3)
   })
 
-  it('returns a null descriptor when no message carries context', async () => {
+  it('degrades to an inferred room when the context endpoint is unavailable', async () => {
     const getMessagesMock = vi.fn().mockResolvedValue([{ id: 'msg_1', seq: 1 }])
     const handler = getConversation.createHandler(
       makeCtx({ getMessages: getMessagesMock }),
     )
     const result = await handler({ conversation_id: 'conv_x', limit: 50 })
-    expect((parseJsonContent(result) as { conversation: unknown }).conversation).toBeNull()
+    expect(
+      (
+        parseJsonContent(result) as {
+          conversation: { type: string; conversation_id: string }
+        }
+    ).conversation,
+    ).toMatchObject({ conversation_id: 'conv_x', type: 'direct' })
+  })
+
+  it('returns explicit attention pointers without refetching messages already in the primary window', async () => {
+    const getMessagesMock = vi.fn().mockResolvedValue([
+      {
+        id: 'msg_latest',
+        conversation_id: 'grp_ops',
+        sender: 'bob',
+        seq: 11,
+        content: { text: 'latest' },
+        context: { mentions: [] },
+      },
+      {
+        id: 'msg_mention',
+        conversation_id: 'grp_ops',
+        sender: 'alice',
+        seq: 10,
+        content: { text: '@test please look' },
+        context: { mentions: ['test'] },
+      },
+    ])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+
+    const result = await handler({
+      conversation_id: 'grp_ops',
+      limit: 30,
+      around_message_id: 'msg_latest',
+      attention_message_ids: ['msg_mention'],
+    })
+    const value = parseJsonContent(result) as {
+      attention: {
+        message_ids: string[]
+        messages: Array<{
+          message_id: string
+          mentioned_you: boolean
+          in_primary_window: boolean
+          primary_window_index: number
+        }>
+      }
+    }
+    expect(getMessagesMock).toHaveBeenCalledTimes(1)
+    expect(value.attention.message_ids).toEqual(['msg_mention'])
+    expect(value.attention.messages).toMatchObject([
+      {
+        message_id: 'msg_mention',
+        mentioned_you: true,
+        in_primary_window: true,
+        primary_window_index: 0,
+      },
+    ])
+  })
+
+  it('hydrates an exact attention message that falls outside the primary window', async () => {
+    const getMessagesMock = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: 'msg_latest',
+          conversation_id: 'grp_ops',
+          sender: 'bob',
+          seq: 100,
+          content: { text: 'latest update' },
+          context: { mentions: [] },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'msg_old_mention',
+          conversation_id: 'grp_ops',
+          sender: 'alice',
+          seq: 12,
+          content: { text: '@test old but explicit request' },
+          context: { mentions: ['test'] },
+        },
+      ])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+
+    const result = await handler({
+      conversation_id: 'grp_ops',
+      limit: 30,
+      around_message_id: 'msg_latest',
+      attention_message_ids: ['msg_old_mention'],
+    })
+    const value = parseJsonContent(result) as {
+      messages: Array<{ message_id: string }>
+      attention: {
+        messages: Array<{
+          message_id: string
+          content: { text: string }
+          in_primary_window: boolean
+        }>
+      }
+    }
+    expect(getMessagesMock).toHaveBeenNthCalledWith(1, 'grp_ops', {
+      limit: 30,
+      aroundMessageId: 'msg_latest',
+    })
+    expect(getMessagesMock).toHaveBeenNthCalledWith(2, 'grp_ops', {
+      limit: 1,
+      aroundMessageId: 'msg_old_mention',
+    })
+    expect(value.messages.map((message) => message.message_id)).toEqual([
+      'msg_latest',
+    ])
+    expect(value.attention.messages).toMatchObject([
+      {
+        message_id: 'msg_old_mention',
+        content: { text: '@test old but explicit request' },
+        in_primary_window: false,
+      },
+    ])
+  })
+
+  it('fails closed when a requested anchor is absent from the returned window', async () => {
+    const getMessagesMock = vi.fn().mockResolvedValue([
+      { id: 'msg_newer', seq: 99 },
+    ])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+
+    const result = await handler({
+      conversation_id: 'conv_x',
+      limit: 30,
+      around_message_id: 'msg_focus',
+    })
+
+    expect(result.isError).toBe(true)
+    expect(
+      (result.content[0] as { type: 'text'; text: string }).text,
+    ).toContain('anchored history support is required')
   })
 
 })

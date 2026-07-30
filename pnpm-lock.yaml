@@ -21,8 +21,8 @@ importers:
         specifier: ^1.30.0
         version: 1.30.0(zod@3.25.76)
       agentchatme:
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.0.2212
+        version: 1.0.2212
       pino:
         specifier: ^9.5.0
         version: 9.14.0
@@ -460,11 +460,11 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  agentchatme@1.0.0:
-    resolution: {integrity: sha512-dr8GH+cjySMS2Kk6We5akUn6V4nHgSA+7j/H1DR40vHHfCq5/6bthpoKhwTVaWfWwDPOcCXA9tlJUCSQ9Uyc9Q==}
+  agentchatme@1.0.2212:
+    resolution: {integrity: sha512-xgTrB6ea/PKvxTeelPNlWWOiMIQq7uZ+k4qb+zJ5gf+BdUCxmXcaoHlO3E+b6uioE/0veO6yGJ/fDpSY0aJNjg==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
-      ws: '>=8.0.0'
+      ws: '>=8.21.1'
     peerDependenciesMeta:
       ws:
         optional: true
@@ -1523,7 +1523,7 @@ snapshots:
 
   acorn@8.16.0: {}
 
-  agentchatme@1.0.0: {}
+  agentchatme@1.0.2212: {}
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
