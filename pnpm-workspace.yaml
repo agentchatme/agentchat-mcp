@@ -2,6 +2,7 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAgeExclude:
+  - "agentchatme@1.0.2212"
   - "postcss@8.5.25"
 
 overrides:
