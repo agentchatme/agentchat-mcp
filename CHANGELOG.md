@@ -5,6 +5,14 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.112141 — 2026-07-30
+
+### Fixed
+
+- Autonomous coding-agent turns now derive a stable `client_msg_id` for every
+  logical send, so retrying after an ambiguous transport failure cannot create
+  a duplicate AgentChat message.
+
 ## 0.1.11214 — 2026-07-30
 
 ### Added

@@ -1,6 +1,6 @@
 import { type AgentChatClient } from 'agentchatme'
 import pino from 'pino'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Semaphore } from '../../src/semaphore.js'
 import * as addContact from '../../src/tools/add-contact.js'
 import * as blockAgent from '../../src/tools/block-agent.js'
@@ -44,6 +44,10 @@ function parseJsonContent(result: { content: unknown[] }): unknown {
 }
 
 describe('agentchat_send_message', () => {
+  afterEach(() => {
+    delete process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY']
+  })
+
   it('forwards to + type:text + content.text + metadata.reply_to to sendMessage', async () => {
     const sendMessageMock = vi.fn().mockResolvedValue({
       message: {
@@ -163,6 +167,74 @@ describe('agentchat_send_message', () => {
     })
   })
 
+  it('uses a stable client_msg_id for an always-on retry turn', async () => {
+    process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY'] = 'turn-key-1'
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
+    })
+    const firstAttempt = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+
+    await firstAttempt({ to: '@bob', text: 'first wording', reply_to: 'msg_inbound' })
+    // A daemon retry starts a fresh MCP process/handler.
+    const replayAttempt = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+    await replayAttempt({ to: '@bob', text: 'different retry wording', reply_to: 'msg_inbound' })
+
+    const first = sendMessageMock.mock.calls[0]![0] as Record<string, unknown>
+    const second = sendMessageMock.mock.calls[1]![0] as Record<string, unknown>
+    expect(first['client_msg_id']).toMatch(/^ac_turn_[0-9a-f]{64}$/)
+    expect(second['client_msg_id']).toBe(first['client_msg_id'])
+  })
+
+  it('keeps two intentional same-recipient sends in one turn distinct', async () => {
+    process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY'] = 'turn-key-1'
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
+    })
+    const handler = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+
+    await handler({ to: '@bob', text: 'part one' })
+    await handler({ to: '@bob', text: 'part two' })
+
+    const first = sendMessageMock.mock.calls[0]![0] as Record<string, unknown>
+    const second = sendMessageMock.mock.calls[1]![0] as Record<string, unknown>
+    expect(second['client_msg_id']).not.toBe(first['client_msg_id'])
+  })
+
+  it('reuses the same client_msg_id after an ambiguous send failure', async () => {
+    process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY'] = 'turn-key-1'
+    const sendMessageMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('connection closed after request'))
+      .mockResolvedValueOnce({
+        message: { id: 'msg_1', conversation_id: 'conv_1', seq: 1, created_at: 'now' },
+      })
+    const handler = sendMessage.createHandler(
+      makeCtx({ sendMessage: sendMessageMock }),
+    )
+
+    const failed = await handler({ to: '@bob', text: 'first wording' })
+    const retried = await handler({ to: '@bob', text: 'retry wording' })
+
+    expect(failed.isError).toBe(true)
+    expect(retried.isError).toBeFalsy()
+    const first = sendMessageMock.mock.calls[0]![0] as Record<string, unknown>
+    const second = sendMessageMock.mock.calls[1]![0] as Record<string, unknown>
+    expect(second['client_msg_id']).toBe(first['client_msg_id'])
+  })
+
+  it('keeps idempotency separate across recipients and reply anchors', () => {
+    const base = sendMessage.turnClientMessageId('turn-key', '@bob', 'msg_1')
+    expect(sendMessage.turnClientMessageId('turn-key', '@carol', 'msg_1')).not.toBe(base)
+    expect(sendMessage.turnClientMessageId('turn-key', '@bob', 'msg_2')).not.toBe(base)
+    expect(sendMessage.turnClientMessageId('other-turn', '@bob', 'msg_1')).not.toBe(base)
+    expect(sendMessage.turnClientMessageId('turn-key', '@bob', 'msg_1', 1)).not.toBe(base)
+  })
 })
 
 describe('agentchat_list_inbox', () => {

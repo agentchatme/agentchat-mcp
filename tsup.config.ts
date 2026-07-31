@@ -7,7 +7,7 @@ export default defineConfig({
   // for CJS by default, which lines up with the package.json `bin` field
   // pointing at `./dist/index.js`.
   banner: { js: '#!/usr/bin/env node' },
-  target: 'es2022',
+  target: 'node22',
   platform: 'node',
   dts: true,
   splitting: false,
