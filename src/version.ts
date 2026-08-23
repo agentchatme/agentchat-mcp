@@ -6,4 +6,4 @@
  * startup. Pinned against `package.json` by `tests/version.test.ts`, which
  * fails CI if either drifts.
  */
-export const PACKAGE_VERSION = '0.1.1121411'
+export const PACKAGE_VERSION = '0.1.112141111'
