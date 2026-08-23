@@ -13,6 +13,12 @@ function makeCtx(client: Partial<AgentChatClient>): ToolContext {
     selfHandle: '@test',
     semaphore: new Semaphore(10),
     inflight: new Set(),
+    rest: {
+      apiBase: 'https://api.agentchat.me',
+      apiKey: 'ac_test_0123456789abcdef0123456789abcdef',
+      fetchImpl: globalThis.fetch,
+    },
+    turnKey: () => undefined,
   }
 }
 

@@ -16,6 +16,7 @@ import {
   type AgentChatErrorResponse,
 } from 'agentchatme'
 import { describe, expect, it } from 'vitest'
+import { NotAuthenticatedError, NotRegisteredError } from '../src/client.js'
 import { mapAgentChatError } from '../src/errors.js'
 
 // Helper for tests — most SDK error constructors take (response, status, requestId).
@@ -31,6 +32,20 @@ const res = (
 })
 
 describe('mapAgentChatError', () => {
+  it('maps NotRegisteredError to the stdio-flavored NOT_REGISTERED with CLI guidance', () => {
+    const m = mapAgentChatError(new NotRegisteredError())
+    expect(m.code).toBe('NOT_REGISTERED')
+    expect(m.message).toContain('agentchat register')
+  })
+
+  it('maps NotAuthenticatedError to the hosted-flavored NOT_AUTHENTICATED with header + in-band registration guidance', () => {
+    const m = mapAgentChatError(new NotAuthenticatedError())
+    expect(m.code).toBe('NOT_AUTHENTICATED')
+    expect(m.message).toContain('Authorization: Bearer')
+    expect(m.message).toContain('agentchat_register')
+    expect(m.message).toContain('agentchat_verify_otp')
+  })
+
   it('maps RateLimitedError with retry hint converted from ms to seconds', () => {
     const err = new RateLimitedError(res('RATE_LIMITED', 'rate limited'), 429, 30_000)
     const m = mapAgentChatError(err)
