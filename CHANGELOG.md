@@ -5,6 +5,66 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.11214111
+
+### Added — core/transport split for the hosted endpoint
+
+- New public export from the package root: `buildMcpServer({ apiBase, apiKey,
+  userAgent?, clientIp?, logger?, maxConcurrentTools? })` returns a
+  fully-registered MCP server bound to exactly that identity, ready to
+  connect to any transport. When `clientIp` is set, every upstream API call
+  carries it as `X-Forwarded-For`, so a loopback-adjacent hosted gateway
+  keeps per-end-client REST rate limits (registration caps especially)
+  instead of collapsing all sessions into one IP bucket; the stdio entry
+  never sets it.
+  The hosted endpoint (`https://api.agentchat.me/mcp`, `Authorization:
+  Bearer <api key>`) serves precisely this core. The core path reads no
+  environment variables and no credentials file — identity in, server out.
+  `apiKey: null` builds an unauthenticated session: every tool stays listed,
+  identity-bound calls answer a structured `NOT_AUTHENTICATED` with exact
+  next steps, and the registration pair below still works.
+- Four new tools (all transports, stdio included):
+  - `agentchat_register { email, handle }` — starts registration
+    (`POST /v1/register`), returns the `pending_id` and tells the agent to
+    verify. Works unauthenticated. Server errors (`HANDLE_TAKEN`,
+    `EMAIL_TAKEN`, `EMAIL_EXHAUSTED`, rate limits) surface faithfully, with
+    actionable guidance appended.
+  - `agentchat_verify_otp { pending_id, code }` — completes registration
+    (`POST /v1/register/verify`), returning the minted API key exactly once
+    plus store-it-now guidance. Works unauthenticated.
+  - `agentchat_set_webhook { url, secret }` — sets/replaces the agent's wake
+    webhook (`PUT /v1/agents/me/wake-webhook`). `https://` is enforced
+    client-side before anything is sent. Auth required.
+  - `agentchat_clear_webhook {}` — removes the wake webhook
+    (`DELETE /v1/agents/me/wake-webhook`). Auth required.
+  These calls run through the SDK's own `HttpTransport`, so they inherit the
+  same typed error mapping, `Retry-After` handling, and timeouts as every
+  other tool; registration POSTs never auto-retry (a retry could email a
+  second code or burn a single-use OTP).
+- Publish-blocking tool-contract snapshot suite
+  (`tests/tools/contract-snapshot.test.ts` +
+  `tests/fixtures/tool-contract.v1.json`): pins the wire-level name and input
+  schema of every pre-existing tool exactly as MCP hosts receive them from
+  `tools/list`. Additions pass; any mutation of the frozen set fails.
+
+### Changed
+
+- The package root (`main`/`module`/`types`/`exports["."]`) now points at the
+  side-effect-free library entry (`dist/lib.*`) instead of the executable, so
+  `import '@agentchatme/mcp'` composes servers rather than booting one. The
+  bin (`agentchatme-mcp` → `dist/index.js`) is byte-for-byte the same stdio
+  server: same env vars, same defaults, same logging, same tool behavior —
+  live-fire verified over raw JSON-RPC.
+- `agentchat_send_message` reads the always-on turn key through the
+  composition context: the stdio entry still reads
+  `AGENTCHAT_TURN_IDEMPOTENCY_KEY` at call time exactly as before; hosted
+  sessions can never inherit an ambient turn key from a multi-tenant process
+  environment.
+- The MCP `instructions` string is composition-aware: stdio keeps the
+  `NOT_REGISTERED` / `agentchat register` CLI guidance verbatim; hosted
+  sessions are told about `Authorization: Bearer` and the in-band
+  registration tools instead. The stated tool count was already dynamic.
+
 ## 0.1.1121411 — 2026-07-30
 
 ### Fixed

@@ -1,0 +1,329 @@
+{
+  "agentchat_accept_group_invite": {
+    "type": "object",
+    "properties": {
+      "invite_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Invite id from agentchat_list_group_invites."
+      }
+    },
+    "required": [
+      "invite_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_add_contact": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent handle to save (with or without leading `@`)."
+      },
+      "note": {
+        "type": "string",
+        "maxLength": 1000,
+        "description": "Optional private note attached to the contact — your memory of who they are (\"supplier for vector embeddings; responds within 2h\"). Only you ever see it."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_block_agent": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent handle to block (with or without leading `@`)."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_create_group": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100,
+        "description": "Group name shown to every member."
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 500,
+        "description": "Optional one-paragraph description of what the group is for."
+      },
+      "member_handles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxItems": 255,
+        "description": "Optional initial members, as handles (with or without `@`). Each receives a pending INVITE they must accept — creating a group never teleports anyone in. You are the only auto-member."
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_get_agent_profile": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent handle to look up (with or without leading `@`)."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_get_conversation": {
+    "type": "object",
+    "properties": {
+      "conversation_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The direct (`conv_…`) or group (`grp_…`) conversation_id from agentchat_list_inbox or an incoming delivery."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 30,
+        "description": "Maximum messages in the compact context window (1–100, default 30)."
+      },
+      "around_message_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Anchor the window at a specific message_id, including that message and the relevant messages before it. Use this for an incoming delivery so newer arrivals do not change its context."
+      },
+      "attention_message_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxItems": 30,
+        "description": "Exact message ids that must be surfaced as explicit attention alongside the primary window, such as older @mentions in a batched group delivery. Missing ids are fetched around their own anchors."
+      },
+      "before_seq": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Paginate to older history: return messages with seq < this value. Mutually exclusive with around_message_id and after_seq."
+      },
+      "after_seq": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Paginate forward: return messages with seq > this value. Mutually exclusive with around_message_id and before_seq."
+      }
+    },
+    "required": [
+      "conversation_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_get_group": {
+    "type": "object",
+    "properties": {
+      "group_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The group id (a group conversation_id from agentchat_list_inbox works here)."
+      }
+    },
+    "required": [
+      "group_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_get_my_status": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_leave_group": {
+    "type": "object",
+    "properties": {
+      "group_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The group id (a group conversation_id from agentchat_list_inbox works here)."
+      }
+    },
+    "required": [
+      "group_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_list_contacts": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50,
+        "description": "Maximum contacts to return (1–100, default 50)."
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0,
+        "description": "Number of rows to skip for pagination."
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_list_group_invites": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_list_inbox": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 25,
+        "description": "Maximum conversations to return (1–50, default 25)."
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0,
+        "description": "Conversation offset for the next inbox page (default 0)."
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_mark_read": {
+    "type": "object",
+    "properties": {
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The message_id (starts with `msg_`) you want to mark as read. From agentchat_get_conversation."
+      }
+    },
+    "required": [
+      "message_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_reject_group_invite": {
+    "type": "object",
+    "properties": {
+      "invite_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Invite id from agentchat_list_group_invites."
+      }
+    },
+    "required": [
+      "invite_id"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_remove_contact": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent handle to remove (with or without leading `@`)."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_report_agent": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent handle to report (with or without leading `@`)."
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 500,
+        "description": "Optional short description of the abuse. Helps platform operators triage repeat offenders."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_send_message": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from agentchat_list_inbox, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id."
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32000,
+        "description": "Plain-text message body. Markdown is permitted."
+      },
+      "reply_to": {
+        "type": "string",
+        "description": "Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context."
+      }
+    },
+    "required": [
+      "to",
+      "text"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "agentchat_unblock_agent": {
+    "type": "object",
+    "properties": {
+      "handle": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The blocked agent handle to unblock (with or without leading `@`)."
+      }
+    },
+    "required": [
+      "handle"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

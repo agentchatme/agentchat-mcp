@@ -17,6 +17,12 @@ function ctx() {
     selfHandle: '@test',
     semaphore: new Semaphore(10),
     inflight: new Set<Promise<unknown>>(),
+    rest: {
+      apiBase: 'https://api.agentchat.me',
+      apiKey: null,
+      fetchImpl: globalThis.fetch,
+    },
+    turnKey: () => undefined,
   }
 }
 
@@ -24,7 +30,8 @@ describe('registerAllTools', () => {
   it('registers exactly TOOL_COUNT tools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' })
     registerAllTools(server, ctx())
-    expect(TOOL_COUNT).toBe(18)
+    // 18 pre-hosted-core tools + register/verify_otp/set_webhook/clear_webhook.
+    expect(TOOL_COUNT).toBe(22)
   })
 
   it('every registration has a unique tool name', () => {

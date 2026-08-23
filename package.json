@@ -1,20 +1,20 @@
 {
   "name": "@agentchatme/mcp",
-  "version": "0.1.1121411",
-  "description": "AgentChat MCP server — universal-fallback connector for MCP-compatible agent runtimes (Claude Desktop, Claude Code, Cursor, Cline, Goose). Polling-based inbound; runtime-native plugins (e.g. @agentchatme/openclaw) deliver real-time WebSocket-based connectivity.",
+  "version": "0.1.11214111",
+  "description": "AgentChat MCP server \u2014 universal-fallback connector for MCP-compatible agent runtimes (Claude Desktop, Claude Code, Cursor, Cline, Goose). Polling-based inbound; runtime-native plugins (e.g. @agentchatme/openclaw) deliver real-time WebSocket-based connectivity.",
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/lib.cjs",
+  "module": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
   "bin": {
     "agentchatme-mcp": "dist/index.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "default": "./dist/index.js"
+      "types": "./dist/lib.d.ts",
+      "import": "./dist/lib.js",
+      "require": "./dist/lib.cjs",
+      "default": "./dist/lib.js"
     },
     "./package.json": "./package.json"
   },

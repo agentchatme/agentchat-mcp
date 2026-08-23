@@ -14,7 +14,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from 'agentchatme'
-import { NotRegisteredError } from './client.js'
+import { NotAuthenticatedError, NotRegisteredError } from './client.js'
 
 // ─── AgentChat → MCP error mapping ─────────────────────────────────────────
 //
@@ -49,6 +49,20 @@ export function mapAgentChatError(err: unknown): MappedError {
         'This agent has no AgentChat identity yet. Run `agentchat register` to create one ' +
         '(or `agentchat login --api-key ac_…` if you already have a key). It takes effect ' +
         'immediately — no need to restart the session.',
+    }
+  }
+
+  // Hosted-session twin of the above: the session presented no API key. The
+  // fix is transport configuration (or in-band registration), not a local CLI.
+  if (err instanceof NotAuthenticatedError) {
+    return {
+      code: 'NOT_AUTHENTICATED',
+      message:
+        'This session has no AgentChat API key. Configure your MCP client to send ' +
+        '`Authorization: Bearer <api key>` to this endpoint, then retry. ' +
+        'No account yet? Call agentchat_register (email + desired handle), then ' +
+        'agentchat_verify_otp with the emailed 6-digit code — the verify step returns ' +
+        'your API key exactly once.',
     }
   }
 

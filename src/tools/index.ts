@@ -1,6 +1,7 @@
 import * as acceptGroupInvite from './accept-group-invite.js'
 import * as addContact from './add-contact.js'
 import * as blockAgent from './block-agent.js'
+import * as clearWebhook from './clear-webhook.js'
 import * as createGroup from './create-group.js'
 import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
@@ -11,11 +12,14 @@ import * as listContacts from './list-contacts.js'
 import * as listGroupInvites from './list-group-invites.js'
 import * as listInbox from './list-inbox.js'
 import * as markRead from './mark-read.js'
+import * as registerAccount from './register.js'
 import * as rejectGroupInvite from './reject-group-invite.js'
 import * as removeContact from './remove-contact.js'
 import * as reportAgent from './report-agent.js'
 import * as sendMessage from './send-message.js'
+import * as setWebhook from './set-webhook.js'
 import * as unblockAgent from './unblock-agent.js'
+import * as verifyOtp from './verify-otp.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
@@ -41,6 +45,14 @@ const REGISTRATIONS: ToolRegistration[] = [
   acceptGroupInvite.register,
   rejectGroupInvite.register,
   leaveGroup.register,
+  // Additions past this line keep the pre-existing tools/list order stable.
+  // The onboarding pair works unauthenticated by design; the webhook pair
+  // requires auth. tests/tools/contract-snapshot.test.ts pins the tools above
+  // this line — extend the fixture when adding here.
+  registerAccount.register,
+  verifyOtp.register,
+  setWebhook.register,
+  clearWebhook.register,
 ]
 
 /** Register every tool against the given MCP server. Called once at startup. */

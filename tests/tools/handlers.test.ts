@@ -35,6 +35,14 @@ function makeCtx(client: Partial<AgentChatClient>): ToolContext {
     selfHandle: '@test',
     semaphore: new Semaphore(10),
     inflight: new Set(),
+    rest: {
+      apiBase: 'https://api.agentchat.me',
+      apiKey: 'ac_test_0123456789abcdef0123456789abcdef',
+      fetchImpl: globalThis.fetch,
+    },
+    // Mirror the stdio composition: the turn key is read from the env at
+    // call time — the idempotency tests below pin exactly that contract.
+    turnKey: () => process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY']?.trim(),
   }
 }
 

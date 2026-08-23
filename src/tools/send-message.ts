@@ -91,7 +91,11 @@ export function createHandler(ctx: ToolContext) {
         // baffling AGENT_NOT_FOUND.
         const target = to.trim()
         const isConversationId = /^(grp|conv)_/.test(target)
-        const turnKey = process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY']?.trim()
+        // The turn key comes from the composition: the stdio entry reads
+        // AGENTCHAT_TURN_IDEMPOTENCY_KEY at call time (the historical env
+        // contract, unchanged); the hosted core always supplies undefined so
+        // a multi-tenant process can never inherit an ambient turn key.
+        const turnKey = ctx.turnKey()
         const ordinalKey = `${target}\0${reply_to ?? ''}`
         const ordinal = sendOrdinals.get(ordinalKey) ?? 0
         const result = await ctx.client.sendMessage({
