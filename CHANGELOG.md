@@ -5,6 +5,75 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- **Dependency security overrides restored.** The blanket `fast-uri: 4.1.2`
+  pin had clobbered the whole security-override block in
+  `pnpm-workspace.yaml` (build allowlist, release-age excludes, and the seven
+  scoped overrides — dropping, among others, the esbuild floor back to a
+  vulnerable 0.27.x line) and violated ajv's declared `fast-uri@^3` range.
+  The full block is back, with fast-uri scoped as
+  `"fast-uri@>=3.0.0 <3.1.5": "3.1.5"` (the patched release for
+  GHSA-7p8r-x3mc-p8w7 v2). The duplicate `pnpm.overrides` block in
+  `package.json` is gone — pnpm 10 ignores it; `pnpm-workspace.yaml` is the
+  single source of truth. Lockfile now resolves esbuild 0.28.1 and
+  fast-uri 3.1.5; `pnpm audit --prod --audit-level high` is clean.
+- **Build determinism: the tsup clean race is gone.** tsup 8.x runs array
+  configs in parallel, so config #1's `clean: true` raced config #2's
+  `dist/lib.*` writes — a publish could nondeterministically ship without
+  the library entry. Both configs now set `clean: false` and the build
+  script wipes `dist/` exactly once before tsup starts. A publish-blocking
+  test builds five times in a row and asserts the complete artifact set
+  (bin + library, ESM + CJS, both declaration flavors, shebangs) after
+  every run.
+- **CJS TypeScript consumers get real declarations.** `exports["."]` served
+  the ESM `dist/lib.d.ts` to both `import` and `require`, which fails under
+  `moduleResolution: node16/nodenext` with TS1479. Each condition now
+  carries its own types (`import` → `lib.d.ts`, `require` → `lib.d.cts`,
+  which tsup already emitted); verified with publint.
+- **Hosted core: new `selfHandle` option on `buildMcpServer`.** A gateway
+  that already knows the session's handle passes it in; `ctx.selfHandle` is
+  then correct immediately and no background `/v1/agents/me` lookup ever
+  fires. Without it, per-request server instances always saw the `'?'`
+  placeholder, and `agentchat_get_conversation` misclassified the agent's
+  own messages as peer messages. Validated at build time against the
+  canonical handle grammar. On the lazy path (no `selfHandle`), a failed
+  handle fetch no longer latches `'?'` forever — the next ask retries.
+- **Hosted core: new `turnKey` option on `buildMcpServer`.** The hosted
+  composition previously hard-wired `ctx.turnKey` to `undefined`; a gateway
+  hosting an always-on turn can now supply the turn-key source explicitly.
+  The default stays `undefined`, and the core still reads no environment.
+- **Composition-aware UNAUTHORIZED guidance.** A rejected key on the hosted
+  endpoint no longer advises checking `AGENTCHAT_API_KEY` (stdio-only
+  advice); it points at the `Authorization: Bearer` header and the in-band
+  agentchat_register / agentchat_verify_otp flow, mirroring how
+  NOT_AUTHENTICATED was already dualized.
+- **Error guidance no longer discards typed error subclasses.**
+  `rethrowWithGuidance` appends guidance to the original error in place
+  instead of re-minting a base error, so class identity, `retryAfterMs`,
+  `status`, `requestId`, and `details` survive. A guided 429
+  `EMAIL_EXHAUSTED` now keeps BOTH the guidance text and the retry-seconds
+  hint in the mapped tool error; a `PENDING_NOT_FOUND` sent as HTTP 404
+  keeps its wire code and message.
+- **`userAgent` ByteString validation.** Characters above U+00FF (e.g. `→`)
+  passed the old control-char check and then made every request fail at
+  `Headers.set` time as a bogus CONNECTION_ERROR. Rejected at build time
+  now, alongside the existing control-character guard.
+- **stdio identity: late fetch binding restored.** `IdentityProvider`
+  captured `globalThis.fetch` once at construction; instrumentation or test
+  stubs patched afterwards were silently ignored. The base fetch is
+  resolved again at client-build / REST-read time, as before the
+  hosted-core split. The hosted path's explicit `fetchImpl` injection is
+  unchanged.
+- **`agentchat_set_webhook`: the https-only rule lives in the input
+  schema.** The rule moved from a hand-constructed wire error in the
+  handler into the zod shape (`.startsWith('https://')`), so MCP hosts see
+  it in the tools/list JSON Schema (`pattern`) and bad input is rejected at
+  the protocol layer before any network call. The 18 frozen legacy tool
+  contracts are untouched (this tool is in the additions section).
+
 ## 0.1.1121411111
 
 ### Added — core/transport split for the hosted endpoint
