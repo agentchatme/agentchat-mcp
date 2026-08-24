@@ -7,8 +7,10 @@ import { defineConfig } from 'tsup'
 //     no side effects on import. `package.json#exports/main/module/types`
 //     point here so `import '@agentchatme/mcp'` composes servers instead of
 //     accidentally booting one.
-// tsup runs array configs sequentially; only the first cleans dist/ so the
-// second build cannot delete the first's output.
+// tsup 8.x runs array configs in PARALLEL (Promise.all), so NEITHER config
+// may set `clean: true` — config #1's clean would race config #2's dist
+// writes and nondeterministically delete dist/lib.* mid-publish. dist/ is
+// wiped ONCE, before tsup starts, by the package.json `build` script.
 const shared = {
   format: ['esm', 'cjs'],
   target: 'node22',
@@ -35,7 +37,8 @@ export default defineConfig([
     // for CJS by default, which lines up with the package.json `bin` field
     // pointing at `./dist/index.js`.
     banner: { js: '#!/usr/bin/env node' },
-    clean: true,
+    // Never `clean: true` here — parallel configs, see module header.
+    clean: false,
   },
   {
     ...shared,

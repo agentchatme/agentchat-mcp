@@ -11,9 +11,14 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/lib.d.ts",
-      "import": "./dist/lib.js",
-      "require": "./dist/lib.cjs",
+      "import": {
+        "types": "./dist/lib.d.ts",
+        "default": "./dist/lib.js"
+      },
+      "require": {
+        "types": "./dist/lib.d.cts",
+        "default": "./dist/lib.cjs"
+      },
       "default": "./dist/lib.js"
     },
     "./package.json": "./package.json"
@@ -30,7 +35,7 @@
     "node": ">=22.0.0 <23"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
@@ -80,10 +85,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "pnpm": {
-    "overrides": {
-      "fast-uri": "4.1.2"
-    }
   }
 }
