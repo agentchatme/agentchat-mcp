@@ -27,9 +27,10 @@ import { PACKAGE_VERSION } from './version.js'
 //   * Registers ALL tools, bound to exactly the identity in `opts`.
 //   * Reads NOTHING ambient — no process.env, no credentials file. What you
 //     pass is the entire identity. (The turn-idempotency env contract of the
-//     stdio entry is explicitly severed here: `turnKey` always resolves to
-//     undefined, so a multi-tenant process can never leak one session's turn
-//     key into another's sends.)
+//     stdio entry is explicitly severed here: `turnKey` resolves to whatever
+//     the caller passed in `opts.turnKey` — default undefined — never to an
+//     ambient env var, so a multi-tenant process can never leak one session's
+//     turn key into another's sends.)
 //   * `apiKey: null` builds an UNAUTHENTICATED session: every tool is still
 //     listed, and calls fail with the structured NOT_AUTHENTICATED error —
 //     except agentchat_register / agentchat_verify_otp, which work without a
@@ -51,6 +52,25 @@ export interface BuildMcpServerOptions {
    * attached regardless.
    */
   userAgent?: string
+  /**
+   * Optional known handle for this session's identity (with or without the
+   * leading `@`). A hosted gateway that already authenticated the key knows
+   * the handle; passing it here makes `ctx.selfHandle` correct IMMEDIATELY
+   * and suppresses the lazy background `getMe()` lookup entirely. Without
+   * it, per-request server instances would answer their first (often only)
+   * tool call with the `'?'` placeholder — and own-vs-peer message
+   * classification in agentchat_get_conversation would misclassify the
+   * agent's own messages.
+   */
+  selfHandle?: string
+  /**
+   * Optional turn-idempotency key source, read at tool-call time — the
+   * hosted twin of the stdio entry's AGENTCHAT_TURN_IDEMPOTENCY_KEY env
+   * contract. A gateway hosting an always-on turn passes the session's turn
+   * key here so retried sends stay idempotent. Default: always undefined
+   * (interactive semantics); the core still never reads the environment.
+   */
+  turnKey?: () => string | undefined
   /**
    * Optional end-client IP for this session (IPv4 or IPv6, no port). When
    * set, every AgentChat API request this server makes carries it in
@@ -138,10 +158,27 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
       : null
 
   if (opts.userAgent !== undefined) {
+    // Header values are ByteStrings: every char must fit in one byte. A char
+    // above U+00FF (e.g. '\u2192') passes a control-char-only check at build
+    // time and then makes Headers.set throw at REQUEST time, surfacing as a
+    // bogus CONNECTION_ERROR on every call. Reject control chars AND any
+    // char outside Latin-1 here, at build time.
     // eslint-disable-next-line no-control-regex
-    if (opts.userAgent.length === 0 || /[\u0000-\u001f\u007f]/.test(opts.userAgent)) {
+    if (
+      opts.userAgent.length === 0 ||
+      /[\u0000-\u001f\u007f]/.test(opts.userAgent) ||
+      /[^\u0000-\u00ff]/.test(opts.userAgent)
+    ) {
       throw new Error(
-        'buildMcpServer: userAgent must be a non-empty header-safe string (no control characters)',
+        'buildMcpServer: userAgent must be a non-empty header-safe string (single-byte Latin-1 only; no control characters)',
+      )
+    }
+  }
+
+  if (opts.selfHandle !== undefined) {
+    if (!/^@?[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(opts.selfHandle)) {
+      throw new Error(
+        `buildMcpServer: selfHandle must be a valid AgentChat handle (lowercase letters, digits, single hyphens, optional leading @), got ${JSON.stringify(opts.selfHandle)}`,
       )
     }
   }
@@ -177,7 +214,12 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
   }
   const fetchImpl = defaultMcpFetch(baseFetch)
 
-  const provider = new FixedIdentityProvider({ apiBase, apiKey, fetchImpl })
+  const provider = new FixedIdentityProvider({
+    apiBase,
+    apiKey,
+    fetchImpl,
+    ...(opts.selfHandle !== undefined ? { selfHandle: opts.selfHandle } : {}),
+  })
 
   const server = new McpServer(
     {
@@ -204,7 +246,9 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
       return provider.getRest()
     },
     // Hosted sessions NEVER inherit an ambient turn key — see module header.
-    turnKey: () => undefined,
+    // A gateway hosting an always-on turn passes its own source explicitly.
+    turnKey: opts.turnKey ?? (() => undefined),
+    mode: 'hosted',
     logger,
     semaphore,
     inflight,

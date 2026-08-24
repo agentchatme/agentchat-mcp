@@ -1,4 +1,3 @@
-import { ValidationError } from 'agentchatme'
 import { z } from 'zod'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport } from './_rest.js'
@@ -7,10 +6,17 @@ import type { ToolContext, ToolRegistration } from './_types.js'
 export const NAME = 'agentchat_set_webhook'
 
 export const INPUT_SHAPE = {
+  // https-only is enforced IN the zod shape (not by a handler check) so the
+  // rule is part of the wire contract: MCP hosts see it in the tools/list
+  // JSON Schema (`pattern`) and can reject bad input before calling at all.
   url: z
     .string()
     .url()
     .max(2048)
+    .startsWith(
+      'https://',
+      'The webhook url must use https:// — plain http is rejected before anything is sent.',
+    )
     .describe(
       'HTTPS endpoint AgentChat calls to wake this agent when something needs its attention (e.g. a new message). Must be `https://` — plain http is rejected before anything is sent.',
     ),
@@ -39,22 +45,13 @@ export function createHandler(ctx: ToolContext) {
       {
         toolName: NAME,
         logger: ctx.logger,
+        mode: ctx.mode,
         // Never log the secret — length only, for debuggability.
         args: { url, secret_length: secret.length },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
       },
       async () => {
-        const parsedUrl = new URL(url) // schema already validated URL syntax
-        if (parsedUrl.protocol !== 'https:') {
-          throw new ValidationError(
-            {
-              code: 'VALIDATION_ERROR',
-              message: `The webhook url must use https:// (got ${parsedUrl.protocol}//). Nothing was sent to the server.`,
-            },
-            400,
-          )
-        }
         const rest = requireRestAuth(ctx)
         const http = restTransport(rest, { withAuth: true })
         const res = await http.request<unknown>(

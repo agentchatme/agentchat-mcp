@@ -60,6 +60,39 @@ describe('mapAgentChatError', () => {
     expect(m.retryAfterSeconds).toBeUndefined()
   })
 
+  it('keeps the wire code, message, AND retry hint for a foreign-coded 429 (status-fallback RateLimitedError)', () => {
+    // A guided EMAIL_EXHAUSTED reaches the mapper as a RateLimitedError with
+    // rethrowWithGuidance's text appended in place — nothing may be lost.
+    const err = new RateLimitedError(
+      res('EMAIL_EXHAUSTED', 'server says exhausted. Use a different email address.'),
+      429,
+      3_600_000,
+    )
+    const m = mapAgentChatError(err)
+    expect(m.code).toBe('EMAIL_EXHAUSTED')
+    expect(m.message).toContain('server says exhausted')
+    expect(m.message).toContain('different email')
+    expect(m.retryAfterSeconds).toBe(3600)
+  })
+
+  it('keeps the wire code and message for a foreign-coded 404 (status-fallback NotFoundError)', () => {
+    const err = new NotFoundError(
+      res('PENDING_NOT_FOUND', 'no such pending registration. Call agentchat_register again.'),
+      404,
+    )
+    const m = mapAgentChatError(err)
+    expect(m.code).toBe('PENDING_NOT_FOUND')
+    expect(m.message).toContain('agentchat_register')
+  })
+
+  it('still cans the message for the SDK-modeled not-found codes', () => {
+    const m = mapAgentChatError(
+      new NotFoundError(res('AGENT_NOT_FOUND', 'agent missing'), 404),
+    )
+    expect(m.code).toBe('NOT_FOUND')
+    expect(m.message).toMatch(/does not exist or is not visible/)
+  })
+
   it('maps RestrictedError with explanation', () => {
     const m = mapAgentChatError(
       new RestrictedError(res('RESTRICTED', 'restricted'), 403),
@@ -114,12 +147,34 @@ describe('mapAgentChatError', () => {
     expect(m.code).toBe('FORBIDDEN')
   })
 
-  it('maps UnauthorizedError', () => {
+  it('maps UnauthorizedError to stdio-flavored guidance by default (env key + host config)', () => {
     const m = mapAgentChatError(
       new UnauthorizedError(res('UNAUTHORIZED', 'unauthorized'), 401),
     )
     expect(m.code).toBe('UNAUTHORIZED')
     expect(m.message).toMatch(/AGENTCHAT_API_KEY/)
+    expect(m.message).not.toContain('Authorization: Bearer')
+  })
+
+  it('maps UnauthorizedError to stdio-flavored guidance when mode=stdio is explicit', () => {
+    const m = mapAgentChatError(
+      new UnauthorizedError(res('UNAUTHORIZED', 'unauthorized'), 401),
+      'stdio',
+    )
+    expect(m.code).toBe('UNAUTHORIZED')
+    expect(m.message).toMatch(/AGENTCHAT_API_KEY/)
+  })
+
+  it('maps UnauthorizedError to hosted-flavored guidance (Authorization header + in-band re-registration)', () => {
+    const m = mapAgentChatError(
+      new UnauthorizedError(res('UNAUTHORIZED', 'unauthorized'), 401),
+      'hosted',
+    )
+    expect(m.code).toBe('UNAUTHORIZED')
+    expect(m.message).toContain('Authorization: Bearer')
+    expect(m.message).toContain('agentchat_register')
+    expect(m.message).toContain('agentchat_verify_otp')
+    expect(m.message).not.toContain('AGENTCHAT_API_KEY')
   })
 
   it('maps ValidationError', () => {

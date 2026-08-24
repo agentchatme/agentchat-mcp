@@ -61,10 +61,15 @@ export function requireRestAuth(ctx: ToolContext): AuthenticatedRest {
  * Matching is by the SERVER's error code, not the SDK class: the SDK's
  * createAgentChatError falls back to a status-based class for codes it does
  * not know (e.g. a 429 EMAIL_EXHAUSTED arrives as RateLimitedError with
- * `code` still 'EMAIL_EXHAUSTED'), and the generic error mapper would then
- * report the status family instead of the real code. Rewrapping to the base
- * class keeps the wire code + message authoritative in the tool response,
- * whatever HTTP status the server chose. Codes outside the map rethrow
+ * `code` still 'EMAIL_EXHAUSTED').
+ *
+ * The guidance is appended to the ORIGINAL error object's message in place —
+ * never re-minted onto a fresh base AgentChatError — so the subclass and all
+ * its extras survive: class identity, `retryAfterMs` on RateLimitedError,
+ * `status`, `requestId`, `details`. (The old rewrap discarded the subclass,
+ * so a guided EMAIL_EXHAUSTED lost its Retry-After hint in the mapped tool
+ * error.) errors.ts keeps the wire code + message authoritative for
+ * status-fallback-minted subclasses. Codes outside the map rethrow
  * untouched, so typed errors (plain RATE_LIMITED with its retry hint,
  * VALIDATION_ERROR, …) keep their richer mapping.
  */
@@ -75,15 +80,7 @@ export function rethrowWithGuidance(
   if (err instanceof AgentChatError) {
     const extra = guidance[err.code]
     if (extra) {
-      throw new AgentChatError(
-        {
-          code: err.code,
-          message: `${err.message} ${extra}`,
-          ...(err.details ? { details: err.details } : {}),
-        },
-        err.status,
-        err.requestId,
-      )
+      err.message = `${err.message} ${extra}`
     }
   }
   throw err

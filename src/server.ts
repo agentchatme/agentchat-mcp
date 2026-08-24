@@ -75,6 +75,7 @@ export function buildServer(
     // Historical env contract, read at call time exactly as before the
     // core/transport split — always-on integrations set this per process.
     turnKey: () => process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY']?.trim(),
+    mode: 'stdio',
     logger,
     semaphore,
     inflight,

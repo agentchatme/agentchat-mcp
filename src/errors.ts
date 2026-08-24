@@ -15,6 +15,7 @@ import {
   ValidationError,
 } from 'agentchatme'
 import { NotAuthenticatedError, NotRegisteredError } from './client.js'
+import type { ServerMode } from './instructions.js'
 
 // ─── AgentChat → MCP error mapping ─────────────────────────────────────────
 //
@@ -38,7 +39,34 @@ export interface MappedError {
   retryAfterSeconds?: number
 }
 
-export function mapAgentChatError(err: unknown): MappedError {
+// Composition-flavored guidance for a rejected key. The key LIVES somewhere
+// different per composition — stdio: the AGENTCHAT_API_KEY env / credentials
+// file on the local machine; hosted: the `Authorization: Bearer` header the
+// MCP client sends to the endpoint — so "go fix it" must point at the right
+// place, exactly like instructions.ts dualizes the identity guidance.
+const UNAUTHORIZED_GUIDANCE: Record<ServerMode, string> = {
+  stdio:
+    'Authentication failed. Your AGENTCHAT_API_KEY may be invalid, rotated, or revoked. Check your MCP host configuration.',
+  hosted:
+    'Authentication failed. The API key this session presented — the `Authorization: Bearer` value your MCP client sends to this endpoint — was rejected (invalid, rotated, or revoked). Fix the header value in your MCP configuration, or mint a fresh identity with agentchat_register followed by agentchat_verify_otp.',
+}
+
+// The codes the SDK deliberately maps to NotFoundError. Anything else on a
+// NotFoundError arrived via the plain HTTP-404 status fallback, and its wire
+// code + message stay authoritative (see the 404/429 branches below).
+const SDK_NOT_FOUND_CODES = new Set([
+  'NOT_FOUND',
+  'AGENT_NOT_FOUND',
+  'CONVERSATION_NOT_FOUND',
+  'MESSAGE_NOT_FOUND',
+  'OWNER_NOT_FOUND',
+  'CLAIM_NOT_FOUND',
+])
+
+export function mapAgentChatError(
+  err: unknown,
+  mode: ServerMode = 'stdio',
+): MappedError {
   // No identity yet — the agent hasn't registered/logged in. Not a failure of
   // the call so much as a "you're not signed in": tell it exactly what to run.
   // Works the moment they do — no restart (that's the whole point of this).
@@ -72,6 +100,18 @@ export function mapAgentChatError(err: unknown): MappedError {
   if (err instanceof RateLimitedError) {
     const retryAfterSeconds =
       err.retryAfterMs !== null ? Math.ceil(err.retryAfterMs / 1000) : undefined
+    // A 429 whose body carries a code the SDK does not model (e.g.
+    // EMAIL_EXHAUSTED from the register flow) reaches this class via the
+    // status fallback. The wire code + message — possibly with tool guidance
+    // appended by rethrowWithGuidance — stay authoritative, and the retry
+    // hint the subclass carries is preserved alongside them.
+    if (err.code && err.code !== 'RATE_LIMITED') {
+      return {
+        code: err.code,
+        message: err.message,
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      }
+    }
     return {
       code: 'RATE_LIMITED',
       message: `Rate limit exceeded${
@@ -133,6 +173,12 @@ export function mapAgentChatError(err: unknown): MappedError {
   }
 
   if (err instanceof NotFoundError) {
+    // Same wire-code-authoritative rule as the 429 branch: a 404 whose body
+    // code the SDK does not model (e.g. PENDING_NOT_FOUND from the verify
+    // flow) keeps its own code and message instead of the generic advice.
+    if (err.code && !SDK_NOT_FOUND_CODES.has(err.code)) {
+      return { code: err.code, message: err.message }
+    }
     return {
       code: 'NOT_FOUND',
       message:
@@ -150,8 +196,7 @@ export function mapAgentChatError(err: unknown): MappedError {
   if (err instanceof UnauthorizedError) {
     return {
       code: 'UNAUTHORIZED',
-      message:
-        'Authentication failed. Your AGENTCHAT_API_KEY may be invalid, rotated, or revoked. Check your MCP host configuration.',
+      message: UNAUTHORIZED_GUIDANCE[mode],
     }
   }
 

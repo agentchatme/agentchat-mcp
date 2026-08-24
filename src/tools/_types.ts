@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
+import type { ServerMode } from '../instructions.js'
 import type { Semaphore } from '../semaphore.js'
 
 // ─── Tool registration contract ────────────────────────────────────────────
@@ -50,10 +51,18 @@ export interface ToolContext {
    * Turn-scoped idempotency key for autonomous host turns, or undefined for
    * interactive sessions. The stdio composition reads
    * AGENTCHAT_TURN_IDEMPOTENCY_KEY at call time (preserving the historical
-   * env contract); the hosted composition always returns undefined so a
-   * multi-tenant process can never inherit an ambient turn key.
+   * env contract); the hosted composition returns whatever the caller passed
+   * in `BuildMcpServerOptions.turnKey` (default undefined) so a multi-tenant
+   * process can never inherit an ambient turn key.
    */
   turnKey: () => string | undefined
+  /**
+   * Which composition built this context — flavors composition-specific
+   * error guidance (errors.ts), exactly like instructions.ts flavors the
+   * server instructions. Optional for test contexts; absent means 'stdio'
+   * (the historical behavior).
+   */
+  mode?: ServerMode
 }
 
 export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void

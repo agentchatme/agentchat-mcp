@@ -56,13 +56,23 @@ export class IdentityProvider implements IdentitySource {
   private identitySignature: string | null = null
   private client: AgentChatClient | null = null
   private handle = '?'
-  private readonly fetchImpl: typeof fetch
 
   constructor(
     private readonly config: IdentityConfig,
     private readonly logger: Logger,
-  ) {
-    this.fetchImpl = withMcpClientIdentity(globalThis.fetch, {
+  ) {}
+
+  /**
+   * Resolve the base fetch LATE — at client-build / REST-read time, never at
+   * construction. Instrumentation layers and test stubs that patch
+   * `globalThis.fetch` after the provider exists are a supported (and
+   * previously working) pattern; capturing fetch once in the constructor
+   * silently pinned the pre-patch implementation for the process lifetime.
+   * The hosted composition is different by design: it INJECTS an explicit
+   * fetchImpl into FixedIdentityProvider and is untouched by this.
+   */
+  private buildFetch(): typeof fetch {
+    return withMcpClientIdentity(globalThis.fetch, {
       name: this.config.AGENTCHAT_CLIENT_NAME ?? 'mcp',
       version: this.config.AGENTCHAT_CLIENT_VERSION,
     })
@@ -93,7 +103,7 @@ export class IdentityProvider implements IdentitySource {
     this.client = new AgentChatClient({
       apiKey: id.apiKey,
       baseUrl: apiBase,
-      fetch: this.fetchImpl,
+      fetch: this.buildFetch(),
     })
     this.handle = id.handle ?? '?'
     this.logger.info({ handle: this.handle }, 'AgentChat identity loaded')
@@ -135,7 +145,7 @@ export class IdentityProvider implements IdentitySource {
     return {
       apiBase: id?.apiBase ?? this.config.AGENTCHAT_API_BASE,
       apiKey: id?.apiKey ?? null,
-      fetchImpl: this.fetchImpl,
+      fetchImpl: this.buildFetch(),
     }
   }
 }
@@ -152,14 +162,24 @@ export interface FixedIdentityOptions {
   /** null = unauthenticated session (registration tools still work). */
   apiKey: string | null
   fetchImpl: typeof fetch
+  /**
+   * The session's known handle (with or without the leading `@`), when the
+   * caller already authenticated the key and knows it. Provided, it is
+   * returned by getSelfHandle() immediately and NO background getMe() ever
+   * fires — essential for per-request hosted servers, whose first tool call
+   * would otherwise see the `'?'` placeholder and misclassify the agent's
+   * own messages as peer messages.
+   */
+  selfHandle?: string
 }
 
 export class FixedIdentityProvider implements IdentitySource {
   private readonly client: AgentChatClient | null
-  private handle = '?'
+  private handle: string
   private handleFetchStarted = false
 
   constructor(private readonly options: FixedIdentityOptions) {
+    this.handle = options.selfHandle ?? '?'
     this.client =
       options.apiKey === null
         ? null
@@ -176,10 +196,12 @@ export class FixedIdentityProvider implements IdentitySource {
    * Deliberately NOT in the constructor: hosted gateways may build a server
    * per HTTP request, and an eager getMe() would double their API traffic.
    * Until it lands (or if the key is bad) the placeholder '?' matches the
-   * behavior of a bare AGENTCHAT_API_KEY stdio deploy.
+   * behavior of a bare AGENTCHAT_API_KEY stdio deploy. When the caller
+   * supplied `selfHandle`, or an earlier fetch already resolved the handle,
+   * this is a no-op.
    */
   private ensureHandleFetch(): void {
-    if (this.handleFetchStarted || !this.client) return
+    if (this.handle !== '?' || this.handleFetchStarted || !this.client) return
     this.handleFetchStarted = true
     void this.client
       .getMe()
@@ -187,7 +209,11 @@ export class FixedIdentityProvider implements IdentitySource {
         this.handle = me.handle
       })
       .catch(() => {
-        // Leave '?' — a genuinely bad key surfaces on the first real call.
+        // Do NOT latch the failure: reset the flag so the next ask retries.
+        // Latching left every later call stuck on '?' forever after one
+        // transient failure. (A genuinely bad key still surfaces as a typed
+        // error on the first real tool call.)
+        this.handleFetchStarted = false
       })
   }
 

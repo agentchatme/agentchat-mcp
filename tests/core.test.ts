@@ -91,6 +91,37 @@ describe('buildMcpServer — construction', () => {
       }),
     ).toThrow(/userAgent/)
   })
+
+  it('rejects a userAgent with chars above U+00FF (ByteString guard) at build time', () => {
+    // Headers.set would otherwise throw at REQUEST time on every call,
+    // surfacing as a bogus CONNECTION_ERROR instead of a build-time error.
+    for (const bad of ['agentchat→hosted/1.0', 'bot 🚀', 'sm–dash']) {
+      expect(() =>
+        buildMcpServer({ apiBase: 'https://x.example', apiKey: null, userAgent: bad }),
+      ).toThrow(/userAgent/)
+    }
+    // Printable Latin-1 (single-byte) stays allowed.
+    expect(() =>
+      buildMcpServer({
+        apiBase: 'https://x.example',
+        apiKey: null,
+        userAgent: 'agentchat-hosté/1.0',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects a malformed selfHandle at build time and accepts valid forms', () => {
+    for (const bad of ['Bad_Handle', '@UPPER', 'a--b', '-lead', '@', '9start', 'trail-']) {
+      expect(() =>
+        buildMcpServer({ apiBase: 'https://x.example', apiKey: null, selfHandle: bad }),
+      ).toThrow(/selfHandle/)
+    }
+    for (const good of ['self-bot', '@self-bot', 'a2', '@research-bot-7']) {
+      expect(() =>
+        buildMcpServer({ apiBase: 'https://x.example', apiKey: null, selfHandle: good }),
+      ).not.toThrow()
+    }
+  })
 })
 
 describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
@@ -430,6 +461,170 @@ describe('buildMcpServer — authenticated session', () => {
         arguments: { email: 'owner@example.com', handle: 'ua-bot' },
       })
       expect(calls[0]!.headers.get('user-agent')).toBe('agentchat-hosted-mcp/9.9-test')
+    } finally {
+      await close()
+    }
+  })
+
+  it('uses the provided turnKey source: sends carry the deterministic ac_turn_ client_msg_id', async () => {
+    const { impl, calls } = fetchStub(() =>
+      json(200, {
+        id: 'msg_t',
+        conversation_id: 'conv_t',
+        seq: 3,
+        created_at: '2026-08-24T00:00:00Z',
+      }),
+    )
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({
+      apiBase: 'https://x.example',
+      apiKey: KEY,
+      turnKey: () => 'gateway-turn-abc',
+    })
+    const { client, close } = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'agentchat_send_message',
+        arguments: { to: '@peer', text: 'idempotent hello' },
+      })
+      expect(result.isError).toBeFalsy()
+      const send = calls.find((c) => c.url === 'https://x.example/v1/messages')
+      expect(send).toBeDefined()
+      const body = send!.body as Record<string, unknown>
+      expect(String(body['client_msg_id'])).toMatch(/^ac_turn_[0-9a-f]{64}$/)
+    } finally {
+      await close()
+    }
+  })
+
+  it('answers a rejected key with the HOSTED-flavored UNAUTHORIZED guidance', async () => {
+    const { impl } = fetchStub(() =>
+      json(401, { code: 'UNAUTHORIZED', message: 'bad key' }),
+    )
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: KEY })
+    const { client, close } = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'agentchat_get_my_status',
+        arguments: {},
+      })
+      expect(result.isError).toBe(true)
+      const text = firstText(result)
+      expect(text).toContain('UNAUTHORIZED')
+      expect(text).toContain('Authorization: Bearer')
+      expect(text).toContain('agentchat_register')
+      expect(text).not.toContain('AGENTCHAT_API_KEY')
+    } finally {
+      await close()
+    }
+  })
+})
+
+describe('buildMcpServer — selfHandle identity binding', () => {
+  const KEY = 'ac_live_0123456789abcdef0123456789abcdef'
+
+  it('classifies the agent\'s own messages correctly via the provided selfHandle, with ZERO /v1/agents/me calls', async () => {
+    const messagesNewestFirst = [
+      {
+        id: 'msg_self',
+        conversation_id: 'conv_1',
+        sender: 'self-bot',
+        seq: 2,
+        type: 'text',
+        content: { text: 'my own message' },
+        context: { sender: { handle: 'self-bot' } },
+        status: 'delivered',
+        created_at: '2026-08-24T00:01:00Z',
+      },
+      {
+        id: 'msg_peer',
+        conversation_id: 'conv_1',
+        sender: 'peer-bot',
+        seq: 1,
+        type: 'text',
+        content: { text: 'their message' },
+        context: { sender: { handle: 'peer-bot' } },
+        status: 'delivered',
+        created_at: '2026-08-24T00:00:00Z',
+      },
+    ]
+    const { impl, calls } = fetchStub((call) =>
+      call.url.includes('/v1/messages/conv_1')
+        ? json(200, messagesNewestFirst)
+        : json(404, { code: 'NOT_FOUND', message: 'no context endpoint' }),
+    )
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({
+      apiBase: 'https://x.example',
+      apiKey: KEY,
+      selfHandle: '@self-bot',
+    })
+    const { client, close } = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'agentchat_get_conversation',
+        arguments: { conversation_id: 'conv_1' },
+      })
+      expect(result.isError).toBeFalsy()
+      const payload = JSON.parse(firstText(result)) as {
+        focus: { message_id: string; is_incoming: boolean }
+        messages: Array<{
+          message_id: string
+          sender: { handle: string }
+          delivery: { scope: string }
+        }>
+      }
+      // Own message: receipt scope flips to the counterparty's receipt.
+      const own = payload.messages.find((m) => m.message_id === 'msg_self')!
+      const peer = payload.messages.find((m) => m.message_id === 'msg_peer')!
+      expect(own.delivery.scope).toBe('counterparty_receipt')
+      expect(peer.delivery.scope).toBe('your_receipt')
+      // Focus (the newest message) is the agent's own → not incoming.
+      expect(payload.focus.message_id).toBe('msg_self')
+      expect(payload.focus.is_incoming).toBe(false)
+      // The whole point: the handle was NEVER fetched.
+      expect(calls.some((c) => c.url.includes('/v1/agents/me'))).toBe(false)
+    } finally {
+      await close()
+    }
+  })
+})
+
+describe('buildMcpServer — set_webhook schema contract', () => {
+  const KEY = 'ac_live_0123456789abcdef0123456789abcdef'
+
+  it('advertises the https-only rule in the tools/list input schema', async () => {
+    const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: null })
+    const { client, close } = await connect(server)
+    try {
+      const { tools } = await client.listTools()
+      const setWebhook = tools.find((t) => t.name === 'agentchat_set_webhook')!
+      const urlSchema = (
+        setWebhook.inputSchema as {
+          properties: Record<string, { pattern?: string }>
+        }
+      ).properties['url']!
+      expect(String(urlSchema.pattern)).toContain('https')
+    } finally {
+      await close()
+    }
+  })
+
+  it('rejects a plain-http url at the MCP schema layer with zero network calls', async () => {
+    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: KEY })
+    const { client, close } = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'agentchat_set_webhook',
+        arguments: { url: 'http://hooks.example/wake', secret: 's3cret-value' },
+      })
+      expect(result.isError).toBe(true)
+      expect(firstText(result)).toContain('Invalid arguments')
+      expect(firstText(result)).toContain('https://')
+      expect(calls).toHaveLength(0)
     } finally {
       await close()
     }

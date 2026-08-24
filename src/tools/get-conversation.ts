@@ -348,6 +348,7 @@ export function createHandler(ctx: ToolContext) {
       {
         toolName: NAME,
         logger: ctx.logger,
+        mode: ctx.mode,
         args: {
           conversation_id,
           limit,

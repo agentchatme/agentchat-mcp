@@ -1,6 +1,7 @@
 import { type AgentChatClient } from 'agentchatme'
 import pino from 'pino'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { NotRegisteredError } from '../../src/client.js'
 import { Semaphore } from '../../src/semaphore.js'
 import * as clearWebhook from '../../src/tools/clear-webhook.js'
@@ -111,6 +112,28 @@ describe('agentchat_register handler', () => {
     expect(text).toMatch(guidance)
   })
 
+  it('keeps guidance AND the Retry-After hint for EMAIL_EXHAUSTED (429 + guided code)', async () => {
+    // Regression: rethrowWithGuidance used to re-mint the RateLimitedError as
+    // a base AgentChatError, so the retry timing vanished from the mapped
+    // tool error. The subclass (and its retryAfterMs) must now survive.
+    const { impl, calls } = fetchStub(() =>
+      json(
+        429,
+        { code: 'EMAIL_EXHAUSTED', message: 'server says EMAIL_EXHAUSTED' },
+        { 'retry-after': '3600' },
+      ),
+    )
+    const handler = registerAccount.createHandler(makeCtx(impl, null))
+    const result = await handler({ email: 'a@b.example', handle: 'new-bot' })
+    expect(result.isError).toBe(true)
+    const text = firstText(result)
+    expect(text).toContain('EMAIL_EXHAUSTED')
+    expect(text).toContain('server says EMAIL_EXHAUSTED')
+    expect(text).toMatch(/different email/)
+    expect(text).toContain('Retry after: 3600 seconds')
+    expect(calls).toHaveLength(1)
+  })
+
   it('maps a plain rate limit to RATE_LIMITED with the Retry-After hint, without retrying the POST', async () => {
     const { impl, calls } = fetchStub(() =>
       json(429, { code: 'RATE_LIMITED', message: 'slow down' }, { 'retry-after': '17' }),
@@ -154,6 +177,21 @@ describe('agentchat_verify_otp handler', () => {
     expect(firstText(result)).toContain('agentchat_register')
   })
 
+  it('keeps code and guidance for PENDING_NOT_FOUND even when the server sends it as a 404', async () => {
+    // 404 mints a NotFoundError in the SDK; the guided wire code + message
+    // must still win over the generic not-found advice.
+    const { impl } = fetchStub(() =>
+      json(404, { code: 'PENDING_NOT_FOUND', message: 'no such pending registration' }),
+    )
+    const handler = verifyOtp.createHandler(makeCtx(impl, null))
+    const result = await handler({ pending_id: 'pend_gone', code: '654321' })
+    expect(result.isError).toBe(true)
+    const text = firstText(result)
+    expect(text).toContain('PENDING_NOT_FOUND')
+    expect(text).toContain('no such pending registration')
+    expect(text).toContain('agentchat_register')
+  })
+
   it('fails with explicit do-not-re-register guidance when success carries no api_key', async () => {
     const { impl } = fetchStub(() => json(200, { agent: { handle: 'new-bot' } }))
     const handler = verifyOtp.createHandler(makeCtx(impl, null))
@@ -164,17 +202,23 @@ describe('agentchat_verify_otp handler', () => {
 })
 
 describe('agentchat_set_webhook handler', () => {
-  it('rejects a non-https url BEFORE any network call', async () => {
-    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
-    const handler = setWebhook.createHandler(makeCtx(impl))
-    const result = await handler({
-      url: 'http://hooks.example/wake',
-      secret: 'shhh',
-    })
-    expect(result.isError).toBe(true)
-    expect(firstText(result)).toContain('VALIDATION_ERROR')
-    expect(firstText(result)).toContain('https')
-    expect(calls).toHaveLength(0)
+  it('rejects a non-https url IN THE INPUT SCHEMA — the contract surface hosts can see', () => {
+    // The https-only rule lives in the zod shape (not a hand-rolled handler
+    // check), so tools/list advertises it and the MCP layer rejects bad
+    // input before the handler — and therefore before any network call.
+    const parsed = z
+      .object(setWebhook.INPUT_SHAPE)
+      .safeParse({ url: 'http://hooks.example/wake', secret: 'shhh' })
+    expect(parsed.success).toBe(false)
+    const messages = parsed.success
+      ? []
+      : parsed.error.issues.map((issue) => issue.message)
+    expect(messages.join('\n')).toContain('https://')
+
+    const good = z
+      .object(setWebhook.INPUT_SHAPE)
+      .safeParse({ url: 'https://hooks.example/wake', secret: 'shhh' })
+    expect(good.success).toBe(true)
   })
 
   it('PUTs the webhook with Bearer auth and passes the state through', async () => {

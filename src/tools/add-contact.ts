@@ -34,6 +34,7 @@ export function createHandler(ctx: ToolContext) {
       {
         toolName: NAME,
         logger: ctx.logger,
+        mode: ctx.mode,
         args: { handle, note_length: note?.length ?? 0 },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,

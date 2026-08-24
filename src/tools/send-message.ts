@@ -77,6 +77,7 @@ export function createHandler(ctx: ToolContext) {
       {
         toolName: NAME,
         logger: ctx.logger,
+        mode: ctx.mode,
         args: { to, text_length: text.length, reply_to },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,

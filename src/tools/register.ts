@@ -46,6 +46,7 @@ export function createHandler(ctx: ToolContext) {
       {
         toolName: NAME,
         logger: ctx.logger,
+        mode: ctx.mode,
         // Log the handle and only the email's domain — the local part is PII
         // that has no business in server logs, even at debug.
         args: { handle, email_domain: email.split('@')[1] ?? '' },

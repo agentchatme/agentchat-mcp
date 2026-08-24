@@ -1,6 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from 'pino'
 import { mapAgentChatError } from '../errors.js'
+import type { ServerMode } from '../instructions.js'
 import type { Semaphore } from '../semaphore.js'
 
 // ─── Shared tool-handler boilerplate ───────────────────────────────────────
@@ -32,6 +33,11 @@ export interface BoundaryArgs {
   semaphore: Semaphore
   /** Active in-flight tracker. Shutdown awaits this set. */
   inflight: Set<Promise<unknown>>
+  /**
+   * Composition flavor for error guidance (ctx.mode). Absent means 'stdio'
+   * — the historical default, which test contexts rely on.
+   */
+  mode?: ServerMode
 }
 
 /**
@@ -95,7 +101,7 @@ export async function withErrorBoundary(
     // Already-shaped CallToolResult — pass through.
     return result as CallToolResult
   } catch (err) {
-    const mapped = mapAgentChatError(err)
+    const mapped = mapAgentChatError(err, meta.mode)
     logger.warn(
       { tool: toolName, code: mapped.code, message: mapped.message },
       'tool failed',
