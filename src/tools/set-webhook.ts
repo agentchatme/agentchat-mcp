@@ -1,9 +1,24 @@
 import { z } from 'zod'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport } from './_rest.js'
+import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_set_webhook'
+
+/**
+ * Doorbell dialects the server can ring. Mirrors the server's WakeDialect
+ * (packages/shared) — the list is part of the wire contract, so hosts see it
+ * in tools/list and reject typos before anything is sent.
+ */
+export const DIALECTS = [
+  'agentchat',
+  'claude-code',
+  'openclaw',
+  'hermes',
+  'poke',
+  'standard-webhooks',
+] as const
+export type Dialect = (typeof DIALECTS)[number]
 
 export const INPUT_SHAPE = {
   // https-only is enforced IN the zod shape (not by a handler check) so the
@@ -18,52 +33,87 @@ export const INPUT_SHAPE = {
       'The webhook url must use https:// — plain http is rejected before anything is sent.',
     )
     .describe(
-      'HTTPS endpoint AgentChat calls to wake this agent when something needs its attention (e.g. a new message). Must be `https://` — plain http is rejected before anything is sent.',
+      'Where AgentChat rings. Per dialect: agentchat → any HTTPS receiver of yours (a Grok Bot routine’s webhook URL); claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<your gateway>/hooks/wake or /hooks/agent; hermes → https://<your gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → any HTTPS receiver that verifies Standard Webhooks signatures.',
     ),
   secret: z
     .string()
-    .min(1)
+    .min(16)
     .max(256)
     .describe(
-      'Shared secret AgentChat uses to sign wake deliveries. Your endpoint should verify the signature before trusting a wake. Choose a long random value and store it with the endpoint — it is not shown again.',
+      'What authenticates AgentChat to your doorbell: the bearer token for agentchat / claude-code (routine token) / openclaw (hook token) / poke (API key), or the HMAC secret for hermes (route secret) / standard-webhooks (whsec_… or raw). 16–256 printable ASCII characters. Stored for sending, never shown again.',
+    ),
+  dialect: z
+    .enum(DIALECTS)
+    .default('agentchat')
+    .describe(
+      'How the wake is framed for your runtime’s trigger. Pick the one matching your runtime; agentchat is the generic bearer + JSON payload.',
+    ),
+  prompt: z
+    .string()
+    .min(1)
+    .max(4000)
+    .optional()
+    .describe(
+      'Optional text prepended to every wake on dialects that carry text (claude-code, openclaw, poke): your own standing instruction for what to do when the doorbell rings. Leave empty to use AgentChat’s default wake instruction.',
     ),
 }
 
 export const DESCRIPTION = [
-  'Set (or replace) this agent’s wake webhook: an HTTPS URL AgentChat calls to wake your runtime when new activity arrives, instead of you relying purely on polling.',
+  'Register (or replace) your doorbell: the URL AgentChat rings when a peer writes to you while you are not connected, framed in your runtime’s own dialect so its existing trigger starts you. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake you read with agentchat_wait.',
   '',
-  'Authenticated only. PUT semantics — setting a new webhook replaces any previous one. Remove it with agentchat_clear_webhook.',
+  'Authenticated only. PUT semantics — a new registration replaces the previous one and resets its health. Then call agentchat_test_webhook to prove it rings. Remove with agentchat_clear_webhook.',
   '',
-  'On success the response reports the webhook state (e.g. `{ "state": "active" }`).',
+  'The response reports the subscription state (url, dialect, state, last_error).',
 ].join('\n')
 
-export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
+// Input type (not output): `dialect` is optional on the way in and defaulted
+// by the schema; direct handler callers (tests, embedders) may omit it too.
+export type Input = z.input<z.ZodObject<typeof INPUT_SHAPE>>
 
 export function createHandler(ctx: ToolContext) {
-  return async ({ url, secret }: Input) =>
+  return async ({ url, secret, dialect, prompt }: Input) =>
     withErrorBoundary(
       {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
         // Never log the secret — length only, for debuggability.
-        args: { url, secret_length: secret.length },
+        args: { url, dialect: dialect ?? 'agentchat', secret_length: secret.length, prompt_length: prompt?.length ?? 0 },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
       },
       async () => {
         const rest = requireRestAuth(ctx)
         const http = restTransport(rest, { withAuth: true })
-        const res = await http.request<unknown>(
-          'PUT',
-          '/v1/agents/me/wake-webhook',
-          { body: { url, secret } },
-        )
-        const data =
-          typeof res.data === 'object' && res.data !== null
-            ? (res.data as Record<string, unknown>)
-            : {}
-        return { type: 'json', value: { ok: true, ...data } }
+        let data: unknown
+        try {
+          const res = await http.request<unknown>('PUT', '/v1/agents/me/wake-webhook', {
+            body: {
+              url,
+              secret,
+              dialect: dialect ?? 'agentchat',
+              ...(prompt !== undefined ? { prompt } : {}),
+            },
+          })
+          data = res.data
+        } catch (err) {
+          rethrowWithGuidance(err, {
+            INVALID_WAKE_WEBHOOK_URL:
+              'Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host.',
+            WAKE_WEBHOOK_URL_UNRESOLVED:
+              'DNS did not answer for that host just now; check the hostname and try again.',
+          })
+        }
+        const record =
+          typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
+        return {
+          type: 'json',
+          value: {
+            ok: true,
+            ...record,
+            next: 'Call agentchat_test_webhook now to prove the doorbell rings.',
+          },
+        }
       },
     )
 }

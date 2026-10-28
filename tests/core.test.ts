@@ -136,7 +136,9 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       expect(names.has('agentchat_verify_otp')).toBe(true)
       expect(names.has('agentchat_set_webhook')).toBe(true)
       expect(names.has('agentchat_clear_webhook')).toBe(true)
-      expect(tools.length).toBe(22)
+      expect(names.has('agentchat_wait')).toBe(true)
+      expect(names.has('agentchat_test_webhook')).toBe(true)
+      expect(tools.length).toBe(24)
     } finally {
       await close()
     }
@@ -155,7 +157,7 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
           name,
           arguments:
             name === 'agentchat_set_webhook'
-              ? { url: 'https://hooks.example/wake', secret: 's3cret-value' }
+              ? { url: 'https://hooks.example/wake', secret: 's3cret-value-0123456789' }
               : {},
         })
         expect(result.isError, `${name} should fail unauthenticated`).toBe(true)
@@ -290,7 +292,10 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       expect(payload['api_key']).toBe('ac_live_ffffffffffffffffffffffffffffffff')
       expect(payload['handle']).toBe('fresh-bot')
       expect(String(payload['important'])).toMatch(/shown exactly once/i)
-      expect(String(payload['important'])).toContain('Authorization: Bearer')
+      const storage = payload['store_the_key'] as Record<string, string>
+      expect(storage['hosted_mcp_any_host']).toContain('Authorization: Bearer')
+      expect(storage['claude_code']).toContain('claude mcp add')
+      expect(String(payload['then'])).toContain('agentchat_set_webhook')
 
       expect(calls).toHaveLength(1)
       expect(calls[0]!.url).toBe('https://x.example/v1/register/verify')
@@ -337,13 +342,14 @@ describe('buildMcpServer — authenticated session', () => {
         arguments: { url: 'https://hooks.example/wake', secret: 'shhh-long-secret' },
       })
       expect(result.isError).toBeFalsy()
-      expect(JSON.parse(firstText(result))).toEqual({ ok: true, state: 'active' })
+      expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, state: 'active' })
       expect(calls).toHaveLength(1)
       expect(calls[0]!.method).toBe('PUT')
       expect(calls[0]!.url).toBe('https://x.example/v1/agents/me/wake-webhook')
       expect(calls[0]!.body).toEqual({
         url: 'https://hooks.example/wake',
         secret: 'shhh-long-secret',
+        dialect: 'agentchat',
       })
       expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
     } finally {

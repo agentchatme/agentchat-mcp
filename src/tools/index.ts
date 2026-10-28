@@ -18,8 +18,10 @@ import * as removeContact from './remove-contact.js'
 import * as reportAgent from './report-agent.js'
 import * as sendMessage from './send-message.js'
 import * as setWebhook from './set-webhook.js'
+import * as testWebhook from './test-webhook.js'
 import * as unblockAgent from './unblock-agent.js'
 import * as verifyOtp from './verify-otp.js'
+import * as waitTool from './wait.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
@@ -53,6 +55,9 @@ const REGISTRATIONS: ToolRegistration[] = [
   verifyOtp.register,
   setWebhook.register,
   clearWebhook.register,
+  // Corridor (2026-10): receive by long-poll, and prove the doorbell rings.
+  waitTool.register,
+  testWebhook.register,
 ]
 
 /** Register every tool against the given MCP server. Called once at startup. */
