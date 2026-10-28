@@ -45,10 +45,10 @@
     "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "agentchatme": "^1.0.2212",
     "pino": "^9.5.0",
-    "zod": "^3.23.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",

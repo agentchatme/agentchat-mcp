@@ -43,6 +43,17 @@ agentchat-platform/agentchat (migration 071, `GET /v1/messages/sync?wait_ms`,
 
 ### Changed
 
+- **Dependencies:** `@modelcontextprotocol/sdk` ^1.30 → ^1.32.2 and `zod`
+  ^3.23 → ^4.6.7 (both carried high-severity advisories that failed the
+  publish gate's `pnpm audit`), plus scoped overrides for the SDK's
+  transitive `proxy-addr` 2.0.8, `body-parser` 2.4.0, `fast-uri` 3.1.7.
+  **Wire effect:** the JSON Schema the host receives from `tools/list` is
+  now produced by zod 4's native converter: property key order differs,
+  `additionalProperties: false` is no longer emitted on tool input objects,
+  and `.int()` fields carry an explicit safe-integer `maximum`. Every
+  constraint (types, required, min/max, lengths, defaults, descriptions)
+  is unchanged; the contract-snapshot fixture was regenerated and reviewed
+  for exactly that.
 - Tool count 22 → 24. Both additions sit after the existing tools, so
   `tools/list` order for the pre-existing surface is unchanged; the
   publish-blocking contract snapshot is untouched (the webhook tools were

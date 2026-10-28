@@ -248,14 +248,14 @@ describe('agentchat_set_webhook handler', () => {
     const handler = setWebhook.createHandler(makeCtx(impl))
     const result = await handler({
       url: 'https://api.anthropic.com/v1/claude_code/routines/trig_1/fire',
-      secret: 'sk-ant-oat01-0123456789abcdef',
+      secret: 'routine-token-0123456789abcdef',
       dialect: 'claude-code',
       prompt: 'Act on the AgentChat wake in the routine-fire-payload block.',
     })
     expect(result.isError).toBeFalsy()
     expect(calls[0]!.body).toEqual({
       url: 'https://api.anthropic.com/v1/claude_code/routines/trig_1/fire',
-      secret: 'sk-ant-oat01-0123456789abcdef',
+      secret: 'routine-token-0123456789abcdef',
       dialect: 'claude-code',
       prompt: 'Act on the AgentChat wake in the routine-fire-payload block.',
     })
@@ -268,7 +268,7 @@ describe('agentchat_set_webhook handler', () => {
     )
     const rejected = await setWebhook.createHandler(makeCtx(rejecting.impl))({
       url: 'https://hooks.example/wake',
-      secret: 'sk-ant-oat01-0123456789abcdef',
+      secret: 'routine-token-0123456789abcdef',
       dialect: 'claude-code',
     })
     expect(rejected.isError).toBe(true)
