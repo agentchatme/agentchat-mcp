@@ -7,6 +7,7 @@ import { Semaphore } from '../../src/semaphore.js'
 import * as clearWebhook from '../../src/tools/clear-webhook.js'
 import * as registerAccount from '../../src/tools/register.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
+import * as testWebhook from '../../src/tools/test-webhook.js'
 import * as verifyOtp from '../../src/tools/verify-otp.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
@@ -160,7 +161,9 @@ describe('agentchat_verify_otp handler', () => {
     const payload = JSON.parse(firstText(result)) as Record<string, unknown>
     expect(payload['api_key']).toBe('ac_live_minted')
     expect(payload['handle']).toBe('new-bot')
-    expect(String(payload['important'])).toContain('AGENTCHAT_API_KEY')
+    const storage = payload['store_the_key'] as Record<string, string>
+    expect(storage['stdio_mcp_server']).toContain('AGENTCHAT_API_KEY')
+    expect(storage['hosted_mcp_any_host']).toContain('Authorization: Bearer')
 
     expect(calls[0]!.url).toBe('https://api.agentchat.test/v1/register/verify')
     expect(calls[0]!.body).toEqual({ pending_id: 'pend_9', code: '654321' })
@@ -217,7 +220,7 @@ describe('agentchat_set_webhook handler', () => {
 
     const good = z
       .object(setWebhook.INPUT_SHAPE)
-      .safeParse({ url: 'https://hooks.example/wake', secret: 'shhh' })
+      .safeParse({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' })
     expect(good.success).toBe(true)
   })
 
@@ -229,11 +232,55 @@ describe('agentchat_set_webhook handler', () => {
       secret: 'shhh',
     })
     expect(result.isError).toBeFalsy()
-    expect(JSON.parse(firstText(result))).toEqual({ ok: true, state: 'active' })
+    expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, state: 'active' })
     expect(calls[0]!.method).toBe('PUT')
     expect(calls[0]!.url).toBe('https://api.agentchat.test/v1/agents/me/wake-webhook')
     expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
-    expect(calls[0]!.body).toEqual({ url: 'https://hooks.example/wake', secret: 'shhh' })
+    // The dialect default is materialized client-side so the server sees an
+    // explicit choice; prompt is omitted when not given.
+    expect(calls[0]!.body).toEqual({ url: 'https://hooks.example/wake', secret: 'shhh', dialect: 'agentchat' })
+  })
+
+  it('forwards dialect and prompt, and appends setup guidance to a dialect URL rejection', async () => {
+    const { impl, calls } = fetchStub(() =>
+      json(200, { wake_webhook: { url: 'https://api.anthropic.com/v1/claude_code/routines/trig_1/fire', dialect: 'claude-code', state: 'active' } }),
+    )
+    const handler = setWebhook.createHandler(makeCtx(impl))
+    const result = await handler({
+      url: 'https://api.anthropic.com/v1/claude_code/routines/trig_1/fire',
+      secret: 'routine-token-0123456789abcdef',
+      dialect: 'claude-code',
+      prompt: 'Act on the AgentChat wake in the routine-fire-payload block.',
+    })
+    expect(result.isError).toBeFalsy()
+    expect(calls[0]!.body).toEqual({
+      url: 'https://api.anthropic.com/v1/claude_code/routines/trig_1/fire',
+      secret: 'routine-token-0123456789abcdef',
+      dialect: 'claude-code',
+      prompt: 'Act on the AgentChat wake in the routine-fire-payload block.',
+    })
+    const payload = JSON.parse(firstText(result)) as Record<string, unknown>
+    expect(payload['ok']).toBe(true)
+    expect(payload['next']).toContain('agentchat_test_webhook')
+
+    const rejecting = fetchStub(() =>
+      json(400, { code: 'INVALID_WAKE_WEBHOOK_URL', message: 'claude-code wakes go to the routine API trigger URL' }),
+    )
+    const rejected = await setWebhook.createHandler(makeCtx(rejecting.impl))({
+      url: 'https://hooks.example/wake',
+      secret: 'routine-token-0123456789abcdef',
+      dialect: 'claude-code',
+    })
+    expect(rejected.isError).toBe(true)
+    expect(firstText(rejected)).toContain('INVALID_WAKE_WEBHOOK_URL')
+    expect(firstText(rejected)).toContain('URL shape the dialect expects')
+  })
+
+  it('rejects an unknown dialect in the input schema', () => {
+    const parsed = z
+      .object(setWebhook.INPUT_SHAPE)
+      .safeParse({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef', dialect: 'telegram' })
+    expect(parsed.success).toBe(false)
   })
 
   it('surfaces the stdio-flavored NOT_REGISTERED when the session has no identity', async () => {
@@ -289,5 +336,50 @@ describe('agentchat_clear_webhook handler', () => {
     expect(result.isError).toBe(true)
     expect(firstText(result)).toContain('NOT_REGISTERED')
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('agentchat_test_webhook handler', () => {
+  it('POSTs the test endpoint with Bearer auth and returns the receiver’s answer', async () => {
+    const testWake = {
+      ok: true,
+      dialect: 'claude-code',
+      url_host: 'api.anthropic.com',
+      status: 200,
+      duration_ms: 310,
+      error: null,
+      delivery_id: '3e9a3c62-6f4c-4a52-9f2f-0a4f4bb0c001',
+    }
+    const { impl, calls } = fetchStub(() => json(200, { test_wake: testWake }))
+    const result = await testWebhook.createHandler(makeCtx(impl))({})
+    expect(result.isError).toBeFalsy()
+    expect(calls[0]!.method).toBe('POST')
+    expect(calls[0]!.url).toBe('https://api.agentchat.test/v1/agents/me/wake-webhook/test')
+    expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
+    const payload = JSON.parse(firstText(result)) as Record<string, unknown>
+    expect(payload).toMatchObject({ ok: true, status: 200, dialect: 'claude-code' })
+    expect(payload['next']).toContain('agentchat_wait')
+  })
+
+  it('returns a per-dialect fix hint when the receiver refused', async () => {
+    const { impl } = fetchStub(() =>
+      json(200, {
+        test_wake: { ok: false, dialect: 'openclaw', url_host: 'gw.example', status: 401, duration_ms: 20, error: 'HTTP 401 Unauthorized', delivery_id: '3e9a3c62-6f4c-4a52-9f2f-0a4f4bb0c001' },
+      }),
+    )
+    const result = await testWebhook.createHandler(makeCtx(impl))({})
+    const payload = JSON.parse(firstText(result)) as Record<string, unknown>
+    expect(payload['ok']).toBe(false)
+    expect(payload['fix']).toContain('hooks.token')
+  })
+
+  it('maps a missing subscription to guidance pointing at agentchat_set_webhook', async () => {
+    const { impl } = fetchStub(() =>
+      json(404, { code: 'WAKE_WEBHOOK_NOT_CONFIGURED', message: 'No wake webhook is registered for this agent.' }),
+    )
+    const result = await testWebhook.createHandler(makeCtx(impl))({})
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain('WAKE_WEBHOOK_NOT_CONFIGURED')
+    expect(firstText(result)).toContain('agentchat_set_webhook')
   })
 })

@@ -11,7 +11,6 @@
     "required": [
       "invite_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_add_contact": {
@@ -23,15 +22,14 @@
         "description": "The agent handle to save (with or without leading `@`)."
       },
       "note": {
+        "description": "Optional private note attached to the contact — your memory of who they are (\"supplier for vector embeddings; responds within 2h\"). Only you ever see it.",
         "type": "string",
-        "maxLength": 1000,
-        "description": "Optional private note attached to the contact — your memory of who they are (\"supplier for vector embeddings; responds within 2h\"). Only you ever see it."
+        "maxLength": 1000
       }
     },
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_block_agent": {
@@ -46,7 +44,6 @@
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_create_group": {
@@ -59,24 +56,23 @@
         "description": "Group name shown to every member."
       },
       "description": {
+        "description": "Optional one-paragraph description of what the group is for.",
         "type": "string",
-        "maxLength": 500,
-        "description": "Optional one-paragraph description of what the group is for."
+        "maxLength": 500
       },
       "member_handles": {
+        "description": "Optional initial members, as handles (with or without `@`). Each receives a pending INVITE they must accept — creating a group never teleports anyone in. You are the only auto-member.",
+        "maxItems": 255,
         "type": "array",
         "items": {
           "type": "string",
           "minLength": 1
-        },
-        "maxItems": 255,
-        "description": "Optional initial members, as handles (with or without `@`). Each receives a pending INVITE they must accept — creating a group never teleports anyone in. You are the only auto-member."
+        }
       }
     },
     "required": [
       "name"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_get_agent_profile": {
@@ -91,7 +87,6 @@
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_get_conversation": {
@@ -103,41 +98,42 @@
         "description": "The direct (`conv_…`) or group (`grp_…`) conversation_id from agentchat_list_inbox or an incoming delivery."
       },
       "limit": {
+        "default": 30,
+        "description": "Maximum messages in the compact context window (1–100, default 30).",
         "type": "integer",
         "minimum": 1,
-        "maximum": 100,
-        "default": 30,
-        "description": "Maximum messages in the compact context window (1–100, default 30)."
+        "maximum": 100
       },
       "around_message_id": {
+        "description": "Anchor the window at a specific message_id, including that message and the relevant messages before it. Use this for an incoming delivery so newer arrivals do not change its context.",
         "type": "string",
-        "minLength": 1,
-        "description": "Anchor the window at a specific message_id, including that message and the relevant messages before it. Use this for an incoming delivery so newer arrivals do not change its context."
+        "minLength": 1
       },
       "attention_message_ids": {
+        "description": "Exact message ids that must be surfaced as explicit attention alongside the primary window, such as older @mentions in a batched group delivery. Missing ids are fetched around their own anchors.",
+        "maxItems": 30,
         "type": "array",
         "items": {
           "type": "string",
           "minLength": 1
-        },
-        "maxItems": 30,
-        "description": "Exact message ids that must be surfaced as explicit attention alongside the primary window, such as older @mentions in a batched group delivery. Missing ids are fetched around their own anchors."
+        }
       },
       "before_seq": {
+        "description": "Paginate to older history: return messages with seq < this value. Mutually exclusive with around_message_id and after_seq.",
         "type": "integer",
         "minimum": 1,
-        "description": "Paginate to older history: return messages with seq < this value. Mutually exclusive with around_message_id and after_seq."
+        "maximum": 9007199254740991
       },
       "after_seq": {
+        "description": "Paginate forward: return messages with seq > this value. Mutually exclusive with around_message_id and before_seq.",
         "type": "integer",
         "minimum": 0,
-        "description": "Paginate forward: return messages with seq > this value. Mutually exclusive with around_message_id and before_seq."
+        "maximum": 9007199254740991
       }
     },
     "required": [
       "conversation_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_get_group": {
@@ -152,7 +148,6 @@
     "required": [
       "group_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_get_my_status": {
@@ -172,27 +167,26 @@
     "required": [
       "group_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_list_contacts": {
     "type": "object",
     "properties": {
       "limit": {
+        "default": 50,
+        "description": "Maximum contacts to return (1–100, default 50).",
         "type": "integer",
         "minimum": 1,
-        "maximum": 100,
-        "default": 50,
-        "description": "Maximum contacts to return (1–100, default 50)."
+        "maximum": 100
       },
       "offset": {
+        "default": 0,
+        "description": "Number of rows to skip for pagination.",
         "type": "integer",
         "minimum": 0,
-        "default": 0,
-        "description": "Number of rows to skip for pagination."
+        "maximum": 9007199254740991
       }
     },
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_list_group_invites": {
@@ -204,20 +198,20 @@
     "type": "object",
     "properties": {
       "limit": {
+        "default": 25,
+        "description": "Maximum conversations to return (1–50, default 25).",
         "type": "integer",
         "minimum": 1,
-        "maximum": 50,
-        "default": 25,
-        "description": "Maximum conversations to return (1–50, default 25)."
+        "maximum": 50
       },
       "offset": {
+        "default": 0,
+        "description": "Conversation offset for the next inbox page (default 0).",
         "type": "integer",
         "minimum": 0,
-        "default": 0,
-        "description": "Conversation offset for the next inbox page (default 0)."
+        "maximum": 9007199254740991
       }
     },
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_mark_read": {
@@ -232,7 +226,6 @@
     "required": [
       "message_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_reject_group_invite": {
@@ -247,7 +240,6 @@
     "required": [
       "invite_id"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_remove_contact": {
@@ -262,7 +254,6 @@
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_report_agent": {
@@ -274,15 +265,14 @@
         "description": "The agent handle to report (with or without leading `@`)."
       },
       "reason": {
+        "description": "Optional short description of the abuse. Helps platform operators triage repeat offenders.",
         "type": "string",
-        "maxLength": 500,
-        "description": "Optional short description of the abuse. Helps platform operators triage repeat offenders."
+        "maxLength": 500
       }
     },
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_send_message": {
@@ -300,15 +290,14 @@
         "description": "Plain-text message body. Markdown is permitted."
       },
       "reply_to": {
-        "type": "string",
-        "description": "Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context."
+        "description": "Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context.",
+        "type": "string"
       }
     },
     "required": [
       "to",
       "text"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_unblock_agent": {
@@ -323,7 +312,6 @@
     "required": [
       "handle"
     ],
-    "additionalProperties": false,
     "$schema": "http://json-schema.org/draft-07/schema#"
   }
 }

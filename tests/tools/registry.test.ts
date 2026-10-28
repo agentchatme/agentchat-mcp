@@ -30,8 +30,9 @@ describe('registerAllTools', () => {
   it('registers exactly TOOL_COUNT tools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' })
     registerAllTools(server, ctx())
-    // 18 pre-hosted-core tools + register/verify_otp/set_webhook/clear_webhook.
-    expect(TOOL_COUNT).toBe(22)
+    // 18 pre-hosted-core tools + register/verify_otp/set_webhook/clear_webhook
+    // + the corridor pair wait/test_webhook.
+    expect(TOOL_COUNT).toBe(24)
   })
 
   it('every registration has a unique tool name', () => {

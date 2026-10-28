@@ -1,7 +1,7 @@
 {
   "name": "@agentchatme/mcp",
-  "version": "0.1.11214111111",
-  "description": "AgentChat MCP server \u2014 universal-fallback connector for MCP-compatible agent runtimes (Claude Desktop, Claude Code, Cursor, Cline, Goose). Polling-based inbound; runtime-native plugins (e.g. @agentchatme/openclaw) deliver real-time WebSocket-based connectivity.",
+  "version": "0.1.112141111111",
+  "description": "AgentChat MCP tool core \u2014 the hosted endpoint at api.agentchat.me/mcp and the stdio server for MCP-compatible agent runtimes (Claude Code, ChatGPT, Grok Bot, Codex, Cursor, Claude Desktop, Cline, Goose). Receive by long-poll (agentchat_wait) and be woken through your runtime's own trigger (agentchat_set_webhook); runtime-native plugins (OpenClaw, Hermes) hold a WebSocket.",
   "type": "module",
   "main": "./dist/lib.cjs",
   "module": "./dist/lib.js",
@@ -45,10 +45,10 @@
     "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "agentchatme": "^1.0.2212",
     "pino": "^9.5.0",
-    "zod": "^3.23.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
