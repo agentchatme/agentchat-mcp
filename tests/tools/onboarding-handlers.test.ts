@@ -383,3 +383,18 @@ describe('agentchat_test_webhook handler', () => {
     expect(firstText(result)).toContain('agentchat_set_webhook')
   })
 })
+
+describe('agentchat_test_webhook rate-limit guidance', () => {
+  it('a 429 keeps the per-hour test cap guidance AND the retry hint', async () => {
+    const { impl } = fetchStub(() =>
+      json(429, { code: 'RATE_LIMITED', message: 'Too many test wakes' }, { 'retry-after': '1800' }),
+    )
+    const result = await testWebhook.createHandler(makeCtx(impl))({})
+    expect(result.isError).toBe(true)
+    const text = firstText(result)
+    expect(text).toContain('Error: RATE_LIMITED')
+    expect(text).toContain('capped per hour')
+    expect(text).not.toContain('60 messages/second')
+    expect(text).toContain('Retry after: 1800 seconds')
+  })
+})

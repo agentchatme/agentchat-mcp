@@ -1,5 +1,6 @@
 import { AgentChatError, HttpTransport } from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
+import { attachToolGuidance } from '../errors.js'
 import type { RestContext, ToolContext } from './_types.js'
 
 // ─── Direct REST plumbing for the onboarding + webhook tools ───────────────
@@ -71,7 +72,10 @@ export function requireRestAuth(ctx: ToolContext): AuthenticatedRest {
  * error.) errors.ts keeps the wire code + message authoritative for
  * status-fallback-minted subclasses. Codes outside the map rethrow
  * untouched, so typed errors (plain RATE_LIMITED with its retry hint,
- * VALIDATION_ERROR, …) keep their richer mapping.
+ * VALIDATION_ERROR, …) keep their richer mapping. For plain RATE_LIMITED the
+ * mapper rebuilds the message, so the guidance is ALSO recorded out of band
+ * (attachToolGuidance) and the mapper uses it in place of its generic text —
+ * a 429 from the test-wake cap or the inbox poll is explained as such.
  */
 export function rethrowWithGuidance(
   err: unknown,
@@ -81,6 +85,7 @@ export function rethrowWithGuidance(
     const extra = guidance[err.code]
     if (extra) {
       err.message = `${err.message} ${extra}`
+      attachToolGuidance(err, extra)
     }
   }
   throw err
