@@ -17,6 +17,33 @@ import {
 import { NotAuthenticatedError, NotRegisteredError } from './client.js'
 import type { ServerMode } from './instructions.js'
 
+// ─── Tool-attached guidance ────────────────────────────────────────────────
+//
+// A tool that knows WHICH limit or rule it hit appends endpoint-specific
+// guidance to the server error (tools/_rest.ts rethrowWithGuidance). For codes
+// whose message the mapper rebuilds from scratch (plain RATE_LIMITED) the
+// appended text would be lost, so the same guidance is also recorded out of
+// band on the error object and the mapper prefers it over its generic text.
+const TOOL_GUIDANCE = Symbol.for('@agentchatme/mcp.toolGuidance')
+type Guided = { [TOOL_GUIDANCE]?: string }
+
+/** Record the endpoint-specific guidance a tool attached to a server error. */
+export function attachToolGuidance(err: object, guidance: string): void {
+  ;(err as Guided)[TOOL_GUIDANCE] = guidance
+}
+
+/** The guidance a tool attached via attachToolGuidance, if any. */
+export function toolGuidanceOf(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null ? (err as Guided)[TOOL_GUIDANCE] : undefined
+}
+
+// What a 429 means depends on the endpoint — the send path, the inbox long-
+// poll, the test-wake cap and registration all have their own limits — so
+// the specific advice comes from the calling tool. This is the fallback for
+// tools that attached none.
+const RATE_LIMITED_FALLBACK_GUIDANCE =
+  'Per-agent rate limits are shared across all your tool calls (sends are capped at 60 messages/second); honor the retry hint before calling again.'
+
 // ─── AgentChat → MCP error mapping ─────────────────────────────────────────
 //
 // AgentChat's SDK throws structured, typed errors. The MCP host can only
@@ -112,13 +139,17 @@ export function mapAgentChatError(
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       }
     }
+    // Endpoint-aware: the calling tool's guidance when it attached one
+    // (inbox polling, test-wake cap, …), else the platform-wide fallback. The
+    // "Retry after" line itself is added by the handler boundary.
+    const guidance = toolGuidanceOf(err) ?? RATE_LIMITED_FALLBACK_GUIDANCE
     return {
       code: 'RATE_LIMITED',
       message: `Rate limit exceeded${
         retryAfterSeconds !== undefined
           ? `; retry after ${retryAfterSeconds} seconds`
           : ''
-      }. The platform's per-agent rate limit is 60 messages/second; this is shared with all your tool calls.`,
+      }. ${guidance}`,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     }
   }

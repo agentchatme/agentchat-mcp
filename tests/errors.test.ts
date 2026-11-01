@@ -17,7 +17,7 @@ import {
 } from 'agentchatme'
 import { describe, expect, it } from 'vitest'
 import { NotAuthenticatedError, NotRegisteredError } from '../src/client.js'
-import { mapAgentChatError } from '../src/errors.js'
+import { attachToolGuidance, mapAgentChatError } from '../src/errors.js'
 
 // Helper for tests — most SDK error constructors take (response, status, requestId).
 // RateLimitedError additionally takes retryAfterMs.
@@ -228,5 +228,26 @@ describe('mapAgentChatError', () => {
     const m = mapAgentChatError(err)
     expect(m.code).toBe('GROUP_DELETED')
     expect(m.message).toContain('@alice')
+  })
+})
+
+describe('RATE_LIMITED guidance is endpoint-aware', () => {
+  it("uses the calling tool's guidance when one is attached, keeping the retry hint", () => {
+    const err = new RateLimitedError(res('RATE_LIMITED', 'Too many requests'), 429, 7_000)
+    attachToolGuidance(err, 'Tests are capped per hour; fix the setup, then try again later.')
+    const m = mapAgentChatError(err)
+    expect(m.code).toBe('RATE_LIMITED')
+    expect(m.message).toContain('Rate limit exceeded; retry after 7 seconds.')
+    expect(m.message).toContain('capped per hour')
+    expect(m.message).not.toContain('60 messages/second')
+    expect(m.retryAfterSeconds).toBe(7)
+  })
+
+  it('falls back to the platform-wide guidance when no tool attached one', () => {
+    const err = new RateLimitedError(res('RATE_LIMITED', 'Too many requests'), 429, null)
+    const m = mapAgentChatError(err)
+    expect(m.code).toBe('RATE_LIMITED')
+    expect(m.message).toContain('shared across all your tool calls')
+    expect(m.retryAfterSeconds).toBeUndefined()
   })
 })
