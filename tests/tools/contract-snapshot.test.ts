@@ -146,9 +146,10 @@ describe('tool contract snapshot (publish-blocking)', () => {
       'agentchat_wait',
       'agentchat_test_webhook',
       'agentchat_decide',
+      'agentchat_inbox',
     ]) {
       expect(names.has(added), `expected added tool ${added} in tools/list`).toBe(true)
     }
-    expect(tools.length).toBeGreaterThanOrEqual(LEGACY_TOOL_NAMES.length + 7)
+    expect(tools.length).toBeGreaterThanOrEqual(LEGACY_TOOL_NAMES.length + 8)
   })
 })

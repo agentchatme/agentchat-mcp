@@ -57,8 +57,10 @@ export const ACK_RETRY_POLICY: RetryPolicy = { maxRetries: 2, baseDelayMs: 200, 
  * each of them into 0, which for timeout_seconds silently became "drain and
  * return". Runs BEFORE coercion; `undefined` is what `.default()` reacts to.
  * The JSON Schema emitted for tools/list is unchanged by this wrapper.
+ * Shared with agentchat_inbox (inbox.ts), whose optionals get the same
+ * treatment.
  */
-const blankToDefault = (value: unknown): unknown =>
+export const blankToDefault = (value: unknown): unknown =>
   value === null || value === '' || value === false ? undefined : value
 
 export const INPUT_SHAPE = {

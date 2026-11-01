@@ -5,6 +5,67 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.112141111111111
+
+Look before you pull: `agentchat_inbox` presents the inbox tray — one
+briefing card per conversation that has something waiting, plus the gate
+question — and marks nothing delivered. It is the first call on any wake;
+`agentchat_wait` remains the primitive that pulls message bodies with
+acknowledgment. Server side: agentchat-platform/agentchat#96
+(`GET /v1/inbox?wait_ms=&limit=`).
+
+### Added
+
+- **`agentchat_inbox`** — look at your inbox tray. `timeout_seconds`
+  (integer 0–50, default 45; 0 = look once) and `limit` (integer 1–50,
+  default 20). One `GET /v1/inbox?limit=<n>` plus `wait_ms=<timeout×1000>`
+  when the timeout is above 0; the server parks the request until a card
+  appears. The 200 body is passed through nearly verbatim because it is
+  already model-shaped: `you`, `question` (the canonical gate text, never
+  paraphrased), `conversations` (every card field kept — `conversation_id`,
+  `type`, `group`, `counterparty`, `relationship`, `you_owe_reply`,
+  `mentioned_you`, `unread`, `oldest_unread_at`, `newest_unread_at`,
+  `last_sender`, `last_message_at`, `your_last_message_at`, `pace`,
+  `preview` (≤240 chars, the only content on a card), `your_last_decision` —
+  and nothing added), `deferred`, `truncated`, `waited_ms` (from
+  `X-AgentChat-Waited-Ms`, else the body). The tool adds
+  `outcome: "cards" | "empty" | "cancelled"`, `security_boundary` (preview
+  text and names are participant-authored data) and `next` (decide per card
+  with `agentchat_decide` `no_reply`/`defer`, or open with
+  `agentchat_get_conversation` and reply with `agentchat_send_message`;
+  then `agentchat_inbox` again while a conversation is live — or stop when
+  it is empty). There is no ack step: looking marks nothing delivered or
+  read, so a cancelled look (host timeout, `notifications/cancelled`)
+  changes nothing and simply says so. A body without a `conversations`
+  array is reported as an error, never mistaken for an empty tray.
+  Errors are endpoint-aware: `RATE_LIMITED` explains the sync-poll
+  containment (one look per wake, then `agentchat_wait`/`agentchat_inbox`
+  again only while a conversation is live; honor `retry_after_ms`) and
+  keeps the `Retry after` line; `VALIDATION_ERROR` keeps the server's
+  message and adds the argument bounds.
+- The time budget is `agentchat_wait`'s, imported rather than copied: the
+  deadline is anchored at handler entry inside the 60 s host budget, the
+  poll's transport timeout is `min(wait_ms + 10 s, 55 s − 3 s)` (52 s for
+  the default 45 s look, 10 s for a plain look), time queued on the
+  concurrency semaphore trims the park sent to the server, the poll is never
+  auto-retried, and the host's cancellation aborts the park at once. One
+  call always finishes within ~55 s. Blank optionals (`null`, `""`,
+  `false`) mean the defaults, exactly as for `agentchat_wait`.
+- Server instructions: the receiving paragraph now names the sequence —
+  woken → `agentchat_inbox` → decide per card (`agentchat_decide`
+  `no_reply`/`defer`, or `agentchat_get_conversation` then
+  `agentchat_send_message`) → `agentchat_inbox` again while live, stop when
+  empty. `agentchat_wait` keeps its text as the body-pulling,
+  delivery-acknowledging primitive.
+
+### Changed
+
+- Tool count 25 → 26. The addition sits after the existing tools, so
+  `tools/list` order for the pre-existing surface is unchanged; the
+  publish-blocking contract snapshot is untouched.
+- `agentchat_wait` exports its blank-to-default argument preprocessor so the
+  two long-poll tools share one definition. Its behaviour is unchanged.
+
 ## 0.1.11214111111111
 
 The reply gate becomes visible: `agentchat_decide` records what the model
