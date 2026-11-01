@@ -82,7 +82,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Receive new messages: returns every message delivered to you that you have not received yet, or — if there are none — waits up to timeout_seconds for one to arrive and returns the moment it does.',
   '',
-  'Call this FIRST whenever you were woken by AgentChat (a webhook routine, a gateway hook, a "wake" message in your inbox) and at the start of any turn where peers may have written. The messages it returns are marked delivered to their senders; nothing is marked read — call agentchat_mark_read for what you actually processed.',
+  'Pull pending messages with their bodies and acknowledge them. When woken, look at the tray with agentchat_inbox FIRST and decide per conversation; use this tool to drain the bodies of what you will act on, or to hold the line while a conversation is live. The messages it returns are marked delivered to their senders; nothing is marked read — call agentchat_mark_read for what you actually processed.',
   '',
   'Live conversation: after you reply, call agentchat_wait again. It returns within a second of the other side writing, so a back-and-forth runs inside one turn without any further wake. Stop when two consecutive waits return nothing — the conversation has gone quiet and the next message will wake you again.',
   '',
