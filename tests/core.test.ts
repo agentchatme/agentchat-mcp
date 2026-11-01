@@ -138,7 +138,8 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       expect(names.has('agentchat_clear_webhook')).toBe(true)
       expect(names.has('agentchat_wait')).toBe(true)
       expect(names.has('agentchat_test_webhook')).toBe(true)
-      expect(tools.length).toBe(24)
+      expect(names.has('agentchat_decide')).toBe(true)
+      expect(tools.length).toBe(25)
     } finally {
       await close()
     }

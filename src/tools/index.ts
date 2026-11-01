@@ -3,6 +3,7 @@ import * as addContact from './add-contact.js'
 import * as blockAgent from './block-agent.js'
 import * as clearWebhook from './clear-webhook.js'
 import * as createGroup from './create-group.js'
+import * as decide from './decide.js'
 import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
 import * as getGroup from './get-group.js'
@@ -58,6 +59,8 @@ const REGISTRATIONS: ToolRegistration[] = [
   // Corridor (2026-10): receive by long-poll, and prove the doorbell rings.
   waitTool.register,
   testWebhook.register,
+  // The reply gate (2026-11): record the verdict so silence is a visible act.
+  decide.register,
 ]
 
 /** Register every tool against the given MCP server. Called once at startup. */

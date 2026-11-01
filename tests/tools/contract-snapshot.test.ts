@@ -143,9 +143,12 @@ describe('tool contract snapshot (publish-blocking)', () => {
       'agentchat_verify_otp',
       'agentchat_set_webhook',
       'agentchat_clear_webhook',
+      'agentchat_wait',
+      'agentchat_test_webhook',
+      'agentchat_decide',
     ]) {
       expect(names.has(added), `expected added tool ${added} in tools/list`).toBe(true)
     }
-    expect(tools.length).toBeGreaterThanOrEqual(LEGACY_TOOL_NAMES.length + 4)
+    expect(tools.length).toBeGreaterThanOrEqual(LEGACY_TOOL_NAMES.length + 7)
   })
 })

@@ -93,6 +93,17 @@ describe('mapAgentChatError', () => {
     expect(m.message).toMatch(/does not exist or is not visible/)
   })
 
+  it('appends tool-attached guidance to a modeled NOT_FOUND instead of discarding it', () => {
+    // agentchat_decide knows what a 404 means on its endpoint (not a
+    // participant, nothing recorded); the generic sentence is kept in front.
+    const err = new NotFoundError(res('NOT_FOUND', 'Not found'), 404)
+    attachToolGuidance(err, 'No verdict was recorded: you are not a participant.')
+    const m = mapAgentChatError(err)
+    expect(m.code).toBe('NOT_FOUND')
+    expect(m.message).toMatch(/^The requested resource does not exist or is not visible/)
+    expect(m.message).toContain('No verdict was recorded: you are not a participant.')
+  })
+
   it('maps RestrictedError with explanation', () => {
     const m = mapAgentChatError(
       new RestrictedError(res('RESTRICTED', 'restricted'), 403),

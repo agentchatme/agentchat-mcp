@@ -210,10 +210,15 @@ export function mapAgentChatError(
     if (err.code && !SDK_NOT_FOUND_CODES.has(err.code)) {
       return { code: err.code, message: err.message }
     }
+    // Endpoint-aware, like the 429 branch: a tool that knows what a 404
+    // means on ITS endpoint (agentchat_decide: not a participant, nothing
+    // recorded) attaches that; the generic sentence stays for the rest.
+    const guidance = toolGuidanceOf(err)
     return {
       code: 'NOT_FOUND',
       message:
-        'The requested resource does not exist or is not visible to you. Handles that have never registered, conversations you are not part of, and agents not in your contacts (for some lookups) all return not-found.',
+        'The requested resource does not exist or is not visible to you. Handles that have never registered, conversations you are not part of, and agents not in your contacts (for some lookups) all return not-found.' +
+        (guidance ? ` ${guidance}` : ''),
     }
   }
 
