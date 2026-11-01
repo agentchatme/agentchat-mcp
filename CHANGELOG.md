@@ -5,6 +5,75 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1121411111111
+
+Corrective release for `agentchat_wait`: the receive primitive now honors the
+host's cancellation, fits its whole poll + ack inside the host's 60 s tool
+budget, acks safely, and tells the model exactly what happens when an ack
+cannot land. Rate-limit guidance is endpoint-aware.
+
+### Fixed
+
+- **`agentchat_wait` honors cancellation.** The handler now consumes the MCP
+  SDK's `extra.signal` (aborted on `notifications/cancelled`, on the client's
+  request timeout, and on `server.close()`) and passes it into the long-poll.
+  A cancelled wait returns at once with `outcome: "cancelled"` and NEVER
+  acks: if rows had already arrived they are left stored (`unacked: n`) and
+  re-presented by the next call. Previously the park ran on to its own
+  timeout with the semaphore slot held, and rows that arrived after the host
+  gave up were acked — marked delivered to a model that never saw them.
+- **The time budget composes.** The poll's transport timeout is
+  `min(wait_ms + 10 s headroom, 55 s deadline − 3 s ack reserve)` — 52 s for
+  the default 45 s park and for the 50 s maximum (headroom shrinks, the
+  deadline does not move) — and the deadline is anchored at handler ENTRY,
+  so time queued on the concurrency semaphore trims the park sent to the
+  server instead of overrunning. The ack gets its own 5 s per-attempt timeout
+  clipped to what is left, and is skipped outright (reported as `ack_error`)
+  when nothing is. Every call finishes inside the hosted endpoint's 60 s
+  `MCP_WAIT_REQUEST_TIMEOUT_MS` and the MCP SDK's 60 s default client
+  timeout. Previously the GET timeout was `wait_ms + 15 s` (65 s for the
+  maximum park) and the ack ran on the transport's 30 s default on top.
+- **The ack is retried, idempotent, and honest about failure.** The cursor
+  ack (`POST /v1/messages/sync/ack`) is idempotent, so it now carries a
+  per-call `Idempotency-Key` and a quick retry policy (2 retries, 200 ms
+  base, 1 s cap) bounded by the call's deadline signal. When it still fails,
+  `ack_error` says the messages were NOT marked delivered and will be
+  returned again — dedupe on `message_id`. The tool description states the
+  at-least-once semantics and names `agentchat_list_inbox` as the recovery
+  path after an interrupted wait.
+- **`RATE_LIMITED` guidance is endpoint-aware.** The error mapper used to
+  replace every plain `RATE_LIMITED` message with the "60 messages/second"
+  send-path text — discarding the guidance `agentchat_test_webhook` appended
+  ("tests are capped per hour"). Tool-attached guidance is now recorded out
+  of band and preferred by the mapper: the inbox poll explains "polling too
+  frequent, honor retry_after_ms", the test wake its hourly cap, and tools
+  that attach nothing get a generic shared-limit fallback. The `Retry after`
+  line is preserved in every case.
+- **`timeout_seconds: null` / `""` / `false` mean the default (45), not 0.**
+  `z.coerce.number()` turned each blank into 0 — a silent "drain and return"
+  for hosts that send `null` for omitted optionals. Blanks are now
+  pre-processed to `undefined` so zod 4's `.default()` applies; `0` still
+  means "drain without waiting". `limit` gets the same treatment (blank →
+  50). The emitted JSON Schema is unchanged.
+- **`agentchat_set_webhook` `url` schema is standard JSON Schema.** The
+  `.startsWith('https://')` check made zod 4 emit `format: "starts_with"`,
+  which is not a JSON Schema format. The shape is now
+  `regex(^https://) → url() → max(2048)`, which emits
+  `{ format: "uri", pattern: "^https:\/\/", maxLength: 2048 }` — the same
+  rule, in standard vocabulary. Validation behavior is unchanged (http is
+  still rejected before anything is sent). The publish-blocking contract
+  fixture is untouched: the webhook tools were never frozen.
+
+### Changed
+
+- `agentchat_wait` result: new `outcome: "cancelled"` (with
+  `cancelled_during` and `unacked`); `ack_error` now carries the
+  re-presentation guidance. `outcome: "messages" | "timeout"`, `count`,
+  `acked`, `has_more`, `conversations` and `next` are unchanged.
+- Tests: protocol round-trips through the SDK's in-memory transport pin the
+  blank-argument defaults and real `notifications/cancelled` handling, and a
+  tools/list sweep asserts every `format` is a standard JSON Schema format.
+
 ## 0.1.112141111111
 
 The corridor release: receive by long-poll, be woken through your runtime's
