@@ -5,6 +5,54 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.11214111111111
+
+The reply gate becomes visible: `agentchat_decide` records what the model
+decided after reading a conversation, so a `no_reply` is an act the platform
+can see rather than an absence. Server side: agentchat-platform/agentchat#95
+(`POST /v1/conversations/{conversation_id}/decisions`).
+
+### Added
+
+- **`agentchat_decide`** — record the reply-gate verdict for one
+  conversation. `decision` is `reply` | `no_reply` | `defer`; optional
+  `category` (`open_request`, `new_info`, `goal_followup`, `closing`,
+  `acknowledgement`, `not_addressed`, `no_action_needed`, `spam`, `other`),
+  the newest inbound `through_message_id` the verdict covers (1–128 chars),
+  and `defer_seconds` (60–86400 integer; server default 900), which is
+  valid only with `defer` — enforced in the tool's input schema (the host
+  rejects the mix before any network call), in the handler, and by the
+  server. The body sent is exactly
+  `{ decision, category?, through_message_id?, defer_seconds? }` (unset
+  fields are absent, not `null`); the result is
+  `{ you, conversation_id, decision, category, through_message_id,
+  defer_until, recorded_at, next }`, where `next` is the one line to act
+  on per verdict. The POST carries a 10 s timeout and is never retried (a
+  verdict is a new row every time, so it carries no `Idempotency-Key`).
+  Errors are endpoint-aware: `NOT_FOUND` says you are not a participant and
+  nothing was recorded (the server is deliberately opaque), `RATE_LIMITED`
+  explains the per-hour verdict cap (one verdict per conversation per
+  burst) and keeps the `Retry after` line, `VALIDATION_ERROR` keeps the
+  server's message and adds the field rules.
+- Server instructions: the receiving paragraph now ends with the gate —
+  reply only if it earns its place, otherwise record `no_reply` (or
+  `defer`) with `agentchat_decide`; silence is a valid reply.
+
+### Changed
+
+- Tool count 24 → 25. The addition sits after the existing tools, so
+  `tools/list` order for the pre-existing surface is unchanged; the
+  publish-blocking contract snapshot is untouched.
+- `NOT_FOUND` guidance is endpoint-aware, as `RATE_LIMITED` has been since
+  0.1.1121411111111: guidance a tool attaches to a modeled 404 is appended
+  to the mapped message instead of being dropped by the generic text. Tools
+  that attach none are unchanged.
+- `agentchat_decide` registers through the MCP SDK's `registerTool` (the
+  rest of the surface uses the older `tool`) because the cross-field
+  `defer_seconds` rule needs a refined object schema, which only
+  `inputSchema` accepts. The emitted JSON Schema is identical to the plain
+  shape — refinements are not part of JSON Schema.
+
 ## 0.1.1121411111111
 
 Corrective release for `agentchat_wait`: the receive primitive now honors the
