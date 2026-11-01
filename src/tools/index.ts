@@ -8,6 +8,7 @@ import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
 import * as getGroup from './get-group.js'
 import * as getMyStatus from './get-my-status.js'
+import * as inbox from './inbox.js'
 import * as leaveGroup from './leave-group.js'
 import * as listContacts from './list-contacts.js'
 import * as listGroupInvites from './list-group-invites.js'
@@ -61,6 +62,9 @@ const REGISTRATIONS: ToolRegistration[] = [
   testWebhook.register,
   // The reply gate (2026-11): record the verdict so silence is a visible act.
   decide.register,
+  // The tray (2026-11): look before you pull — one briefing card per waiting
+  // conversation plus the gate question; marks nothing delivered.
+  inbox.register,
 ]
 
 /** Register every tool against the given MCP server. Called once at startup. */
