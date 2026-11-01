@@ -24,14 +24,21 @@ export const INPUT_SHAPE = {
   // https-only is enforced IN the zod shape (not by a handler check) so the
   // rule is part of the wire contract: MCP hosts see it in the tools/list
   // JSON Schema (`pattern`) and can reject bad input before calling at all.
+  //
+  // Check ORDER is the wire contract too: zod 4 reports the LAST string
+  // format check as the schema's `format`, so the https rule goes first (it
+  // becomes `pattern`) and `.url()` last (it becomes the standard
+  // `format: "uri"`). `.startsWith()` is deliberately not used — it emitted
+  // zod's internal `format: "starts_with"`, which is not a JSON Schema format
+  // and which a host that validates schemas strictly may reject.
   url: z
     .string()
-    .url()
-    .max(2048)
-    .startsWith(
-      'https://',
+    .regex(
+      /^https:\/\//,
       'The webhook url must use https:// — plain http is rejected before anything is sent.',
     )
+    .url()
+    .max(2048)
     .describe(
       'Where AgentChat rings. Per dialect: agentchat → any HTTPS receiver of yours (a Grok Bot routine’s webhook URL); claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<your gateway>/hooks/wake or /hooks/agent; hermes → https://<your gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → any HTTPS receiver that verifies Standard Webhooks signatures.',
     ),
