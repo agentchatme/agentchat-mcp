@@ -81,7 +81,7 @@ const recorded = (row: Record<string, unknown>) => ({
   decision: {
     id: 'dec_1',
     conversation_id: 'conv_1',
-    decision: 'no_reply',
+    decision: 'dismiss',
     category: null,
     through_message_id: null,
     defer_until: null,
@@ -114,8 +114,8 @@ describe('agentchat_decide input schema', () => {
     expect(shape.safeParse({ conversation_id: '', decision: 'reply' }).success).toBe(false)
   })
 
-  it('rejects defer_seconds with reply or no_reply — in INPUT_SCHEMA, with the rule as the message', () => {
-    for (const decision of ['reply', 'no_reply'] as const) {
+  it('rejects defer_seconds with reply or dismiss — in INPUT_SCHEMA, with the rule as the message', () => {
+    for (const decision of ['reply', 'dismiss'] as const) {
       const parsed = decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision, defer_seconds: 600 })
       expect(parsed.success).toBe(false)
       const issues = parsed.success ? [] : parsed.error.issues
@@ -124,7 +124,7 @@ describe('agentchat_decide input schema', () => {
       expect(issues[0]!.message).toBe(decide.DEFER_SECONDS_RULE)
     }
     // The rule is cross-field, so it lives on the object schema, not the shape.
-    expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'no_reply', defer_seconds: 600 }).success).toBe(true)
+    expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 }).success).toBe(true)
     expect(decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 }).success).toBe(true)
   })
 
@@ -205,19 +205,19 @@ describe('agentchat_decide handler', () => {
     )
   })
 
-  it('no_reply: only the fields that were set travel — no undefined keys on the wire', async () => {
+  it('dismiss: only the fields that were set travel — no undefined keys on the wire', async () => {
     const { impl, calls } = fetchStub(() => json(201, recorded({ category: 'closing' })))
     const result = await decide.createHandler(makeCtx(impl))({
       conversation_id: 'conv_1',
-      decision: 'no_reply',
+      decision: 'dismiss',
       category: 'closing',
     })
     expect(result.isError).toBeFalsy()
-    expect(calls[0]!.body).toEqual({ decision: 'no_reply', category: 'closing' })
+    expect(calls[0]!.body).toEqual({ decision: 'dismiss', category: 'closing' })
     expect(Object.keys(calls[0]!.body as object)).toEqual(['decision', 'category'])
 
     expect(payloadOf(result)).toMatchObject({
-      decision: 'no_reply',
+      decision: 'dismiss',
       category: 'closing',
       through_message_id: null,
       defer_until: null,
@@ -258,7 +258,7 @@ describe('agentchat_decide handler', () => {
 
   it('percent-encodes the conversation id in the path', async () => {
     const { impl, calls } = fetchStub(() => json(201, recorded({ conversation_id: 'grp_a/b' })))
-    await decide.createHandler(makeCtx(impl))({ conversation_id: 'grp_a/b', decision: 'no_reply' })
+    await decide.createHandler(makeCtx(impl))({ conversation_id: 'grp_a/b', decision: 'dismiss' })
     expect(new URL(calls[0]!.url).pathname).toBe('/v1/conversations/grp_a%2Fb/decisions')
   })
 
@@ -266,25 +266,25 @@ describe('agentchat_decide handler', () => {
     const { impl } = fetchStub(() => json(201, {}))
     const result = await decide.createHandler(makeCtx(impl))({
       conversation_id: 'conv_1',
-      decision: 'no_reply',
+      decision: 'dismiss',
       category: 'acknowledgement',
     })
     expect(result.isError).toBeFalsy()
     expect(payloadOf(result)).toEqual({
       you: '@me',
       conversation_id: 'conv_1',
-      decision: 'no_reply',
+      decision: 'dismiss',
       category: 'acknowledgement',
       through_message_id: null,
       defer_until: null,
       recorded_at: null,
-      next: decide.NEXT.no_reply,
+      next: decide.NEXT.dismiss,
     })
   })
 
   it('never retries a verdict: a 5xx is one attempt, reported as SERVER_ERROR', async () => {
     const { impl, calls } = fetchStub(() => json(500, { code: 'INTERNAL_ERROR', message: 'db' }))
-    const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'no_reply' })
+    const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss' })
     expect(result.isError).toBe(true)
     expect(firstText(result)).toContain('Error: SERVER_ERROR')
     expect(calls).toHaveLength(1)
@@ -294,7 +294,7 @@ describe('agentchat_decide handler', () => {
   describe('errors', () => {
     it('404: NOT_FOUND with the not-a-participant guidance (the server is opaque on purpose)', async () => {
       const { impl, calls } = fetchStub(() => json(404, { code: 'NOT_FOUND', message: 'Not found' }))
-      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'no_reply' })
+      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss' })
       expect(result.isError).toBe(true)
       const text = firstText(result)
       expect(text).toContain('Error: NOT_FOUND')
@@ -334,7 +334,7 @@ describe('agentchat_decide handler', () => {
   describe('identity', () => {
     it('stdio: NOT_REGISTERED without any network call', async () => {
       const { impl, calls } = fetchStub(() => json(201, recorded({})))
-      const result = await decide.createHandler(makeCtx(impl, null))({ conversation_id: 'conv_1', decision: 'no_reply' })
+      const result = await decide.createHandler(makeCtx(impl, null))({ conversation_id: 'conv_1', decision: 'dismiss' })
       expect(result.isError).toBe(true)
       expect(firstText(result)).toContain('NOT_REGISTERED')
       expect(calls).toHaveLength(0)
@@ -342,7 +342,7 @@ describe('agentchat_decide handler', () => {
 
     it('hosted: NOT_AUTHENTICATED without any network call', async () => {
       const { impl, calls } = fetchStub(() => json(201, recorded({})))
-      const result = await decide.createHandler(makeCtx(impl, null, 'hosted'))({ conversation_id: 'conv_1', decision: 'no_reply' })
+      const result = await decide.createHandler(makeCtx(impl, null, 'hosted'))({ conversation_id: 'conv_1', decision: 'dismiss' })
       expect(result.isError).toBe(true)
       const text = firstText(result)
       expect(text).toContain('NOT_AUTHENTICATED')
@@ -350,9 +350,9 @@ describe('agentchat_decide handler', () => {
       expect(calls).toHaveLength(0)
     })
 
-    it('handler guard: defer_seconds with no_reply is refused before any network call', async () => {
+    it('handler guard: defer_seconds with dismiss is refused before any network call', async () => {
       const { impl, calls } = fetchStub(() => json(201, recorded({})))
-      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'no_reply', defer_seconds: 600 })
+      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 })
       expect(result.isError).toBe(true)
       expect(firstText(result)).toBe(`Error: VALIDATION_ERROR\n\n${decide.DEFER_SECONDS_RULE}`)
       expect(calls).toHaveLength(0)
@@ -413,7 +413,7 @@ describe('agentchat_decide over the MCP protocol', () => {
     try {
       const mixed = await client.callTool({
         name: decide.NAME,
-        arguments: { conversation_id: 'conv_1', decision: 'no_reply', defer_seconds: 600 },
+        arguments: { conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 },
       })
       expect(mixed.isError).toBe(true)
       expect(firstText(mixed as { content: unknown[] })).toContain('defer_seconds')
@@ -436,17 +436,17 @@ describe('agentchat_decide over the MCP protocol', () => {
     try {
       const result = await client.callTool({
         name: decide.NAME,
-        arguments: { conversation_id: 'conv_1', decision: 'no_reply', category: 'no_action_needed' },
+        arguments: { conversation_id: 'conv_1', decision: 'dismiss', category: 'no_action_needed' },
       })
       expect(result.isError).toBeFalsy()
       expect(calls).toHaveLength(1)
-      expect(calls[0]!.body).toEqual({ decision: 'no_reply', category: 'no_action_needed' })
+      expect(calls[0]!.body).toEqual({ decision: 'dismiss', category: 'no_action_needed' })
       // The hosted core normalizes selfHandle to the bare handle.
       expect(payloadOf(result as { content: unknown[] })).toMatchObject({
         you: 'me',
-        decision: 'no_reply',
+        decision: 'dismiss',
         category: 'no_action_needed',
-        next: decide.NEXT.no_reply,
+        next: decide.NEXT.dismiss,
       })
     } finally {
       await close()
@@ -460,7 +460,7 @@ describe('agentchat_decide over the MCP protocol', () => {
     try {
       const result = await client.callTool({
         name: decide.NAME,
-        arguments: { conversation_id: 'conv_1', decision: 'no_reply' },
+        arguments: { conversation_id: 'conv_1', decision: 'dismiss' },
       })
       expect(result.isError).toBe(true)
       expect(firstText(result as { content: unknown[] })).toContain('NOT_AUTHENTICATED')

@@ -101,9 +101,9 @@ function payloadOf(result: { content: unknown[] }): Record<string, unknown> {
 const isInbox = (call: FetchCall) => new URL(call.url).pathname === '/v1/inbox'
 
 const QUESTION = [
-  'For each conversation on this tray decide ONE thing: reply, no_reply, or defer. You are not writing the reply yet.',
+  'For each conversation on this tray decide ONE thing: reply, dismiss, or defer. You are not writing the reply yet.',
   '',
-  'Decisive bias: once a conversation is winding down, prefer no_reply. On this network silence is a valid reply.',
+  'Decisive bias: once a conversation is winding down, prefer dismiss. On this network silence is a valid reply.',
 ].join('\n')
 
 /** Two cards exactly as the server shapes them — plus a field this package does not know, to prove nothing is filtered. */
@@ -292,7 +292,7 @@ describe('agentchat_inbox handler', () => {
         ].sort(),
       )
       expect(inbox.NEXT.cards).toBe(
-        'Decide per card: agentchat_decide no_reply/defer for the ones that need nothing from you now; for the rest, agentchat_get_conversation to read, then agentchat_send_message. Then agentchat_inbox again if a conversation is live.',
+        'Decide per card: agentchat_decide dismiss/defer for the ones that need nothing from you now; for the rest, agentchat_get_conversation to read, then agentchat_send_message. Then agentchat_inbox again if a conversation is live.',
       )
     })
 
