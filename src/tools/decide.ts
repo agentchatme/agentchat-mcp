@@ -9,11 +9,12 @@ export const NAME = 'agentchat_decide'
 //
 // Presents POST /v1/conversations/{conversation_id}/decisions. Whether an
 // agent replies is judged by its OWN model — this tool only records the
-// verdict, so the platform can see the gate working (and so a `no_reply`
-// is a visible act, not an absence). No reasoning text travels: the
+// verdict, so the platform can see the gate working (and so a `dismiss`
+// is a visible act, not an absence). Vocabulary: reply | dismiss | defer —
+// three positive actions, the words every production inbox uses. No reasoning text travels: the
 // category is the whole explanation.
 
-export const DECISIONS = ['reply', 'no_reply', 'defer'] as const
+export const DECISIONS = ['reply', 'dismiss', 'defer'] as const
 export type Decision = (typeof DECISIONS)[number]
 
 export const CATEGORIES = [
@@ -37,7 +38,7 @@ export const SERVER_DEFAULT_DEFER_SECONDS = 900
 export const REQUEST_TIMEOUT_MS = 10_000
 
 export const DEFER_SECONDS_RULE =
-  'defer_seconds is only valid with decision "defer" — omit it for "reply" and "no_reply".'
+  'defer_seconds is only valid with decision "defer" — omit it for "reply" and "dismiss".'
 
 export const INPUT_SHAPE = {
   conversation_id: z
@@ -49,7 +50,7 @@ export const INPUT_SHAPE = {
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you will send a reply now), `no_reply` (silence is the right answer; this ends your work on the conversation), or `defer` (look again later).',
+      'Your verdict: `reply` (you will send a reply now), `dismiss` (nothing is needed; silence is the right answer and this ends your work on the conversation), or `defer` (look again later).',
     ),
   category: z
     .enum(CATEGORIES)
@@ -106,15 +107,15 @@ export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
 })
 
 export const DESCRIPTION = [
-  'Record the reply-gate verdict for one conversation: what you decided after reading it. `reply` means you will send a reply now (sending a message is itself the reply verdict, so calling this with `reply` is optional). `no_reply` means silence is the right answer and ends your work on that conversation — on this network silence is a valid reply. `defer` means look again later (after defer_seconds; the server defaults to 900).',
+  'Record the reply-gate verdict for one conversation: what you decided after reading it. `reply` means you will send a reply now (sending a message is itself the reply verdict, so calling this with `reply` is optional). `dismiss` means nothing is needed: silence is the right answer and it ends your work on that conversation — on this network silence is a valid reply. `defer` means look again later (after defer_seconds; the server defaults to 900).',
   '',
-  'Prefer `no_reply` when a conversation is winding down: a reply must earn its place, and two agents trading acknowledgements forever is the exact failure this exists to prevent. Record `no_reply` and `defer` explicitly so the platform can see the gate working. Never include your reasoning text — only the category.',
+  'Prefer `dismiss` when a conversation is winding down: a reply must earn its place, and two agents trading acknowledgements forever is the exact failure this exists to prevent. Record `dismiss` and `defer` explicitly so the platform can see the gate working. Never include your reasoning text — only the category.',
 ].join('\n')
 
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
   reply: 'Send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
-  no_reply: 'Done with this conversation for now. Call agentchat_wait if you expect more.',
+  dismiss: 'Done with this conversation for now. Call agentchat_wait if you expect more.',
   defer: 'You will be reminded after defer_until; nothing else to do now.',
 }
 
@@ -123,7 +124,7 @@ const NOT_FOUND_GUIDANCE =
 const RATE_LIMITED_GUIDANCE =
   'Verdicts are capped per hour; you are deciding too often — one verdict per conversation per burst.'
 const VALIDATION_GUIDANCE =
-  'Check the body: decision is reply | no_reply | defer, category is one of the listed values, through_message_id is 1–128 characters, and defer_seconds (60–86400) is only sent with defer.'
+  'Check the body: decision is reply | dismiss | defer, category is one of the listed values, through_message_id is 1–128 characters, and defer_seconds (60–86400) is only sent with defer.'
 
 /** The 201 body: `{ decision: { id, conversation_id, decision, category, through_message_id, defer_until, created_at } }`. */
 interface DecisionRow {

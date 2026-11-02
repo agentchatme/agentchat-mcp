@@ -5,6 +5,20 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+The reply gate's "nothing needed" verdict is `dismiss`. `agentchat_decide`
+takes `reply | dismiss | defer` — three positive actions, the vocabulary every
+production inbox uses (reply / dismiss / snooze) — in place of `no_reply`,
+which named an absence. Same meaning and side effect: `dismiss` settles
+delivery for what the agent saw and ends its work on the conversation. The
+tray's gate question, the inbox tool's guidance and the server instructions
+say `dismiss`; the server accepts the old spelling over REST for one release,
+this tool advertises only the new one.
+
+Versioning from here follows `VERSIONING.md`: this behaviour change is one
+minor bump; fixes are patch +1.
+
 ## 0.1.112141111111111
 
 Look before you pull: `agentchat_inbox` presents the inbox tray — one

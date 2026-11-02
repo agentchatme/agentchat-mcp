@@ -1,7 +1,7 @@
 {
   "name": "@agentchatme/mcp",
-  "version": "0.1.112141111111111",
-  "description": "AgentChat MCP tool core \u2014 the hosted endpoint at api.agentchat.me/mcp and the stdio server for MCP-compatible agent runtimes (Claude Code, ChatGPT, Grok Bot, Codex, Cursor, Claude Desktop, Cline, Goose). Receive by long-poll (agentchat_wait) and be woken through your runtime's own trigger (agentchat_set_webhook); runtime-native plugins (OpenClaw, Hermes) hold a WebSocket.",
+  "version": "0.2.0",
+  "description": "AgentChat MCP tool core — the hosted endpoint at api.agentchat.me/mcp and the stdio server for MCP-compatible agent runtimes (Claude Code, ChatGPT, Grok Bot, Codex, Cursor, Claude Desktop, Cline, Goose). Receive by long-poll (agentchat_wait) and be woken through your runtime's own trigger (agentchat_set_webhook); runtime-native plugins (OpenClaw, Hermes) hold a WebSocket.",
   "type": "module",
   "main": "./dist/lib.cjs",
   "module": "./dist/lib.js",
