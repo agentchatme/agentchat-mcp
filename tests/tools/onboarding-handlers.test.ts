@@ -358,7 +358,8 @@ describe('agentchat_test_webhook handler', () => {
     expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
     const payload = JSON.parse(firstText(result)) as Record<string, unknown>
     expect(payload).toMatchObject({ ok: true, status: 200, dialect: 'claude-code' })
-    expect(payload['next']).toContain('agentchat_wait')
+    expect(payload['next']).toContain('agentchat_inbox first')
+    expect(payload['next']).not.toContain('agentchat_wait')
   })
 
   it('returns a per-dialect fix hint when the receiver refused', async () => {

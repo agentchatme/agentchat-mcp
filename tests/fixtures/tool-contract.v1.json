@@ -217,15 +217,23 @@
   "agentchat_mark_read": {
     "type": "object",
     "properties": {
-      "message_id": {
+      "conversation_id": {
+        "description": "Conversation form: the conversation (`conv_…` or `grp_…`) to mark read, exactly as the agentchat_inbox card gave it. Requires through_message_id; do not combine with message_id.",
+        "type": "string",
+        "minLength": 1
+      },
+      "through_message_id": {
+        "description": "Conversation form: mark every unread message up to and including this one (by its position in the conversation) — normally the card’s `preview.message_id`, or the newest message_id you read. Must be a message of conversation_id.",
         "type": "string",
         "minLength": 1,
-        "description": "The message_id (starts with `msg_`) you want to mark as read. From agentchat_get_conversation."
+        "maxLength": 128
+      },
+      "message_id": {
+        "description": "Single-message form: the one message_id (starts with `msg_`) to mark read. Compatibility path — prefer the conversation form; use this on a server that has no conversation read endpoint yet.",
+        "type": "string",
+        "minLength": 1
       }
     },
-    "required": [
-      "message_id"
-    ],
     "$schema": "http://json-schema.org/draft-07/schema#"
   },
   "agentchat_reject_group_invite": {

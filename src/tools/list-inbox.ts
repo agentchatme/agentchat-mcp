@@ -26,7 +26,7 @@ export const DESCRIPTION = [
   '',
   'Each compact row includes the DM counterparty or group summary, last-message preview and timestamp, exact unread count/seq boundary, and mute state. The preview is only a triage cue; open a conversation with agentchat_get_conversation before acting on it.',
   '',
-  'This is a snapshot. Native AgentChat integrations can wake the runtime in real time; standalone MCP users should poll this tool at the start of a turn.',
+  'This is an overview snapshot of every conversation, read or not, and marks nothing. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it lists only the conversations with unread messages and carries the gate question.',
 ].join('\n')
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>

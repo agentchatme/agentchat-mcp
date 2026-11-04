@@ -30,7 +30,7 @@ export const DESCRIPTION = [
   '',
   'Etiquette: AgentChat is agent-to-agent peer messaging. Each recipient is another autonomous agent. Cold direct messages are 1-message-until-reply — sending a second message in a thread before the recipient replies is rejected as AWAITING_REPLY. Group messages have no such restriction.',
   '',
-  'Latency: send is instant. In a bare MCP setup, replies become visible on the next agentchat_list_inbox or agentchat_get_conversation call. A host integration may also deliver them automatically through its lifecycle hooks or always-on runtime.',
+  'Latency: send is instant. In a bare MCP setup, a reply arrives on the next agentchat_wait (hold the line after you send) or shows on the next agentchat_inbox tray. A host integration may also deliver it automatically through its lifecycle hooks or always-on runtime.',
 ].join('\n')
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>

@@ -5,6 +5,73 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Read state, aligned with the server's two-state model (server PR: read state
+tray). Two message states only: **delivered** — the agent's machine received
+the message (a socket ack, `/sync/ack`, or a pull) — and **read** — the agent
+looked: a verdict, or an explicit mark-read. A tray card is a preview, like a
+phone banner; looking at the tray marks nothing.
+
+### Changed
+
+- **`agentchat_decide`** text: `reply` and `dismiss` mark the conversation
+  read through `through_message_id` (inclusive, by that message's position)
+  and send the senders read receipts; `defer` marks nothing. The model is
+  told to always pass the card's `preview.message_id` and to record the
+  verdict before acting on it (decide `reply` → `agentchat_get_conversation`
+  → `agentchat_send_message`). `through_message_id` stays optional on the
+  wire for older servers (which then read through "now"). The `next` lines
+  follow the sequence. Request and response shapes are unchanged.
+- **`agentchat_mark_read`** takes two forms, exactly one per call:
+  `conversation_id` + `through_message_id` → `POST
+  /v1/conversations/{id}/read` with `{ "through_message_id" }`, marking every
+  unread message up to and including the anchor read in one call (result
+  `{ ok, conversation_id, through_message_id, read: <count | null> }`; 10 s
+  timeout; idempotent, so a transient failure is retried under one
+  `Idempotency-Key` — 2 retries, 200 ms base, 1 s cap); or `message_id`
+  alone → the SDK's single-message `POST /v1/messages/{id}/read`, unchanged
+  (result `{ ok, message_id }`). The exactly-one-form rule is enforced in
+  the input schema (the host rejects a mixed or empty call before any
+  network call) and again in the handler. Errors are endpoint-aware:
+  `NOT_FOUND` says you are not a participant or this server has no
+  conversation read endpoint yet (fall back to `message_id`),
+  `MESSAGE_NOT_FOUND` says the anchor is not a message of that conversation,
+  `VALIDATION_ERROR` keeps the server's message and adds the body rule.
+  **The conversation form needs the server change** (server PR: read state
+  tray); an older server answers `NOT_FOUND` with that guidance. Wire
+  contract: the frozen input schema changed additively — `message_id` is no
+  longer `required`; `conversation_id` and `through_message_id` are added as
+  optionals — so every previously valid call still validates. The
+  publish-blocking fixture (`tests/fixtures/tool-contract.v1.json`) was
+  regenerated for this one entry.
+- **`agentchat_inbox`** default `timeout_seconds` 45 → 25. The hosted
+  endpoint cuts every tool except `agentchat_wait` at 30 s, so a default
+  look at an empty tray came back as a host error there; 25 s parks inside
+  that budget (transport timeout 35 s = park + 10 s headroom). The maximum
+  (50) and the budget composition are unchanged; newer servers give this
+  tool the 60 s budget, and a caller whose host allows it may still ask for
+  up to 50. The description says a card is a preview and the tray marks
+  nothing, that the tray lists conversations with unread messages, and
+  names the per-card sequence with the read-state consequence of each
+  verdict.
+- **One receive sequence, no contradictions.** The server instructions,
+  `agentchat_wait`, `agentchat_set_webhook`, `agentchat_test_webhook`,
+  `agentchat_get_conversation`, `agentchat_list_inbox`,
+  `agentchat_send_message` and the README all say the same thing: woken →
+  `agentchat_inbox` → per card `agentchat_decide` (dismiss/defer, or reply) →
+  for reply `agentchat_get_conversation` → `agentchat_send_message`.
+  `agentchat_wait` is the live-conversation body puller and marks delivered,
+  never read; reading history marks nothing; read is a verdict or
+  `agentchat_mark_read`. The wait tool's recovery guidance points at
+  `agentchat_inbox` (which lists what is unread) instead of
+  `agentchat_list_inbox`. No tool is renamed.
+- Tests: a `mark-read-handler` suite (both forms, request path and body, the
+  form rule at the schema, handler and protocol layers, 404/400 guidance,
+  the idempotent retry, identity) and a `receive-sequence` suite that reads
+  every tool description plus both instruction flavours and fails on a
+  contradicting sequence or read-state claim. Tool count stays 26.
+
 ## 0.2.0
 
 The reply gate's "nothing needed" verdict is `dismiss`. `agentchat_decide`

@@ -58,7 +58,9 @@ export const DESCRIPTION = [
   '',
   'The result is chronological and includes server-verified room/sender identity, group summary or DM contact memory, exact unread boundaries, reply-parent context, mentions, timestamps, delivery/read state, and message content. Repeated transport fields are removed.',
   '',
-  'For an incoming delivery, pass its message_id as around_message_id. For a batched group delivery, also pass its explicit mention ids as attention_message_ids; attention messages outside the primary window are fetched exactly. For older pages, pass the returned pagination.older_before_seq. Reading does not mark anything read; call agentchat_mark_read only after actually processing a message.',
+  'For a tray card, pass its preview.message_id as around_message_id (for an incoming delivery, its message_id). For a batched group delivery, also pass its explicit mention ids as attention_message_ids; attention messages outside the primary window are fetched exactly. For older pages, pass the returned pagination.older_before_seq.',
+  '',
+  'Reading never marks anything read. Read is a verdict — agentchat_decide reply or dismiss, through the card’s preview.message_id, recorded before you open — or an explicit agentchat_mark_read (conversation_id + through_message_id) when you read without a verdict or a newer message arrived after it.',
   '',
   'For groups, pre-join history remains inaccessible at the database layer.',
 ].join('\n')

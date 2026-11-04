@@ -146,6 +146,20 @@ describe('agentchat_decide input schema', () => {
     expect(through('')).toBe(false)
   })
 
+  it('tells the model what each verdict does to read state, to anchor on the card, and to record before acting', () => {
+    expect(decide.DESCRIPTION).toContain('before you act on it')
+    expect(decide.DESCRIPTION).toContain(
+      '`reply` and `dismiss` mark the conversation read through through_message_id',
+    )
+    expect(decide.DESCRIPTION).toContain('`defer` leaves everything unread')
+    expect(decide.DESCRIPTION).toContain('Always pass through_message_id as the card’s `preview.message_id`')
+    expect(decide.INPUT_SHAPE.through_message_id.description).toContain('Always pass it')
+    expect(decide.INPUT_SHAPE.through_message_id.description).toContain('preview.message_id')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('marks nothing read')
+    // The anchor stays optional on the wire for older servers.
+    expect(decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'dismiss' }).success).toBe(true)
+  })
+
   it('emits the enums and bounds as JSON Schema; the refine adds nothing to the wire shape', () => {
     const opts = { target: 'draft-7', io: 'input' } as const
     expect(z.toJSONSchema(decide.INPUT_SCHEMA, opts)).toEqual(z.toJSONSchema(shape, opts))
@@ -201,7 +215,7 @@ describe('agentchat_decide handler', () => {
       next: decide.NEXT.reply,
     })
     expect(decide.NEXT.reply).toBe(
-      'Send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
+      'Read it with agentchat_get_conversation and send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
     )
   })
 
@@ -221,7 +235,7 @@ describe('agentchat_decide handler', () => {
       category: 'closing',
       through_message_id: null,
       defer_until: null,
-      next: 'Done with this conversation for now. Call agentchat_wait if you expect more.',
+      next: 'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
     })
   })
 
@@ -241,7 +255,7 @@ describe('agentchat_decide handler', () => {
       category: null,
       defer_until: '2026-11-01T10:30:00.000Z',
       recorded_at: RECORDED_AT,
-      next: 'You will be reminded after defer_until; nothing else to do now.',
+      next: 'Nothing is marked read; you will be reminded after defer_until. Nothing else to do now.',
     })
   })
 

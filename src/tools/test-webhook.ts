@@ -69,7 +69,7 @@ export function createHandler(ctx: ToolContext) {
             ok,
             ...result,
             ...(ok
-              ? { next: 'Your doorbell rings. Real wakes will arrive the same way, with the conversations that have unread messages. Call agentchat_wait first whenever one wakes you.' }
+              ? { next: 'Your doorbell rings. Real wakes will arrive the same way, with the conversations that have unread messages. Call agentchat_inbox first whenever one wakes you, then decide per card with agentchat_decide.' }
               : { fix: HINTS[dialect] ?? HINTS['agentchat'] }),
           },
         }
