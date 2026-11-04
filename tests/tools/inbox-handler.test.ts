@@ -173,14 +173,14 @@ const EMPTY_TRAY = {
 describe('agentchat_inbox input schema', () => {
   const schema = z.object(inbox.INPUT_SHAPE)
 
-  it('defaults to a 45 s look and 20 cards; blanks (null, "", false) mean the defaults; 0 still means look once', () => {
+  it('defaults to a 25 s look and 20 cards; blanks (null, "", false) mean the defaults; 0 still means look once', () => {
     for (const blank of [undefined, null, '', false]) {
       expect(schema.parse({ timeout_seconds: blank, limit: blank })).toEqual({
-        timeout_seconds: 45,
+        timeout_seconds: 25,
         limit: 20,
       })
     }
-    expect(schema.parse({})).toEqual({ timeout_seconds: 45, limit: 20 })
+    expect(schema.parse({})).toEqual({ timeout_seconds: 25, limit: 20 })
     expect(schema.parse({ timeout_seconds: 0, limit: 5 })).toEqual({ timeout_seconds: 0, limit: 5 })
     expect(schema.parse({ timeout_seconds: '30', limit: '50' })).toEqual({ timeout_seconds: 30, limit: 50 })
   })
@@ -194,7 +194,7 @@ describe('agentchat_inbox input schema', () => {
     expect(schema.safeParse({ limit: 0 }).success).toBe(false)
     expect(schema.safeParse({ limit: 51 }).success).toBe(false)
     expect(inbox.MAX_WAIT_SECONDS).toBe(50)
-    expect(inbox.DEFAULT_WAIT_SECONDS).toBe(45)
+    expect(inbox.DEFAULT_WAIT_SECONDS).toBe(25)
     expect(inbox.MAX_LIMIT).toBe(50)
     expect(inbox.DEFAULT_LIMIT).toBe(20)
   })
@@ -202,7 +202,7 @@ describe('agentchat_inbox input schema', () => {
   it('emits plain integer bounds and defaults as JSON Schema, every field described', () => {
     const emitted = z.toJSONSchema(schema, { target: 'draft-7', io: 'input' })
     const props = emitted['properties'] as Record<string, Record<string, unknown>>
-    expect(props['timeout_seconds']).toMatchObject({ type: 'integer', minimum: 0, maximum: 50, default: 45 })
+    expect(props['timeout_seconds']).toMatchObject({ type: 'integer', minimum: 0, maximum: 50, default: 25 })
     expect(props['limit']).toMatchObject({ type: 'integer', minimum: 1, maximum: 50, default: 20 })
     expect(emitted['required']).toBeUndefined()
     for (const name of Object.keys(inbox.INPUT_SHAPE)) {
@@ -213,9 +213,20 @@ describe('agentchat_inbox input schema', () => {
   it('leads with the wake instruction and states the no-side-effect, budget and silence rules', () => {
     expect(inbox.DESCRIPTION.startsWith('Call this FIRST when woken')).toBe(true)
     expect(inbox.DESCRIPTION).toContain('marks NOTHING delivered or read')
+    expect(inbox.DESCRIPTION).toContain('A card is a preview, like a phone banner')
     expect(inbox.DESCRIPTION).toContain('within ~55 s')
+    expect(inbox.DESCRIPTION).toContain('The default 25 s look fits a 30 s per-tool budget')
     expect(inbox.DESCRIPTION).toContain('the preview is the only content')
     expect(inbox.DESCRIPTION).toContain('Silence is a valid reply.')
+  })
+
+  it('names the per-card sequence with the read-state consequence of each verdict', () => {
+    expect(inbox.DESCRIPTION).toContain('the card’s preview.message_id as through_message_id')
+    expect(inbox.DESCRIPTION).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
+    const sequence = ['agentchat_decide', 'agentchat_get_conversation', 'agentchat_send_message']
+    const positions = sequence.map((name) => inbox.DESCRIPTION.indexOf(name))
+    expect(positions.every((p) => p >= 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
   })
 })
 
@@ -292,7 +303,7 @@ describe('agentchat_inbox handler', () => {
         ].sort(),
       )
       expect(inbox.NEXT.cards).toBe(
-        'Decide per card: agentchat_decide dismiss/defer for the ones that need nothing from you now; for the rest, agentchat_get_conversation to read, then agentchat_send_message. Then agentchat_inbox again if a conversation is live.',
+        'Decide per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: dismiss/defer for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); reply for the rest, then agentchat_get_conversation to read and agentchat_send_message to answer. Then agentchat_inbox again if a conversation is live.',
       )
     })
 
@@ -456,19 +467,44 @@ describe('agentchat_inbox handler', () => {
   })
 
   describe('time budget — the wait tool’s, not a copy', () => {
-    it('shares the composition and the constants with agentchat_wait', () => {
+    it('shares the composition and the constants with agentchat_wait — except the default park, which is the tray’s own', () => {
       expect(inbox.composePollBudget).toBe(waitTool.composePollBudget)
       expect(inbox.TOOL_DEADLINE_MS).toBe(waitTool.TOOL_DEADLINE_MS)
       expect(inbox.TOOL_DEADLINE_MS).toBe(55_000)
       expect(inbox.MAX_WAIT_SECONDS).toBe(waitTool.MAX_WAIT_SECONDS)
-      expect(inbox.DEFAULT_WAIT_SECONDS).toBe(waitTool.DEFAULT_WAIT_SECONDS)
-      // min(wait + 10 s, 55 s − 3 s) for the default, the maximum, and a plain look.
+      // The hosted endpoint cuts every tool but agentchat_wait at 30 s, so the
+      // tray's default park ends with response headroom to spare inside that;
+      // the wait tool keeps its 45 s under its own 60 s budget.
+      expect(inbox.HOSTED_TOOL_BUDGET_MS).toBe(30_000)
+      expect(inbox.DEFAULT_WAIT_SECONDS).toBe(25)
+      expect(waitTool.DEFAULT_WAIT_SECONDS).toBe(45)
+      expect(inbox.DEFAULT_WAIT_SECONDS * 1000 + waitTool.MIN_RESPONSE_HEADROOM_MS).toBeLessThanOrEqual(
+        inbox.HOSTED_TOOL_BUDGET_MS,
+      )
+      // min(wait + 10 s, 55 s − 3 s) for the default, a 45 s look, the maximum, and a plain look.
+      expect(inbox.composePollBudget(25_000, inbox.TOOL_DEADLINE_MS)).toEqual({ waitMs: 25_000, timeoutMs: 35_000 })
       expect(inbox.composePollBudget(45_000, inbox.TOOL_DEADLINE_MS)).toEqual({ waitMs: 45_000, timeoutMs: 52_000 })
       expect(inbox.composePollBudget(50_000, inbox.TOOL_DEADLINE_MS)).toEqual({ waitMs: 50_000, timeoutMs: 52_000 })
       expect(inbox.composePollBudget(0, inbox.TOOL_DEADLINE_MS)).toEqual({ waitMs: 0, timeoutMs: 10_000 })
     })
 
-    it('the default look gives up at exactly 52 s (timeoutMs = min(45 s + 10 s, 55 s − 3 s)) — inside the 60 s host budget', async () => {
+    it('the default look parks 25 s and gives up at exactly 35 s (timeoutMs = 25 s + 10 s headroom)', async () => {
+      vi.useFakeTimers()
+      const { impl, calls } = fetchStub((call) => hang(call))
+      const pending = inbox.createHandler(makeCtx(impl))({ timeout_seconds: inbox.DEFAULT_WAIT_SECONDS, limit: 20 })
+      await vi.advanceTimersByTimeAsync(34_999)
+      expect(calls).toHaveLength(1)
+      expect(new URL(calls[0]!.url).searchParams.get('wait_ms')).toBe('25000')
+      expect(calls[0]!.signal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls[0]!.signal?.aborted).toBe(true)
+      const result = await pending
+      expect(result.isError).toBe(true)
+      expect(firstText(result)).toContain('CONNECTION_ERROR')
+      expect(calls).toHaveLength(1)
+    })
+
+    it('a 45 s look gives up at exactly 52 s (timeoutMs = min(45 s + 10 s, 55 s − 3 s)) — inside the 60 s host budget', async () => {
       vi.useFakeTimers()
       const { impl, calls } = fetchStub((call) => hang(call))
       const pending = inbox.createHandler(makeCtx(impl))({ timeout_seconds: 45, limit: 20 })
@@ -567,7 +603,7 @@ describe('agentchat_inbox over the MCP protocol', () => {
       expect(tool!.description).toBe(inbox.DESCRIPTION)
       const schema = tool!.inputSchema as { required?: string[]; properties?: Record<string, Record<string, unknown>> }
       expect(schema.required ?? []).toEqual([])
-      expect(schema.properties!['timeout_seconds']).toMatchObject({ type: 'integer', minimum: 0, maximum: 50, default: 45 })
+      expect(schema.properties!['timeout_seconds']).toMatchObject({ type: 'integer', minimum: 0, maximum: 50, default: 25 })
       expect(schema.properties!['limit']).toMatchObject({ type: 'integer', minimum: 1, maximum: 50, default: 20 })
     } finally {
       await close()
@@ -584,7 +620,7 @@ describe('agentchat_inbox over the MCP protocol', () => {
       })
       expect(result.isError).toBeFalsy()
       expect(calls).toHaveLength(1)
-      expect(new URL(calls[0]!.url).search).toBe('?limit=20&wait_ms=45000')
+      expect(new URL(calls[0]!.url).search).toBe('?limit=20&wait_ms=25000')
     } finally {
       await close()
     }

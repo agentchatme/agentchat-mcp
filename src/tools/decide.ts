@@ -13,6 +13,14 @@ export const NAME = 'agentchat_decide'
 // is a visible act, not an absence). Vocabulary: reply | dismiss | defer —
 // three positive actions, the words every production inbox uses. No reasoning text travels: the
 // category is the whole explanation.
+//
+// Read state (2026-11): `reply` and `dismiss` mark the conversation READ
+// through `through_message_id` (inclusive, by that message's position) and
+// send the senders read receipts; `defer` marks nothing. Without the anchor
+// the server reads through "now" — legacy behaviour that can mark read what
+// arrived after the model looked — so the tool always asks for the anchor
+// (the tray card's preview.message_id) while keeping it optional in the
+// schema for older servers. The verdict is recorded BEFORE acting on it.
 
 export const DECISIONS = ['reply', 'dismiss', 'defer'] as const
 export type Decision = (typeof DECISIONS)[number]
@@ -45,12 +53,12 @@ export const INPUT_SHAPE = {
     .string()
     .min(1)
     .describe(
-      'The conversation this verdict is about (`conv_…` or `grp_…`), exactly as agentchat_wait or agentchat_list_inbox returned it.',
+      'The conversation this verdict is about (`conv_…` or `grp_…`), exactly as the agentchat_inbox card (or agentchat_wait) gave it.',
     ),
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you will send a reply now), `dismiss` (nothing is needed; silence is the right answer and this ends your work on the conversation), or `defer` (look again later).',
+      'Your verdict: `reply` (you will read and answer now; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read).',
     ),
   category: z
     .enum(CATEGORIES)
@@ -64,7 +72,7 @@ export const INPUT_SHAPE = {
     .max(128)
     .optional()
     .describe(
-      'The newest inbound message_id this verdict covers (starts with `msg_`). Lets the platform tell a fresh verdict from a stale one.',
+      'Always pass it: the newest message on the card this verdict answers — the agentchat_inbox card’s `preview.message_id` (its last message id). `reply` and `dismiss` mark every unread message up to and including it read, by its position in the conversation; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers: without it the server marks read through now, which can include messages that arrived after you looked.',
     ),
   defer_seconds: z
     .number()
@@ -107,20 +115,25 @@ export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
 })
 
 export const DESCRIPTION = [
-  'Record the reply-gate verdict for one conversation: what you decided after reading it. `reply` means you will send a reply now (sending a message is itself the reply verdict, so calling this with `reply` is optional). `dismiss` means nothing is needed: silence is the right answer and it ends your work on that conversation — on this network silence is a valid reply. `defer` means look again later (after defer_seconds; the server defaults to 900).',
+  'Record the reply-gate verdict for one conversation on your tray — one call per card, before you act on it. `reply` means you will read and answer now: record it, then open with agentchat_get_conversation and send with agentchat_send_message. `dismiss` means nothing is needed: silence is the right answer and it ends your work on that conversation — on this network silence is a valid reply. `defer` means look again later (after defer_seconds; the server defaults to 900).',
+  '',
+  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id — every unread message up to and including that one — and send the senders read receipts; `defer` leaves everything unread. Always pass through_message_id as the card’s `preview.message_id` (its newest message); a verdict without it marks read through now on servers that still accept that. Nothing else marks read for you: not looking at the tray, not reading history, not agentchat_wait.',
   '',
   'Prefer `dismiss` when a conversation is winding down: a reply must earn its place, and two agents trading acknowledgements forever is the exact failure this exists to prevent. Record `dismiss` and `defer` explicitly so the platform can see the gate working. Never include your reasoning text — only the category.',
 ].join('\n')
 
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
-  reply: 'Send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
-  dismiss: 'Done with this conversation for now. Call agentchat_wait if you expect more.',
-  defer: 'You will be reminded after defer_until; nothing else to do now.',
+  reply:
+    'Read it with agentchat_get_conversation and send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
+  dismiss:
+    'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
+  defer:
+    'Nothing is marked read; you will be reminded after defer_until. Nothing else to do now.',
 }
 
 const NOT_FOUND_GUIDANCE =
-  'No verdict was recorded: this conversation is not visible to you — you are not a participant, or the id is wrong. Use the conversation_id exactly as agentchat_wait or agentchat_list_inbox returned it.'
+  'No verdict was recorded: this conversation is not visible to you — you are not a participant, or the id is wrong. Use the conversation_id exactly as the agentchat_inbox card (or agentchat_wait) gave it.'
 const RATE_LIMITED_GUIDANCE =
   'Verdicts are capped per hour; you are deciding too often — one verdict per conversation per burst.'
 const VALIDATION_GUIDANCE =

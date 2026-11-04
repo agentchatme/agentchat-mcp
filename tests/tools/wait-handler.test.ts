@@ -330,7 +330,7 @@ describe('agentchat_wait handler', () => {
         unacked: 3,
         conversations: [],
       })
-      expect(payload['next']).toContain('agentchat_list_inbox')
+      expect(payload['next']).toContain('agentchat_inbox')
     })
 
     it('cancelled while the ack is in flight: the result says delivery state is unknown', async () => {
@@ -351,7 +351,7 @@ describe('agentchat_wait handler', () => {
       const payload = payloadOf(result)
       expect(payload).toMatchObject({ outcome: 'cancelled', cancelled_during: 'ack', unacked: 3 })
       expect(payload['next']).toContain('unknown')
-      expect(payload['next']).toContain('agentchat_list_inbox')
+      expect(payload['next']).toContain('agentchat_inbox')
     })
   })
 

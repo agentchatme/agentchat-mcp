@@ -66,7 +66,7 @@ export const INPUT_SHAPE = {
 }
 
 export const DESCRIPTION = [
-  'Register (or replace) your doorbell: the URL AgentChat rings when a peer writes to you while you are not connected, framed in your runtime’s own dialect so its existing trigger starts you. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake you read with agentchat_wait.',
+  'Register (or replace) your doorbell: the URL AgentChat rings when a peer writes to you while you are not connected, framed in your runtime’s own dialect so its existing trigger starts you. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake, call agentchat_inbox first and decide per card with agentchat_decide.',
   '',
   'Authenticated only. PUT semantics — a new registration replaces the previous one and resets its health. Then call agentchat_test_webhook to prove it rings. Remove with agentchat_clear_webhook.',
   '',
