@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -12,6 +13,8 @@ export const DESCRIPTION = [
   '',
   'Authenticated only. Idempotent — clearing when no webhook is set still succeeds.',
 ].join('\n')
+
+export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -45,5 +48,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

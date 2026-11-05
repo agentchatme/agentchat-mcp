@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -40,41 +41,39 @@ export const INPUT_SHAPE = {
     .url()
     .max(2048)
     .describe(
-      'Where AgentChat rings. Per dialect: agentchat → any HTTPS receiver of yours (a Grok Bot routine’s webhook URL); claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<your gateway>/hooks/wake or /hooks/agent; hermes → https://<your gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → any HTTPS receiver that verifies Standard Webhooks signatures.',
+      'Where AgentChat rings, per dialect: agentchat → any HTTPS receiver of yours; claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<gateway>/hooks/wake or /hooks/agent; hermes → https://<gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → a receiver that verifies Standard Webhooks signatures.',
     ),
   secret: z
     .string()
     .min(16)
     .max(256)
     .describe(
-      'What authenticates AgentChat to your doorbell: the bearer token for agentchat / claude-code (routine token) / openclaw (hook token) / poke (API key), or the HMAC secret for hermes (route secret) / standard-webhooks (whsec_… or raw). 16–256 printable ASCII characters. Stored for sending, never shown again.',
+      'What authenticates AgentChat to your trigger: the bearer token (agentchat, claude-code, openclaw, poke) or the HMAC secret (hermes, standard-webhooks). 16–256 printable ASCII characters; stored for sending, never shown again.',
     ),
   dialect: z
     .enum(DIALECTS)
     .default('agentchat')
-    .describe(
-      'How the wake is framed for your runtime’s trigger. Pick the one matching your runtime; agentchat is the generic bearer + JSON payload.',
-    ),
+    .describe('How the wake is framed: pick your runtime; agentchat is the generic bearer + JSON payload.'),
   prompt: z
     .string()
     .min(1)
     .max(4000)
     .optional()
     .describe(
-      'Optional text prepended to every wake on dialects that carry text (claude-code, openclaw, poke): your own standing instruction for what to do when the doorbell rings. Leave empty to use AgentChat’s default wake instruction.',
+      'Optional standing instruction prepended to every wake on dialects that carry text (claude-code, openclaw, poke). Leave empty for AgentChat’s default wake instruction.',
     ),
 }
 
 export const DESCRIPTION = [
-  'Register (or replace) your doorbell: the URL AgentChat rings when a peer writes to you while you are not connected, framed in your runtime’s own dialect so its existing trigger starts you. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake, call agentchat_inbox first and decide per card with agentchat_decide.',
+  'Register (or replace) your wake webhook: the URL AgentChat calls, in your runtime’s own dialect, when a peer writes to you while you are not running. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake, call agentchat_inbox first and decide per card with agentchat_decide.',
   '',
-  'Authenticated only. PUT semantics — a new registration replaces the previous one and resets its health. Then call agentchat_test_webhook to prove it rings. Remove with agentchat_clear_webhook.',
-  '',
-  'The response reports the subscription state (url, dialect, state, last_error).',
+  'PUT semantics: a new registration replaces the previous one. Then agentchat_test_webhook proves it rings; agentchat_clear_webhook removes it. The response reports the subscription state (url, dialect, state, last_error).',
 ].join('\n')
 
 // Input type (not output): `dialect` is optional on the way in and defaulted
 // by the schema; direct handler callers (tests, embedders) may omit it too.
+export const ANNOTATIONS = WRITE_IDEMPOTENT
+
 export type Input = z.input<z.ZodObject<typeof INPUT_SHAPE>>
 
 export function createHandler(ctx: ToolContext) {
@@ -126,5 +125,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

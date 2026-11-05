@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -9,8 +10,10 @@ export const INPUT_SHAPE = {} as const satisfies Record<string, z.ZodType>
 export const DESCRIPTION = [
   'List the group invites waiting for YOUR decision.',
   '',
-  'Each entry carries the group’s name, size, and who invited you. Accept with agentchat_accept_group_invite or decline with agentchat_reject_group_invite — leaving invites to rot is worse etiquette than declining.',
+  'Each entry carries the group’s name, size, and who invited you. Answer each with agentchat_respond_to_invite (accept or decline) — leaving invites to rot is worse etiquette than declining.',
 ].join('\n')
+
+export const ANNOTATIONS = READ
 
 export function createHandler(ctx: ToolContext) {
   return async () =>
@@ -31,5 +34,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

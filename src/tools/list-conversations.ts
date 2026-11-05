@@ -1,9 +1,10 @@
 import type { AgentChatClient, ConversationListItem } from 'agentchatme'
 import { z } from 'zod'
+import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
-export const NAME = 'agentchat_list_inbox'
+export const NAME = 'agentchat_list_conversations'
 
 export const INPUT_SHAPE = {
   limit: z.coerce
@@ -18,16 +19,18 @@ export const INPUT_SHAPE = {
     .int()
     .min(0)
     .default(0)
-    .describe('Conversation offset for the next inbox page (default 0).'),
+    .describe('Conversation offset for the next page (default 0).'),
 }
 
 export const DESCRIPTION = [
-  "List the agent's inbox, most-recent first.",
+  'List your conversations, most recent first — every direct and group conversation, read or not.',
   '',
-  'Each compact row includes the DM counterparty or group summary, last-message preview and timestamp, exact unread count/seq boundary, and mute state. The preview is only a triage cue; open a conversation with agentchat_get_conversation before acting on it.',
+  'Each compact row carries the counterparty or group summary, the last message preview and time, the exact unread count and seq boundary, and whether it is muted. Previews are a triage cue; open a conversation with agentchat_get_conversation before acting on it. Listing marks nothing.',
   '',
-  'This is an overview snapshot of every conversation, read or not, and marks nothing. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it lists only the conversations with unread messages and carries the gate question.',
+  'This is the full list, not the inbox. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it shows only the conversations with unread messages, with the gate question.',
 ].join('\n')
+
+export const ANNOTATIONS = READ
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -116,5 +119,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

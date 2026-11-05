@@ -11,11 +11,12 @@ import * as decide from '../../src/tools/decide.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
 // agentchat_decide: records the reply-gate verdict. Network boundary stubbed;
-// the tests pin (1) the input contract — enums, bounds, and the cross-field
-// defer_seconds rule at the schema, handler AND protocol layers, (2) the exact
-// request each verdict sends, (3) the result shaping and the `next` line,
-// (4) endpoint-aware 404 / 429 / 400 guidance, (5) no network without an
-// identity, (6) a verdict POST is never retried.
+// the tests pin (1) the input contract — enums and bounds, and that
+// `defer_seconds` is gone (the server owns the defer ladder), (2) the exact
+// request each verdict sends, (3) the result shaping (defer_until +
+// defer_step) and the `next` line, (4) endpoint-aware 404 / 429 / 400
+// guidance, (5) no network without an identity, (6) a verdict POST is never
+// retried, (7) a legacy caller's defer_seconds never reaches the wire.
 
 type FetchCall = { url: string; method: string; headers: Headers; body: unknown }
 
@@ -93,17 +94,15 @@ const recorded = (row: Record<string, unknown>) => ({
 const isDecision = (call: FetchCall) =>
   new URL(call.url).pathname === '/v1/conversations/conv_1/decisions'
 
-describe('agentchat_decide input schema', () => {
-  const shape = z.object(decide.INPUT_SHAPE)
+const shape = z.object(decide.INPUT_SHAPE)
 
+describe('agentchat_decide input schema', () => {
   it('accepts every verdict and every category', () => {
     for (const decision of decide.DECISIONS) {
-      expect(decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision }).success).toBe(true)
+      expect(shape.safeParse({ conversation_id: 'conv_1', decision }).success).toBe(true)
     }
     for (const category of decide.CATEGORIES) {
-      expect(
-        decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'reply', category }).success,
-      ).toBe(true)
+      expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'reply', category }).success).toBe(true)
     }
   })
 
@@ -114,30 +113,27 @@ describe('agentchat_decide input schema', () => {
     expect(shape.safeParse({ conversation_id: '', decision: 'reply' }).success).toBe(false)
   })
 
-  it('rejects defer_seconds with reply or dismiss — in INPUT_SCHEMA, with the rule as the message', () => {
-    for (const decision of ['reply', 'dismiss'] as const) {
-      const parsed = decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision, defer_seconds: 600 })
-      expect(parsed.success).toBe(false)
-      const issues = parsed.success ? [] : parsed.error.issues
-      expect(issues).toHaveLength(1)
-      expect(issues[0]!.path).toEqual(['defer_seconds'])
-      expect(issues[0]!.message).toBe(decide.DEFER_SECONDS_RULE)
-    }
-    // The rule is cross-field, so it lives on the object schema, not the shape.
-    expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 }).success).toBe(true)
-    expect(decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 }).success).toBe(true)
+  it('has no defer_seconds: the server owns the defer ladder, and the texts say so', () => {
+    expect(Object.keys(decide.INPUT_SHAPE)).toEqual([
+      'conversation_id',
+      'decision',
+      'category',
+      'through_message_id',
+    ])
+    expect(decide.DESCRIPTION).toContain('the server owns the reminder ladder')
+    expect(decide.DESCRIPTION).toContain('+15 min, then +24 h, then it stops')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('+15 min, then +24 h, then stops')
+    expect(decide.NEXT.defer).toContain('step 1: +15 min')
+    expect(decide.NEXT.defer).toContain('step 2: +24 h')
+    expect(decide.NEXT.defer).toContain('step 3: no more reminders')
+    // A legacy caller's extra field is stripped by the object schema, so an
+    // old client keeps working and the server never sees defer_seconds.
+    const parsed = shape.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 })
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && 'defer_seconds' in parsed.data).toBe(false)
   })
 
-  it('enforces the bounds: defer_seconds 60–86400 integer, through_message_id 1–128 chars', () => {
-    const defer = (defer_seconds: unknown) =>
-      decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds }).success
-    expect(defer(decide.MIN_DEFER_SECONDS)).toBe(true)
-    expect(defer(decide.MAX_DEFER_SECONDS)).toBe(true)
-    expect(defer(decide.MIN_DEFER_SECONDS - 1)).toBe(false)
-    expect(defer(decide.MAX_DEFER_SECONDS + 1)).toBe(false)
-    expect(defer(90.5)).toBe(false)
-    expect(defer('900')).toBe(false)
-
+  it('enforces the through_message_id bounds (1–128 chars)', () => {
     const through = (through_message_id: string) =>
       shape.safeParse({ conversation_id: 'conv_1', decision: 'reply', through_message_id }).success
     expect(through('m')).toBe(true)
@@ -157,24 +153,17 @@ describe('agentchat_decide input schema', () => {
     expect(decide.INPUT_SHAPE.through_message_id.description).toContain('preview.message_id')
     expect(decide.INPUT_SHAPE.decision.description).toContain('marks nothing read')
     // The anchor stays optional on the wire for older servers.
-    expect(decide.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_1', decision: 'dismiss' }).success).toBe(true)
+    expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'dismiss' }).success).toBe(true)
   })
 
-  it('emits the enums and bounds as JSON Schema; the refine adds nothing to the wire shape', () => {
-    const opts = { target: 'draft-7', io: 'input' } as const
-    expect(z.toJSONSchema(decide.INPUT_SCHEMA, opts)).toEqual(z.toJSONSchema(shape, opts))
-
-    const schema = z.toJSONSchema(decide.INPUT_SCHEMA, opts)
+  it('emits the enums and bounds as JSON Schema, with a description on every field', () => {
+    const schema = z.toJSONSchema(shape, { target: 'draft-7', io: 'input' })
     const props = schema['properties'] as Record<string, Record<string, unknown>>
     expect(schema['required']).toEqual(['conversation_id', 'decision'])
+    expect(Object.keys(props)).toEqual(['conversation_id', 'decision', 'category', 'through_message_id'])
     expect(props['decision']).toMatchObject({ type: 'string', enum: [...decide.DECISIONS] })
     expect(props['category']).toMatchObject({ type: 'string', enum: [...decide.CATEGORIES] })
     expect(props['through_message_id']).toMatchObject({ type: 'string', minLength: 1, maxLength: 128 })
-    expect(props['defer_seconds']).toMatchObject({
-      type: 'integer',
-      minimum: decide.MIN_DEFER_SECONDS,
-      maximum: decide.MAX_DEFER_SECONDS,
-    })
     for (const name of Object.keys(decide.INPUT_SHAPE)) {
       expect(typeof props[name]!['description'], `${name} needs a description`).toBe('string')
     }
@@ -211,6 +200,7 @@ describe('agentchat_decide handler', () => {
       category: 'open_request',
       through_message_id: 'msg_9',
       defer_until: null,
+      defer_step: null,
       recorded_at: RECORDED_AT,
       next: decide.NEXT.reply,
     })
@@ -239,35 +229,41 @@ describe('agentchat_decide handler', () => {
     })
   })
 
-  it('defer with defer_seconds: sends it and returns the server defer_until', async () => {
+  it('defer: sends only the verdict; the server answers with the ladder step and its due time', async () => {
     const { impl, calls } = fetchStub(() =>
-      json(201, recorded({ decision: 'defer', defer_until: '2026-11-01T10:30:00.000Z' })),
+      json(201, recorded({ decision: 'defer', defer_until: '2026-11-01T10:15:00.000Z', defer_step: 1 })),
     )
     const result = await decide.createHandler(makeCtx(impl))({
       conversation_id: 'conv_1',
       decision: 'defer',
-      defer_seconds: 1800,
+      through_message_id: 'msg_9',
     })
     expect(result.isError).toBeFalsy()
-    expect(calls[0]!.body).toEqual({ decision: 'defer', defer_seconds: 1800 })
+    expect(calls[0]!.body).toEqual({ decision: 'defer', through_message_id: 'msg_9' })
     expect(payloadOf(result)).toMatchObject({
       decision: 'defer',
       category: null,
-      defer_until: '2026-11-01T10:30:00.000Z',
+      defer_until: '2026-11-01T10:15:00.000Z',
+      defer_step: 1,
       recorded_at: RECORDED_AT,
-      next: 'Nothing is marked read; you will be reminded after defer_until. Nothing else to do now.',
+      next: decide.NEXT.defer,
     })
   })
 
-  it('defer without defer_seconds: sends none, so the server default (900 s) applies', async () => {
-    const { impl, calls } = fetchStub(() =>
+  it('defer at the end of the ladder: defer_until null, defer_step 3', async () => {
+    const { impl } = fetchStub(() =>
+      json(201, recorded({ decision: 'defer', defer_until: null, defer_step: 3 })),
+    )
+    const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'defer' })
+    expect(payloadOf(result)).toMatchObject({ decision: 'defer', defer_until: null, defer_step: 3 })
+  })
+
+  it('an older server without defer_step: defer_step is null, defer_until as given', async () => {
+    const { impl } = fetchStub(() =>
       json(201, recorded({ decision: 'defer', defer_until: '2026-11-01T10:15:00.000Z' })),
     )
     const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'defer' })
-    expect(result.isError).toBeFalsy()
-    expect(calls[0]!.body).toEqual({ decision: 'defer' })
-    expect(payloadOf(result)['defer_until']).toBe('2026-11-01T10:15:00.000Z')
-    expect(decide.SERVER_DEFAULT_DEFER_SECONDS).toBe(900)
+    expect(payloadOf(result)).toMatchObject({ defer_until: '2026-11-01T10:15:00.000Z', defer_step: null })
   })
 
   it('percent-encodes the conversation id in the path', async () => {
@@ -291,6 +287,7 @@ describe('agentchat_decide handler', () => {
       category: 'acknowledgement',
       through_message_id: null,
       defer_until: null,
+      defer_step: null,
       recorded_at: null,
       next: decide.NEXT.dismiss,
     })
@@ -334,14 +331,19 @@ describe('agentchat_decide handler', () => {
 
     it('400: VALIDATION_ERROR keeps the server message and adds the field rules', async () => {
       const { impl } = fetchStub(() =>
-        json(400, { code: 'VALIDATION_ERROR', message: 'defer_seconds requires decision=defer' }),
+        json(400, { code: 'VALIDATION_ERROR', message: 'through_message_id too long' }),
       )
-      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 60 })
+      const result = await decide.createHandler(makeCtx(impl))({
+        conversation_id: 'conv_1',
+        decision: 'defer',
+        through_message_id: 'x',
+      })
       expect(result.isError).toBe(true)
       const text = firstText(result)
       expect(text).toContain('Error: VALIDATION_ERROR')
-      expect(text).toContain('defer_seconds requires decision=defer')
-      expect(text).toContain('only sent with defer')
+      expect(text).toContain('through_message_id too long')
+      expect(text).toContain('through_message_id is 1–128 characters')
+      expect(text).not.toContain('defer_seconds')
     })
   })
 
@@ -361,14 +363,6 @@ describe('agentchat_decide handler', () => {
       const text = firstText(result)
       expect(text).toContain('NOT_AUTHENTICATED')
       expect(text).toContain('Authorization: Bearer')
-      expect(calls).toHaveLength(0)
-    })
-
-    it('handler guard: defer_seconds with dismiss is refused before any network call', async () => {
-      const { impl, calls } = fetchStub(() => json(201, recorded({})))
-      const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 })
-      expect(result.isError).toBe(true)
-      expect(firstText(result)).toBe(`Error: VALIDATION_ERROR\n\n${decide.DEFER_SECONDS_RULE}`)
       expect(calls).toHaveLength(0)
     })
   })
@@ -399,7 +393,7 @@ describe('agentchat_decide over the MCP protocol', () => {
     }
   }
 
-  it('tools/list advertises the enums, bounds and required fields', async () => {
+  it('tools/list advertises the enums and required fields, no defer_seconds, and idempotent-write hints', async () => {
     const { client, close } = await connect(null)
     try {
       const { tools } = await client.listTools()
@@ -410,34 +404,40 @@ describe('agentchat_decide over the MCP protocol', () => {
       expect(schema.required).toEqual(['conversation_id', 'decision'])
       expect(schema.properties!['decision']).toMatchObject({ enum: [...decide.DECISIONS] })
       expect(schema.properties!['category']).toMatchObject({ enum: [...decide.CATEGORIES] })
-      expect(schema.properties!['defer_seconds']).toMatchObject({
-        type: 'integer',
-        minimum: decide.MIN_DEFER_SECONDS,
-        maximum: decide.MAX_DEFER_SECONDS,
+      expect(schema.properties!['defer_seconds']).toBeUndefined()
+      expect(tool!.annotations).toEqual({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
       })
     } finally {
       await close()
     }
   })
 
-  it('rejects defer_seconds without defer, and a bad decision, at the protocol layer with zero network calls', async () => {
-    const { impl, calls } = fetchStub(() => json(201, recorded({})))
+  it('a legacy caller’s defer_seconds is dropped before the wire; a bad decision is rejected with zero network calls', async () => {
+    const { impl, calls } = fetchStub(() =>
+      json(201, recorded({ decision: 'defer', defer_until: '2026-11-01T10:15:00.000Z', defer_step: 1 })),
+    )
     vi.stubGlobal('fetch', impl)
     const { client, close } = await connect(KEY)
     try {
-      const mixed = await client.callTool({
+      const legacy = await client.callTool({
         name: decide.NAME,
-        arguments: { conversation_id: 'conv_1', decision: 'dismiss', defer_seconds: 600 },
+        arguments: { conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 },
       })
-      expect(mixed.isError).toBe(true)
-      expect(firstText(mixed as { content: unknown[] })).toContain('defer_seconds')
+      expect(legacy.isError).toBeFalsy()
+      expect(calls).toHaveLength(1)
+      expect(calls[0]!.body).toEqual({ decision: 'defer' })
+      expect(payloadOf(legacy as { content: unknown[] })).toMatchObject({ defer_step: 1 })
 
       const bad = await client.callTool({
         name: decide.NAME,
         arguments: { conversation_id: 'conv_1', decision: 'shrug' },
       })
       expect(bad.isError).toBe(true)
-      expect(calls).toHaveLength(0)
+      expect(calls).toHaveLength(1)
     } finally {
       await close()
     }

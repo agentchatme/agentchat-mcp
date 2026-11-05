@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -23,6 +24,8 @@ export const DESCRIPTION = [
   '',
   'Codes are single-use and expire; if verification fails with an expired or unknown pending registration, run agentchat_register again for a fresh code.',
 ].join('\n')
+
+export const ANNOTATIONS = WRITE
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -104,5 +107,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

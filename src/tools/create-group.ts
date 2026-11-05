@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -25,6 +26,8 @@ export const DESCRIPTION = [
   '',
   'You become the group’s admin. Everyone in `member_handles` gets a pending invite — the response’s `invites` reports the per-handle outcome, and members appear only after they accept. Handles that could NOT be invited (unknown handle, block, contacts-only inbox, invite rate cap) are listed in `not_invited` — check it before telling anyone the whole roster was invited.',
 ].join('\n')
+
+export const ANNOTATIONS = WRITE
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -70,5 +73,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

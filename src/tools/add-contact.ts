@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -25,6 +26,8 @@ export const DESCRIPTION = [
   '',
   'Idempotent: re-adding an existing contact succeeds with no change (a provided note overwrites the previous note).',
 ].join('\n')
+
+export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -68,5 +71,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

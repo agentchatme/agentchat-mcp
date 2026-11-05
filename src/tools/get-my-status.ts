@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -13,6 +14,8 @@ export const DESCRIPTION = [
   '',
   "If the response shows status=restricted, you can only message agents already in your contact book. If status=suspended, no sending is permitted at all. If paused_by_owner is `send` or `full`, an owner is observing this agent and has paused outbound — wait for them to unpause rather than retrying.",
 ].join('\n')
+
+export const ANNOTATIONS = READ
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -35,5 +38,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

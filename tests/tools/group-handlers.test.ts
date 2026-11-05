@@ -1,13 +1,13 @@
-import { type AgentChatClient } from 'agentchatme'
+import { createAgentChatError, type AgentChatClient } from 'agentchatme'
 import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { Semaphore } from '../../src/semaphore.js'
-import * as acceptGroupInvite from '../../src/tools/accept-group-invite.js'
 import * as createGroup from '../../src/tools/create-group.js'
 import * as getGroup from '../../src/tools/get-group.js'
 import * as leaveGroup from '../../src/tools/leave-group.js'
 import * as listGroupInvites from '../../src/tools/list-group-invites.js'
-import * as rejectGroupInvite from '../../src/tools/reject-group-invite.js'
+import * as respondToInvite from '../../src/tools/respond-to-invite.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
 // Same call-shape discipline as handlers.test.ts: stub the SDK, assert the
@@ -110,21 +110,65 @@ describe('agentchat_list_group_invites', () => {
   })
 })
 
-describe('agentchat_accept_group_invite / reject', () => {
+describe('agentchat_respond_to_invite (accept + decline merged)', () => {
   it('accept joins and reports the room snapshot', async () => {
-    const mock = vi.fn().mockResolvedValue({ ...GROUP_DETAIL, member_count: 5, your_role: 'member' })
-    const handler = acceptGroupInvite.createHandler(makeCtx({ acceptGroupInvite: mock }))
-    const result = await handler({ invite_id: 'inv_9' })
-    expect(mock).toHaveBeenCalledWith('inv_9')
-    expect(parseJsonContent(result)).toMatchObject({ ok: true, member_count: 5, your_role: 'member' })
+    const accept = vi.fn().mockResolvedValue({ ...GROUP_DETAIL, member_count: 5, your_role: 'member' })
+    const reject = vi.fn()
+    const handler = respondToInvite.createHandler(
+      makeCtx({ acceptGroupInvite: accept, rejectGroupInvite: reject }),
+    )
+    const result = await handler({ invite_id: 'inv_9', response: 'accept' })
+    expect(accept).toHaveBeenCalledWith('inv_9')
+    expect(reject).not.toHaveBeenCalled()
+    expect(parseJsonContent(result)).toMatchObject({
+      ok: true,
+      invite_id: 'inv_9',
+      response: 'accept',
+      outcome: 'joined',
+      group: { group_id: 'grp_1', member_count: 5, your_role: 'member' },
+    })
   })
 
-  it('reject resolves to a quiet outcome', async () => {
-    const mock = vi.fn().mockResolvedValue({ message: 'rejected' })
-    const handler = rejectGroupInvite.createHandler(makeCtx({ rejectGroupInvite: mock }))
-    const result = await handler({ invite_id: 'inv_9' })
-    expect(mock).toHaveBeenCalledWith('inv_9')
-    expect(parseJsonContent(result)).toMatchObject({ ok: true, outcome: 'rejected' })
+  it('decline resolves to a quiet outcome without touching accept', async () => {
+    const accept = vi.fn()
+    const reject = vi.fn().mockResolvedValue({ message: 'rejected' })
+    const handler = respondToInvite.createHandler(
+      makeCtx({ acceptGroupInvite: accept, rejectGroupInvite: reject }),
+    )
+    const result = await handler({ invite_id: 'inv_9', response: 'decline' })
+    expect(reject).toHaveBeenCalledWith('inv_9')
+    expect(accept).not.toHaveBeenCalled()
+    expect(parseJsonContent(result)).toEqual({
+      ok: true,
+      invite_id: 'inv_9',
+      response: 'decline',
+      outcome: 'declined',
+    })
+  })
+
+  it('the schema admits exactly accept | decline', () => {
+    const shape = z.object(respondToInvite.INPUT_SHAPE)
+    expect(respondToInvite.RESPONSES).toEqual(['accept', 'decline'])
+    expect(shape.safeParse({ invite_id: 'inv_9', response: 'accept' }).success).toBe(true)
+    expect(shape.safeParse({ invite_id: 'inv_9', response: 'reject' }).success).toBe(false)
+    expect(shape.safeParse({ invite_id: 'inv_9' }).success).toBe(false)
+    expect(shape.safeParse({ response: 'accept' }).success).toBe(false)
+  })
+
+  it('an answered or unknown invite comes back as INVITE_NOT_FOUND with guidance, for both answers', async () => {
+    const gone = () =>
+      Promise.reject(createAgentChatError({ code: 'INVITE_NOT_FOUND', message: 'Invite not found' }, 404))
+    const handler = respondToInvite.createHandler(
+      makeCtx({ acceptGroupInvite: vi.fn(gone), rejectGroupInvite: vi.fn(gone) }),
+    )
+    for (const response of respondToInvite.RESPONSES) {
+      const result = await handler({ invite_id: 'inv_old', response })
+      expect(result.isError).toBe(true)
+      const text = (result.content as Array<{ text: string }>)[0]!.text
+      expect(text).toContain('Error: INVITE_NOT_FOUND')
+      expect(text).toContain('Invite not found')
+      expect(text).toContain('agentchat_list_group_invites')
+    }
   })
 })
 

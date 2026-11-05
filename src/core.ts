@@ -5,8 +5,8 @@ import { defaultMcpFetch, FixedIdentityProvider } from './client.js'
 import { buildInstructions } from './instructions.js'
 import { createLogger } from './log.js'
 import { Semaphore } from './semaphore.js'
-import type { ToolContext } from './tools/_types.js'
-import { registerAllTools, TOOL_COUNT } from './tools/index.js'
+import type { ToolContext, ToolVisibility } from './tools/_types.js'
+import { registerAllTools, visibleToolNames } from './tools/index.js'
 import { PACKAGE_VERSION } from './version.js'
 
 // ─── Hosted core: buildMcpServer ───────────────────────────────────────────
@@ -24,17 +24,20 @@ import { PACKAGE_VERSION } from './version.js'
 //   await server.connect(transport)   // e.g. StreamableHTTPServerTransport
 //
 // Guarantees:
-//   * Registers ALL tools, bound to exactly the identity in `opts`.
+//   * Registers the tools for the session's situation (`visibility`; absent
+//     = all of them), bound to exactly the identity in `opts`.
 //   * Reads NOTHING ambient — no process.env, no credentials file. What you
 //     pass is the entire identity. (The turn-idempotency env contract of the
 //     stdio entry is explicitly severed here: `turnKey` resolves to whatever
 //     the caller passed in `opts.turnKey` — default undefined — never to an
 //     ambient env var, so a multi-tenant process can never leak one session's
 //     turn key into another's sends.)
-//   * `apiKey: null` builds an UNAUTHENTICATED session: every tool is still
-//     listed, and calls fail with the structured NOT_AUTHENTICATED error —
-//     except agentchat_register / agentchat_verify_otp, which work without a
-//     key so a brand-new agent can mint its identity in-band.
+//   * `apiKey: null` builds an UNAUTHENTICATED session: without `visibility`
+//     every tool is still listed, and calls fail with the structured
+//     NOT_AUTHENTICATED error — except agentchat_register /
+//     agentchat_verify_otp, which work without a key so a brand-new agent can
+//     mint its identity in-band. A gateway that knows the session has no key
+//     passes `visibility: { registered: false, … }` and lists only those.
 
 export interface BuildMcpServerOptions {
   /** AgentChat API base URL, e.g. `https://api.agentchat.me`. */
@@ -95,6 +98,15 @@ export interface BuildMcpServerOptions {
    * AGENTCHAT_MAX_CONCURRENT_TOOLS.
    */
   maxConcurrentTools?: number
+  /**
+   * Which tools this session is shown. Absent = the full surface (the
+   * historical behavior, which the stdio binary and older embedders keep).
+   * `{ registered: false }` lists only agentchat_register,
+   * agentchat_verify_otp and agentchat_get_my_status; `{ registered: true }`
+   * drops the sign-up pair and lists the webhook tools only when
+   * `webhookTools` is true. The server instructions follow the same choice.
+   */
+  visibility?: ToolVisibility
 }
 
 function normalizeApiBase(apiBase: string): string {
@@ -221,6 +233,9 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     ...(opts.selfHandle !== undefined ? { selfHandle: opts.selfHandle } : {}),
   })
 
+  const visibility = opts.visibility
+  const toolCount = visibleToolNames(visibility).length
+
   const server = new McpServer(
     {
       name: 'agentchat',
@@ -228,7 +243,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     },
     {
       capabilities: { tools: {} },
-      instructions: buildInstructions('hosted', TOOL_COUNT),
+      instructions: buildInstructions('hosted', toolCount, visibility),
     },
   )
 
@@ -253,10 +268,15 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     semaphore,
     inflight,
   }
-  registerAllTools(server, ctx)
+  const registered = registerAllTools(server, ctx, visibility)
 
   logger.debug(
-    { tools: TOOL_COUNT, authenticated: apiKey !== null, maxConcurrentTools },
+    {
+      tools: registered.length,
+      authenticated: apiKey !== null,
+      maxConcurrentTools,
+      ...(visibility ? { visibility } : {}),
+    },
     'agentchat mcp core built',
   )
 

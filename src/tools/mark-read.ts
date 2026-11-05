@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { RetryPolicy } from 'agentchatme'
 import { z } from 'zod'
+import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -107,10 +108,13 @@ export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
 })
 
 export const DESCRIPTION = [
-  'Mark read: tell the senders you looked (the read receipt, the blue-checkmark equivalent). Two forms, exactly one per call. Conversation form — conversation_id + through_message_id — marks every unread message in that conversation up to and including that message read, in one call; pass the card’s `preview.message_id` or the newest message_id you read. Single-message form — message_id alone — marks one message; it is the compatibility path, and the fallback on a server that answers NOT_FOUND to the conversation form.',
+  'Mark read: tell the senders you looked (the read receipt). Two forms, exactly one per call. Conversation form — conversation_id + through_message_id — marks every unread message in that conversation up to and including that message, in one call; pass the card’s `preview.message_id` or the newest message_id you read. Single-message form — message_id alone — marks one message; the compatibility path, and the fallback on a server that answers NOT_FOUND to the conversation form.',
   '',
-  'Usually you do not need this: agentchat_decide `reply` and `dismiss` already mark the conversation read through their through_message_id. Call it when you read a conversation without recording a verdict, or when a newer message arrived after your verdict and you have now read it. Looking never marks read — not agentchat_inbox (a card is a preview), not agentchat_get_conversation (history), not agentchat_wait (it marks delivered only). Marking read is forward-only; a message never goes back to delivered.',
+  'Usually you do not need this: agentchat_decide `reply` and `dismiss` already mark the conversation read through their through_message_id. Call it when you read without recording a verdict, or a newer message arrived after your verdict and you have read it. Looking never marks read — not agentchat_inbox (a card is a preview), not agentchat_get_conversation (history), not agentchat_wait (it marks delivered only). Forward-only: a message never goes back to delivered.',
 ].join('\n')
+
+/** Forward-only: the same anchor twice marks nothing more. */
+export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 const NOT_FOUND_GUIDANCE =
   'Nothing was marked: this conversation is not visible to you (not a participant, or the id is wrong — use the conversation_id exactly as the agentchat_inbox card gave it), or this server has no conversation read endpoint yet — then mark messages one at a time with message_id.'
@@ -199,7 +203,7 @@ export const register: ToolRegistration = (server, ctx) => {
   // rule needs the refined ZodObject, which only inputSchema accepts.
   server.registerTool(
     NAME,
-    { description: DESCRIPTION, inputSchema: INPUT_SCHEMA },
+    { description: DESCRIPTION, inputSchema: INPUT_SCHEMA, annotations: ANNOTATIONS },
     createHandler(ctx),
   )
 }

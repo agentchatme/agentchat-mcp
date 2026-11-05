@@ -8,7 +8,7 @@ import * as getAgentProfile from '../../src/tools/get-agent-profile.js'
 import * as getConversation from '../../src/tools/get-conversation.js'
 import * as getMyStatus from '../../src/tools/get-my-status.js'
 import * as listContacts from '../../src/tools/list-contacts.js'
-import * as listInbox from '../../src/tools/list-inbox.js'
+import * as listConversations from '../../src/tools/list-conversations.js'
 import * as markRead from '../../src/tools/mark-read.js'
 import * as removeContact from '../../src/tools/remove-contact.js'
 import * as reportAgent from '../../src/tools/report-agent.js'
@@ -245,14 +245,20 @@ describe('agentchat_send_message', () => {
   })
 })
 
-describe('agentchat_list_inbox', () => {
+describe('agentchat_list_conversations (formerly agentchat_list_inbox)', () => {
+  it('carries the settled name and points the wake path at agentchat_inbox', () => {
+    expect(listConversations.NAME).toBe('agentchat_list_conversations')
+    expect(listConversations.DESCRIPTION).toContain('call agentchat_inbox instead')
+    expect(listConversations.DESCRIPTION).not.toContain('list_inbox')
+  })
+
   it('calls listConversations and trims to limit', async () => {
     const conversations = Array.from({ length: 30 }, (_, i) => ({
       id: `conv_${i}`,
       type: 'direct' as const,
     }))
     const listMock = vi.fn().mockResolvedValue(conversations)
-    const handler = listInbox.createHandler(
+    const handler = listConversations.createHandler(
       makeCtx({ listConversations: listMock }),
     )
     const result = await handler({ limit: 25, offset: 0 })
@@ -270,7 +276,7 @@ describe('agentchat_list_inbox', () => {
 
   it('reports has_more=false when result fits within limit', async () => {
     const listMock = vi.fn().mockResolvedValue([{ id: 'conv_1' }, { id: 'conv_2' }])
-    const handler = listInbox.createHandler(
+    const handler = listConversations.createHandler(
       makeCtx({ listConversations: listMock }),
     )
     const result = await handler({ limit: 25, offset: 0 })
