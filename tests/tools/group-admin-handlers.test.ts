@@ -135,7 +135,7 @@ describe('agentchat_manage_members', () => {
     )
   })
 
-  it('when every handle fails the same way, that reason is the tool error (nothing happened)', async () => {
+  it('when every handle fails for one CALLER-level reason, that reason is the tool error (nothing happened)', async () => {
     const { impl, calls } = fetchStub(() => json(403, { code: 'FORBIDDEN', message: 'Admin only' }))
     const result = await manageMembers.createHandler(makeRealCtx(impl))({
       group_id: 'grp_1',
@@ -147,6 +147,48 @@ describe('agentchat_manage_members', () => {
     expect(firstText(result)).toContain('Error: FORBIDDEN')
     expect(firstText(result)).toContain('Admin only')
     expect(firstText(result)).toContain('Only an admin can manage members')
+
+    const gone = fetchStub(() => json(404, { code: 'GROUP_NOT_FOUND', message: 'Group not found' }))
+    const missing = await manageMembers.createHandler(makeRealCtx(gone.impl))({
+      group_id: 'grp_x',
+      action: 'add',
+      handles: ['alice'],
+    })
+    expect(missing.isError).toBe(true)
+    expect(firstText(missing)).toContain('Error: GROUP_NOT_FOUND')
+    expect(firstText(missing)).toContain('not a member, or the id is wrong')
+    expect(manageMembers.CALLER_LEVEL_CODES.has('FORBIDDEN')).toBe(true)
+    expect(manageMembers.CALLER_LEVEL_CODES.has('INBOX_RESTRICTED')).toBe(false)
+  })
+
+  it('per-handle reasons stay per handle even when every handle fails the same way', async () => {
+    const { impl, calls } = fetchStub(() => json(403, { code: 'INBOX_RESTRICTED', message: 'contacts only' }))
+    const result = await manageMembers.createHandler(makeRealCtx(impl))({
+      group_id: 'grp_1',
+      action: 'add',
+      handles: ['alice', 'bob'],
+    })
+    expect(calls).toHaveLength(2)
+    expect(result.isError).toBeFalsy()
+    const payload = payloadOf(result) as { ok: boolean; failed: number; results: Array<Record<string, unknown>> }
+    expect(payload.ok).toBe(false)
+    expect(payload.failed).toBe(2)
+    expect(payload.results.map((r) => (r['error'] as { code: string }).code)).toEqual([
+      'INBOX_RESTRICTED',
+      'INBOX_RESTRICTED',
+    ])
+  })
+
+  it('no identity is a whole-call failure, not a per-handle line', async () => {
+    const { impl, calls } = fetchStub(() => json(201, { handle: 'alice', outcome: 'invited' }))
+    const result = await manageMembers.createHandler(makeRealCtx(impl, { apiKey: null }))({
+      group_id: 'grp_1',
+      action: 'add',
+      handles: ['alice'],
+    })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain('NOT_REGISTERED')
+    expect(calls).toHaveLength(0)
   })
 
   it('remove / promote / demote hit their endpoints with the handle in the path', async () => {
@@ -169,17 +211,21 @@ describe('agentchat_manage_members', () => {
     ['NOT_MEMBER', 404, 'remove', /not an active member/],
     ['LAST_ADMIN', 400, 'demote', /Promote someone else/],
     ['NOT_ADMIN', 400, 'demote', /nothing to demote/],
-  ])('%s guidance reaches the per-handle error', async (code, status, action, guidance) => {
+    ['AGENT_NOT_FOUND', 404, 'add', /No agent with that handle/],
+  ])('%s is a per-handle error line with the server message and guidance', async (code, status, action, guidance) => {
     const { impl } = fetchStub(() => json(status, { code, message: `server says ${code}` }))
     const result = await manageMembers.createHandler(makeRealCtx(impl))({
       group_id: 'grp_1',
       action: action as manageMembers.Action,
       handles: ['alice'],
     })
-    // One handle, one failure: surfaced as the tool error with the guidance.
-    expect(result.isError).toBe(true)
-    expect(firstText(result)).toContain(`Error: ${code}`)
-    expect(firstText(result)).toMatch(guidance)
+    // One handle, one per-handle failure: a result line, never a tool error.
+    expect(result.isError).toBeFalsy()
+    const payload = payloadOf(result) as { ok: boolean; results: Array<Record<string, unknown>> }
+    expect(payload.ok).toBe(false)
+    const error = payload.results[0]!['error'] as { code: string; message: string }
+    expect(error.code).toBe(code)
+    expect(error.message).toMatch(guidance)
   })
 
   it('the schema requires 1–50 handles and one of the four actions', () => {

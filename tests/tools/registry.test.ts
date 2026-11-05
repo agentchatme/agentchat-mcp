@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { Semaphore } from '../../src/semaphore.js'
 import {
   registerAllTools,
+  RETIRED_TOOL_NAMES,
   SIGNUP_TOOL_NAMES,
   TOOL_COUNT,
   TOOL_NAMES,
@@ -82,14 +83,20 @@ describe('registerAllTools', () => {
     expect(registered).toEqual(EXPECTED_TOOL_NAMES)
   })
 
-  it('the renamed and merged tools are gone under their old names', () => {
-    for (const old of [
+  it('the renamed and merged tools are out of the listed surface; their old names are the retired aliases', () => {
+    expect(RETIRED_TOOL_NAMES).toEqual([
       'agentchat_list_inbox',
       'agentchat_accept_group_invite',
       'agentchat_reject_group_invite',
-    ]) {
+    ])
+    for (const old of RETIRED_TOOL_NAMES) {
       expect(TOOL_NAMES).not.toContain(old)
+      expect(visibleToolNames()).not.toContain(old)
+      expect(visibleToolNames({ registered: true, webhookTools: true })).not.toContain(old)
     }
+    // Aliases are registered (callable) but never counted as listed tools.
+    const server = new McpServer({ name: 'test', version: '0.0.0' })
+    expect(registerAllTools(server, ctx())).toHaveLength(33)
   })
 
   it('every registration has a unique tool name', () => {

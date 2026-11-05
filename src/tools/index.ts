@@ -32,9 +32,11 @@ import * as updateGroup from './update-group.js'
 import * as updateProfile from './update-profile.js'
 import * as verifyOtp from './verify-otp.js'
 import * as waitTool from './wait.js'
+import { hideFromListing, RETIRED_ALIASES } from './_retired.js'
 import type { ToolContext, ToolRegistration, ToolVisibility } from './_types.js'
 
 export type { ToolVisibility } from './_types.js'
+export { RETIRED_TOOL_NAMES } from './_retired.js'
 
 // ─── The tool registry, and who sees what ──────────────────────────────────
 //
@@ -54,6 +56,9 @@ export type { ToolVisibility } from './_types.js'
 //     for agents that are woken through a webhook rather than a socket.
 // Each tool is gated by what it is for, never by name matching elsewhere.
 // The option type (ToolVisibility) lives in _types.ts next to ToolContext.
+//
+// Retired names (_retired.ts) are registered as hidden aliases for one
+// release whenever their successor is visible: callable, never listed.
 
 /** What a tool is for, which decides when it is listed. */
 type Gate =
@@ -131,9 +136,17 @@ export function visibleToolNames(visibility?: ToolVisibility): string[] {
   return REGISTRY.filter((entry) => isVisible(entry, visibility)).map((entry) => entry.name)
 }
 
+/** The retired aliases: same gate as their successors, never listed. */
+const RETIRED: Entry[] = RETIRED_ALIASES.map((alias) => ({
+  name: alias.name,
+  register: alias.register,
+  gate: 'authenticated',
+}))
+
 /**
- * Register the tools a session should see against the MCP server. Called
- * once at startup; returns the names registered, in list order.
+ * Register the tools a session should see against the MCP server, plus the
+ * hidden aliases of retired names (callable, filtered out of tools/list).
+ * Called once at startup; returns the LISTED names registered, in list order.
  */
 export function registerAllTools(
   server: McpServer,
@@ -146,6 +159,13 @@ export function registerAllTools(
     entry.register(server, ctx)
     registered.push(entry.name)
   }
+  const aliases: string[] = []
+  for (const entry of RETIRED) {
+    if (!isVisible(entry, visibility)) continue
+    entry.register(server, ctx)
+    aliases.push(entry.name)
+  }
+  if (aliases.length > 0) hideFromListing(server, aliases)
   return registered
 }
 
