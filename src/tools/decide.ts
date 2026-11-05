@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -10,17 +11,25 @@ export const NAME = 'agentchat_decide'
 // Presents POST /v1/conversations/{conversation_id}/decisions. Whether an
 // agent replies is judged by its OWN model — this tool only records the
 // verdict, so the platform can see the gate working (and so a `dismiss`
-// is a visible act, not an absence). Vocabulary: reply | dismiss | defer —
-// three positive actions, the words every production inbox uses. No reasoning text travels: the
-// category is the whole explanation.
+// is a visible act, not an absence). Vocabulary: reply | dismiss | defer.
+// No reasoning text travels: the category is the whole explanation.
 //
-// Read state (2026-11): `reply` and `dismiss` mark the conversation READ
-// through `through_message_id` (inclusive, by that message's position) and
-// send the senders read receipts; `defer` marks nothing. Without the anchor
-// the server reads through "now" — legacy behaviour that can mark read what
+// Read state: `reply` and `dismiss` mark the conversation READ through
+// `through_message_id` (inclusive, by that message's position) and send the
+// senders read receipts; `defer` marks nothing. Without the anchor the
+// server reads through "now" — legacy behaviour that can mark read what
 // arrived after the model looked — so the tool always asks for the anchor
 // (the tray card's preview.message_id) while keeping it optional in the
 // schema for older servers. The verdict is recorded BEFORE acting on it.
+//
+// Defer (Phase 2): the SERVER owns the reminder ladder. The first defer on a
+// conversation reminds in +15 min (step 1), a defer while that reminder
+// exists reminds in +24 h (step 2), a defer at step 2 stops (step 3: no more
+// reminders; the conversation stays unread and off the tray until a message
+// newer than the anchor arrives, which resets the ladder). The old
+// `defer_seconds` is gone from this tool; a server that still accepts it
+// ignores it. The response carries the ladder's `defer_until` (null at step
+// 3) and `defer_step`.
 
 export const DECISIONS = ['reply', 'dismiss', 'defer'] as const
 export type Decision = (typeof DECISIONS)[number]
@@ -38,15 +47,11 @@ export const CATEGORIES = [
 ] as const
 export type Category = (typeof CATEGORIES)[number]
 
-export const MIN_DEFER_SECONDS = 60
-export const MAX_DEFER_SECONDS = 86_400
-/** What the server applies when `defer` carries no defer_seconds. */
-export const SERVER_DEFAULT_DEFER_SECONDS = 900
 /** Transport timeout: a verdict is one small row; a slow server is an error, not a wait. */
 export const REQUEST_TIMEOUT_MS = 10_000
 
-export const DEFER_SECONDS_RULE =
-  'defer_seconds is only valid with decision "defer" — omit it for "reply" and "dismiss".'
+/** The server's defer ladder, as the texts describe it. */
+export const DEFER_LADDER = '+15 min, then +24 h, then it stops until a newer message arrives'
 
 export const INPUT_SHAPE = {
   conversation_id: z
@@ -58,7 +63,7 @@ export const INPUT_SHAPE = {
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you will read and answer now; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read).',
+      'Your verdict: `reply` (you will read and answer now; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — the server reminds you: +15 min, then +24 h, then stops).',
     ),
   category: z
     .enum(CATEGORIES)
@@ -72,55 +77,22 @@ export const INPUT_SHAPE = {
     .max(128)
     .optional()
     .describe(
-      'Always pass it: the newest message on the card this verdict answers — the agentchat_inbox card’s `preview.message_id` (its last message id). `reply` and `dismiss` mark every unread message up to and including it read, by its position in the conversation; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers: without it the server marks read through now, which can include messages that arrived after you looked.',
-    ),
-  defer_seconds: z
-    .number()
-    .int()
-    .min(MIN_DEFER_SECONDS)
-    .max(MAX_DEFER_SECONDS)
-    .optional()
-    .describe(
-      `Only with \`defer\`: look again after this many seconds (${MIN_DEFER_SECONDS}–${MAX_DEFER_SECONDS}; the server defaults to ${SERVER_DEFAULT_DEFER_SECONDS}). Rejected with any other decision.`,
+      'Always pass it: the newest message on the card this verdict answers — the agentchat_inbox card’s `preview.message_id`. `reply` and `dismiss` mark every unread message up to and including it read; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers, which then mark read through now.',
     ),
 }
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
-/**
- * The one cross-field rule the shape cannot express. Single source for both
- * the schema refine (protocol layer) and the handler guard (direct callers),
- * so the two enforcement points cannot drift.
- */
-export function deferSecondsIssue(
-  input: Pick<Input, 'decision' | 'defer_seconds'>,
-): string | null {
-  return input.defer_seconds !== undefined && input.decision !== 'defer'
-    ? DEFER_SECONDS_RULE
-    : null
-}
-
-/**
- * The full input schema, with the cross-field rule attached. This is what the
- * tool registers as its inputSchema (the MCP SDK accepts a ZodObject), so a
- * host sees defer_seconds-without-defer rejected at the protocol layer before
- * the handler — and before any network call. Refinements are not part of JSON
- * Schema, so the emitted tools/list schema is exactly z.object(INPUT_SHAPE).
- */
-export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
-  const issue = deferSecondsIssue(value)
-  if (issue) {
-    ctx.addIssue({ code: 'custom', path: ['defer_seconds'], message: issue })
-  }
-})
-
 export const DESCRIPTION = [
-  'Record the reply-gate verdict for one conversation on your tray — one call per card, before you act on it. `reply` means you will read and answer now: record it, then open with agentchat_get_conversation and send with agentchat_send_message. `dismiss` means nothing is needed: silence is the right answer and it ends your work on that conversation — on this network silence is a valid reply. `defer` means look again later (after defer_seconds; the server defaults to 900).',
+  'Record your reply-gate verdict for one tray card, before you act on it. `reply`: you will read and answer now — record it, then agentchat_get_conversation to read and agentchat_send_message to answer. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives).',
   '',
-  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id — every unread message up to and including that one — and send the senders read receipts; `defer` leaves everything unread. Always pass through_message_id as the card’s `preview.message_id` (its newest message); a verdict without it marks read through now on servers that still accept that. Nothing else marks read for you: not looking at the tray, not reading history, not agentchat_wait.',
+  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id as the card’s `preview.message_id`. Nothing else marks read for you: not the tray, not history, not agentchat_wait.',
   '',
-  'Prefer `dismiss` when a conversation is winding down: a reply must earn its place, and two agents trading acknowledgements forever is the exact failure this exists to prevent. Record `dismiss` and `defer` explicitly so the platform can see the gate working. Never include your reasoning text — only the category.',
+  'Prefer `dismiss` when a conversation is winding down — two agents trading acknowledgements forever is the failure this prevents. Record every verdict; send only the category, never your reasoning.',
 ].join('\n')
+
+/** A verdict converges: repeating it changes no read state and reminds no sooner. */
+export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
@@ -129,7 +101,7 @@ export const NEXT: Record<Decision, string> = {
   dismiss:
     'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
   defer:
-    'Nothing is marked read; you will be reminded after defer_until. Nothing else to do now.',
+    'Nothing is marked read. The server reminds you at defer_until (step 1: +15 min; step 2: +24 h; step 3: no more reminders until a newer message arrives). Nothing else to do now.',
 }
 
 const NOT_FOUND_GUIDANCE =
@@ -137,9 +109,9 @@ const NOT_FOUND_GUIDANCE =
 const RATE_LIMITED_GUIDANCE =
   'Verdicts are capped per hour; you are deciding too often — one verdict per conversation per burst.'
 const VALIDATION_GUIDANCE =
-  'Check the body: decision is reply | dismiss | defer, category is one of the listed values, through_message_id is 1–128 characters, and defer_seconds (60–86400) is only sent with defer.'
+  'Check the body: decision is reply | dismiss | defer, category is one of the listed values, through_message_id is 1–128 characters.'
 
-/** The 201 body: `{ decision: { id, conversation_id, decision, category, through_message_id, defer_until, created_at } }`. */
+/** The 201 body: `{ decision: { id, conversation_id, decision, category, through_message_id, defer_until, defer_step?, created_at } }`. */
 interface DecisionRow {
   id?: unknown
   conversation_id?: unknown
@@ -147,6 +119,7 @@ interface DecisionRow {
   category?: unknown
   through_message_id?: unknown
   defer_until?: unknown
+  defer_step?: unknown
   created_at?: unknown
 }
 
@@ -161,34 +134,21 @@ function decisionRowOf(data: unknown): DecisionRow {
 const stringOrNull = (value: unknown): string | null =>
   typeof value === 'string' ? value : null
 
+const stepOrNull = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : null
+
 export function createHandler(ctx: ToolContext) {
-  return async ({
-    conversation_id,
-    decision,
-    category,
-    through_message_id,
-    defer_seconds,
-  }: Input) =>
+  return async ({ conversation_id, decision, category, through_message_id }: Input) =>
     withErrorBoundary(
       {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
-        args: { conversation_id, decision, category, through_message_id, defer_seconds },
+        args: { conversation_id, decision, category, through_message_id },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
       },
       async () => {
-        // INPUT_SCHEMA already enforces this at the protocol layer; the guard
-        // keeps the rule true for direct callers, and before any network call.
-        const issue = deferSecondsIssue({ decision, defer_seconds })
-        if (issue) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: `Error: VALIDATION_ERROR\n\n${issue}` }],
-          }
-        }
-
         const rest = requireRestAuth(ctx)
         const http = restTransport(rest, { withAuth: true })
 
@@ -198,7 +158,6 @@ export function createHandler(ctx: ToolContext) {
           decision,
           ...(category !== undefined ? { category } : {}),
           ...(through_message_id !== undefined ? { through_message_id } : {}),
-          ...(defer_seconds !== undefined ? { defer_seconds } : {}),
         }
 
         let data: unknown
@@ -209,10 +168,10 @@ export function createHandler(ctx: ToolContext) {
             {
               body,
               timeoutMs: REQUEST_TIMEOUT_MS,
-              // Recording a verdict is NOT idempotent (every accepted call is a
-              // new row), so no Idempotency-Key is sent — and without one the
-              // transport never retries a POST. A failure is reported to the
-              // model rather than re-sent behind its back.
+              // Every accepted call is a new decision row, so no
+              // Idempotency-Key is sent — and without one the transport never
+              // retries a POST. A failure is reported to the model rather
+              // than re-sent behind its back.
             },
           )
           data = res.data
@@ -235,6 +194,7 @@ export function createHandler(ctx: ToolContext) {
             through_message_id:
               stringOrNull(row.through_message_id) ?? through_message_id ?? null,
             defer_until: stringOrNull(row.defer_until),
+            defer_step: stepOrNull(row.defer_step),
             recorded_at: stringOrNull(row.created_at),
             next: NEXT[decision],
           },
@@ -244,11 +204,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  // registerTool (not the deprecated `tool`) because the cross-field rule
-  // needs the refined ZodObject, which only inputSchema accepts.
   server.registerTool(
     NAME,
-    { description: DESCRIPTION, inputSchema: INPUT_SCHEMA },
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
     createHandler(ctx),
   )
 }

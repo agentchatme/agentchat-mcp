@@ -56,7 +56,12 @@ describe('one receive sequence across every text', () => {
     for (const text of texts) {
       expect(text).not.toMatch(/agentchat_wait first/i)
       expect(text).not.toMatch(/read with agentchat_wait/i)
-      expect(text).not.toMatch(/call agentchat_list_inbox (first|at the start)/i)
+      expect(text).not.toMatch(/call agentchat_list_conversations (first|at the start)/i)
+      // The retired names never appear in any text the model reads.
+      expect(text).not.toContain('agentchat_list_inbox')
+      expect(text).not.toContain('agentchat_accept_group_invite')
+      expect(text).not.toContain('agentchat_reject_group_invite')
+      expect(text).not.toContain('defer_seconds')
     }
   })
 
@@ -72,6 +77,30 @@ describe('one receive sequence across every text', () => {
       expect(text).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
       expect(text).toContain('delivered means your machine received a message; read means you looked')
       expect(text).toContain('marks them delivered — never read')
+      // The server owns the defer ladder; the texts say so in one voice.
+      expect(text).toContain('+15 min, then +24 h, then it stops')
+      // Mute is named as the way to quiet a conversation without leaving it.
+      expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
+    }
+  })
+
+  it('the instructions follow the visibility: no doorbell paragraph without the webhook tools, sign-up only when unregistered', () => {
+    for (const mode of ['stdio', 'hosted'] as const) {
+      const withWebhook = buildInstructions(mode, 31, { registered: true, webhookTools: true })
+      const withoutWebhook = buildInstructions(mode, 28, { registered: true, webhookTools: false })
+      expect(withWebhook).toContain('agentchat_set_webhook')
+      expect(withWebhook).toContain('agentchat_test_webhook')
+      expect(withoutWebhook).not.toContain('_webhook')
+      expect(withoutWebhook).toContain('call agentchat_inbox first')
+      expect(withoutWebhook).toContain('exposes 28 tools')
+
+      const unregistered = buildInstructions(mode, 3, { registered: false, webhookTools: false })
+      expect(unregistered).toContain('lists 3 tools')
+      expect(unregistered).toContain('agentchat_register')
+      expect(unregistered).toContain('agentchat_verify_otp')
+      expect(unregistered).toContain('agentchat_get_my_status')
+      expect(unregistered).not.toContain('agentchat_inbox')
+      expect(unregistered).not.toContain('agentchat_send_message')
     }
   })
 
@@ -80,7 +109,21 @@ describe('one receive sequence across every text', () => {
     expect(descriptions.get('agentchat_inbox')!.startsWith('Call this FIRST when woken')).toBe(true)
     expect(descriptions.get('agentchat_set_webhook')).toContain('call agentchat_inbox first')
     expect(descriptions.get('agentchat_wait')).toContain('look at the tray with agentchat_inbox FIRST')
-    expect(descriptions.get('agentchat_list_inbox')).toContain('call agentchat_inbox instead')
+    expect(descriptions.get('agentchat_list_conversations')).toContain('call agentchat_inbox instead')
+  })
+
+  it('the long descriptions are trimmed to the essentials', async () => {
+    const descriptions = await listDescriptions()
+    for (const name of [
+      'agentchat_set_webhook',
+      'agentchat_get_conversation',
+      'agentchat_decide',
+      'agentchat_inbox',
+      'agentchat_wait',
+    ]) {
+      // Each of these was ~2.3–2.5 kB before Phase 4.
+      expect(descriptions.get(name)!.length, `${name} description`).toBeLessThanOrEqual(1_500)
+    }
   })
 
   it('every reading tool says what it does to read state, consistently', async () => {

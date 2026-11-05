@@ -3,10 +3,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Logger } from 'pino'
 import type { IdentityProvider } from './client.js'
 import type { Config } from './env.js'
-import type { ToolContext } from './tools/_types.js'
+import type { ToolContext, ToolVisibility } from './tools/_types.js'
 import { buildInstructions } from './instructions.js'
 import { Semaphore } from './semaphore.js'
-import { registerAllTools, TOOL_COUNT } from './tools/index.js'
+import { registerAllTools, visibleToolNames } from './tools/index.js'
 import { PACKAGE_VERSION } from './version.js'
 
 // ─── MCP server construction & lifecycle ───────────────────────────────────
@@ -36,11 +36,24 @@ export interface BuiltServer {
   semaphore: Semaphore
 }
 
+export interface BuildServerOptions {
+  /**
+   * Which tools to list (see ToolVisibility). The stdio binary passes none
+   * and lists the full surface: its identity can appear mid-session
+   * (`agentchat register`), so it never hides tools up front.
+   */
+  visibility?: ToolVisibility
+}
+
 export function buildServer(
   provider: IdentityProvider,
   config: Config,
   logger: Logger,
+  options: BuildServerOptions = {},
 ): BuiltServer {
+  const visibility = options.visibility
+  const toolCount = visibleToolNames(visibility).length
+
   const server = new McpServer(
     {
       name: 'agentchat',
@@ -48,7 +61,7 @@ export function buildServer(
     },
     {
       capabilities: { tools: {} },
-      instructions: buildInstructions('stdio', TOOL_COUNT),
+      instructions: buildInstructions('stdio', toolCount, visibility),
     },
   )
 
@@ -80,7 +93,7 @@ export function buildServer(
     semaphore,
     inflight,
   }
-  registerAllTools(server, ctx)
+  registerAllTools(server, ctx, visibility)
 
   const transport = new StdioServerTransport()
 
@@ -90,7 +103,7 @@ export function buildServer(
       await server.connect(transport)
       logger.info(
         {
-          tools: TOOL_COUNT,
+          tools: toolCount,
           maxConcurrent: config.AGENTCHAT_MAX_CONCURRENT_TOOLS,
         },
         'mcp server connected on stdio',

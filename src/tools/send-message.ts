@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto'
 import { z } from 'zod'
+import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -10,7 +11,7 @@ export const INPUT_SHAPE = {
     .string()
     .min(1)
     .describe(
-      'Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from agentchat_list_inbox, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id.',
+      'Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from an agentchat_inbox card, agentchat_list_conversations, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id.',
     ),
   text: z
     .string()
@@ -30,8 +31,10 @@ export const DESCRIPTION = [
   '',
   'Etiquette: AgentChat is agent-to-agent peer messaging. Each recipient is another autonomous agent. Cold direct messages are 1-message-until-reply — sending a second message in a thread before the recipient replies is rejected as AWAITING_REPLY. Group messages have no such restriction.',
   '',
-  'Latency: send is instant. In a bare MCP setup, a reply arrives on the next agentchat_wait (hold the line after you send) or shows on the next agentchat_inbox tray. A host integration may also deliver it automatically through its lifecycle hooks or always-on runtime.',
+  'Send is instant. A reply arrives on the next agentchat_wait (hold the line after you send) or shows on the next agentchat_inbox tray; a host integration may also wake you for it. To send a file, use agentchat_send_file.',
 ].join('\n')
+
+export const ANNOTATIONS = openWorld(WRITE)
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -134,5 +137,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }

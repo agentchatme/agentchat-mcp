@@ -10,8 +10,11 @@ import { buildMcpServer } from '../../src/lib.js'
 //
 // Pins the WIRE surface (tool name + JSON-Schema inputSchema, exactly as an
 // MCP host receives it from tools/list) of every tool that existed before
-// the hosted-core split. Any change to a pre-existing name or input schema
-// fails this suite and must block publish: MCP hosts, and now the hosted
+// the hosted-core split, under the names settled in Phase 4 (2026-11):
+// `agentchat_list_inbox` → `agentchat_list_conversations`, and
+// `agentchat_accept_group_invite` + `agentchat_reject_group_invite` →
+// `agentchat_respond_to_invite`. Any change to a frozen name or input schema
+// fails this suite and must block publish: MCP hosts, and the hosted
 // endpoint, both depend on this surface verbatim.
 //
 // ADDITIONS ARE ALLOWED: new tools don't touch the fixture. When a new tool
@@ -19,7 +22,8 @@ import { buildMcpServer } from '../../src/lib.js'
 // and regenerate.
 //
 // Descriptions are deliberately NOT pinned — they are prompt guidance and
-// may improve between releases without breaking any caller.
+// may improve between releases without breaking any caller. (Parameter
+// descriptions ARE part of the JSON Schema, so they are pinned.)
 //
 // To regenerate after an INTENTIONAL contract change (rare — this is a
 // compatibility promise, not a convenience):
@@ -29,7 +33,7 @@ import { buildMcpServer } from '../../src/lib.js'
 
 const LEGACY_TOOL_NAMES = [
   'agentchat_send_message',
-  'agentchat_list_inbox',
+  'agentchat_list_conversations',
   'agentchat_get_conversation',
   'agentchat_mark_read',
   'agentchat_get_my_status',
@@ -43,9 +47,15 @@ const LEGACY_TOOL_NAMES = [
   'agentchat_create_group',
   'agentchat_get_group',
   'agentchat_list_group_invites',
+  'agentchat_respond_to_invite',
+  'agentchat_leave_group',
+] as const
+
+/** Names retired in Phase 4; they must never come back under the old spelling. */
+const RETIRED_TOOL_NAMES = [
+  'agentchat_list_inbox',
   'agentchat_accept_group_invite',
   'agentchat_reject_group_invite',
-  'agentchat_leave_group',
 ] as const
 
 const FIXTURE_PATH = fileURLToPath(
@@ -138,7 +148,7 @@ describe('tool contract snapshot (publish-blocking)', () => {
   it('additions are visible without touching the frozen set', async () => {
     const tools = await listCurrentTools()
     const names = new Set(tools.map((tool) => tool.name))
-    for (const added of [
+    const added = [
       'agentchat_register',
       'agentchat_verify_otp',
       'agentchat_set_webhook',
@@ -147,9 +157,27 @@ describe('tool contract snapshot (publish-blocking)', () => {
       'agentchat_test_webhook',
       'agentchat_decide',
       'agentchat_inbox',
-    ]) {
-      expect(names.has(added), `expected added tool ${added} in tools/list`).toBe(true)
+      // Phase 4
+      'agentchat_mute',
+      'agentchat_update_group',
+      'agentchat_manage_members',
+      'agentchat_delete_group',
+      'agentchat_search_agents',
+      'agentchat_delete_message',
+      'agentchat_update_profile',
+      'agentchat_send_file',
+    ]
+    for (const name of added) {
+      expect(names.has(name), `expected added tool ${name} in tools/list`).toBe(true)
     }
-    expect(tools.length).toBeGreaterThanOrEqual(LEGACY_TOOL_NAMES.length + 8)
+    expect(tools.length).toBe(LEGACY_TOOL_NAMES.length + added.length)
+  })
+
+  it('the retired names are gone', async () => {
+    const tools = await listCurrentTools()
+    const names = new Set(tools.map((tool) => tool.name))
+    for (const retired of RETIRED_TOOL_NAMES) {
+      expect(names.has(retired), `retired tool ${retired} is still listed`).toBe(false)
+    }
   })
 })

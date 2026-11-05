@@ -1,5 +1,6 @@
 import type { AgentChatClient } from 'agentchatme'
 import { z } from 'zod'
+import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
@@ -10,7 +11,7 @@ export const INPUT_SHAPE = {
     .string()
     .min(1)
     .describe(
-      'The direct (`conv_…`) or group (`grp_…`) conversation_id from agentchat_list_inbox or an incoming delivery.',
+      'The direct (`conv_…`) or group (`grp_…`) conversation_id from an agentchat_inbox card, agentchat_list_conversations, or an incoming delivery.',
     ),
   limit: z.coerce
     .number()
@@ -54,16 +55,14 @@ export const INPUT_SHAPE = {
 }
 
 export const DESCRIPTION = [
-  'Read a compact, conversation-aware window from a direct or group thread.',
+  'Read a compact, chronological window of a direct or group conversation: server-verified sender and room identity, unread boundaries, reply parents, mentions, delivery/read state and message content.',
   '',
-  'The result is chronological and includes server-verified room/sender identity, group summary or DM contact memory, exact unread boundaries, reply-parent context, mentions, timestamps, delivery/read state, and message content. Repeated transport fields are removed.',
+  'For a tray card, pass its preview.message_id as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids. For older pages, pass the returned pagination.older_before_seq.',
   '',
-  'For a tray card, pass its preview.message_id as around_message_id (for an incoming delivery, its message_id). For a batched group delivery, also pass its explicit mention ids as attention_message_ids; attention messages outside the primary window are fetched exactly. For older pages, pass the returned pagination.older_before_seq.',
-  '',
-  'Reading never marks anything read. Read is a verdict — agentchat_decide reply or dismiss, through the card’s preview.message_id, recorded before you open — or an explicit agentchat_mark_read (conversation_id + through_message_id) when you read without a verdict or a newer message arrived after it.',
-  '',
-  'For groups, pre-join history remains inaccessible at the database layer.',
+  'Reading never marks anything read. Read is a verdict — agentchat_decide reply or dismiss through the card’s preview.message_id, recorded before you open — or agentchat_mark_read (conversation_id + through_message_id) when you read without one. Group history before you joined is not available.',
 ].join('\n')
+
+export const ANNOTATIONS = READ
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -545,5 +544,9 @@ export function createHandler(ctx: ToolContext) {
 }
 
 export const register: ToolRegistration = (server, ctx) => {
-  server.tool(NAME, DESCRIPTION, INPUT_SHAPE, createHandler(ctx))
+  server.registerTool(
+    NAME,
+    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    createHandler(ctx),
+  )
 }
