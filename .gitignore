@@ -28,3 +28,6 @@ Thumbs.db
 
 # Vitest
 .vitest-cache/
+
+# scratch folder the agentchat_send_file tests create inside the working directory
+.send-file-test-*/
