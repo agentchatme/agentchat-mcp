@@ -183,6 +183,15 @@ describe('agentchat_send_file: the local path source', () => {
     expect((calls[2]!.body as { content: Record<string, unknown> }).content['text']).toBeUndefined()
   })
 
+  it('refuses a direct-conversation id up front and says to use the peer’s handle, with zero network calls', async () => {
+    const { impl, calls } = happyNetwork()
+    const result = await sendFile.createHandler(makeRealCtx(impl))({ to: 'conv_abc', path: rel('note.txt') })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toBe(`Error: VALIDATION_ERROR\n\n${sendFile.DIRECT_ID_RULE}`)
+    expect(firstText(result)).toContain('@handle')
+    expect(calls).toHaveLength(0)
+  })
+
   it('refuses a path outside the working directory with its own code and zero network calls', async () => {
     const { impl, calls } = happyNetwork()
     const result = await sendFile.createHandler(makeRealCtx(impl))({
@@ -237,6 +246,39 @@ describe('agentchat_send_file: the bytes source', () => {
       sha256: sha('# hi\n'),
     })
     expect(Buffer.from(calls[1]!.rawBody as Uint8Array).toString()).toBe('# hi\n')
+  })
+
+  it('the hosted composition clamps bytes to what its body cap can carry, at the schema and in the handler', async () => {
+    expect(sendFile.HOSTED_MAX_BYTES).toBe(180 * 1024)
+    expect(sendFile.maxBytesFor('hosted')).toBe(sendFile.HOSTED_MAX_BYTES)
+    expect(sendFile.maxBytesFor('stdio')).toBe(sendFile.MAX_BYTES)
+    expect(sendFile.maxBytesFor(undefined)).toBe(sendFile.MAX_BYTES)
+    // 180 KiB of file is ~240 KiB of base64: inside the 256 KiB hosted body cap.
+    expect(sendFile.maxBase64CharsFor('hosted')).toBeLessThan(sendFile.HOSTED_BODY_LIMIT_BYTES)
+
+    const tooBig = Buffer.alloc(sendFile.HOSTED_MAX_BYTES + 1, 1).toString('base64')
+    const hostedSchema = sendFile.inputSchemaFor('hosted')
+    expect(hostedSchema.safeParse({ to: '@bob', bytes: tooBig, filename: 'a.txt' }).success).toBe(false)
+    expect(sendFile.inputSchemaFor('stdio').safeParse({ to: '@bob', bytes: tooBig, filename: 'a.txt' }).success).toBe(true)
+    const hostedBytes = (z.toJSONSchema(z.object(sendFile.buildInputShape('hosted')), { target: 'draft-7', io: 'input' })[
+      'properties'
+    ] as Record<string, Record<string, unknown>>)['bytes']!
+    expect(hostedBytes['maxLength']).toBe(sendFile.maxBase64CharsFor('hosted'))
+    expect(String(hostedBytes['description'])).toContain('180 KiB')
+    expect(String(hostedBytes['description'])).toContain('stdio binary’s path form')
+    expect(sendFile.DESCRIPTION).toContain('stdio binary’s path form')
+
+    // A direct handler call in hosted mode is clamped too, with the reason.
+    const { impl, calls } = happyNetwork()
+    const result = await sendFile.createHandler(makeRealCtx(impl, { mode: 'hosted' }))({
+      to: '@bob',
+      bytes: tooBig,
+      filename: 'a.txt',
+    })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain('Error: FILE_TOO_LARGE')
+    expect(firstText(result)).toContain('stdio binary’s path form')
+    expect(calls).toHaveLength(0)
   })
 
   it('invalid base64 is refused with zero network calls', async () => {

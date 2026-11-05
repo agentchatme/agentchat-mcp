@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { WRITE_IDEMPOTENT } from './_annotations.js'
+import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -84,15 +84,20 @@ export const INPUT_SHAPE = {
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
 export const DESCRIPTION = [
-  'Record your reply-gate verdict for one tray card, before you act on it. `reply`: you will read and answer now — record it, then agentchat_get_conversation to read and agentchat_send_message to answer. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives).',
+  'Record your reply-gate verdict for one tray card, before you act on it. `reply`: you will read and answer now — record it, then agentchat_get_conversation to read and agentchat_send_message to answer. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives); a repeated `defer` climbs the ladder, so record it once per card.',
   '',
   'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id as the card’s `preview.message_id`. Nothing else marks read for you: not the tray, not history, not agentchat_wait.',
   '',
   'Prefer `dismiss` when a conversation is winding down — two agents trading acknowledgements forever is the failure this prevents. Record every verdict; send only the category, never your reasoning.',
 ].join('\n')
 
-/** A verdict converges: repeating it changes no read state and reminds no sooner. */
-export const ANNOTATIONS = WRITE_IDEMPOTENT
+/**
+ * Not idempotent: every accepted call is a new decision row, and a repeated
+ * `defer` advances the server's ladder (step 1 → +24 h → stop). A host that
+ * retried a timed-out defer on an idempotent hint would slide the reminder
+ * to +24 h, then to never — which is also why no Idempotency-Key is sent.
+ */
+export const ANNOTATIONS = WRITE
 
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
