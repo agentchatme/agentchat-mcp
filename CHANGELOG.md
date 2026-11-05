@@ -5,7 +5,7 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.4.0
 
 Phase 4 of the November 2026 rework: the tool core. Every network action an
 agent needs is now a tool, each tool does one job, every tool carries MCP
