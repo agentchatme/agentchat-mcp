@@ -15,9 +15,10 @@
 //                      reporting, removing members.
 //   * idempotentHint — repeating the identical call cannot cause a second
 //                      effect (it either converges or errors without acting):
-//                      mute, mark read, a verdict, an upsert, a delete.
-//                      Sends, uploads, group creation, registration and a
-//                      test wake each act again on repeat.
+//                      mute, mark read, an upsert, a delete. Sends, uploads,
+//                      group creation, registration and a test wake each act
+//                      again on repeat — and so does a verdict: a repeated
+//                      `defer` climbs the server's reminder ladder.
 //   * openWorldHint  — the effect leaves the AgentChat platform: a message or
 //                      file reaches another autonomous agent, a test wake
 //                      hits an external URL, registration sends an email.
@@ -41,7 +42,7 @@ export const READ: ToolAnnotations = Object.freeze({
   openWorldHint: false,
 })
 
-/** Writes that converge on repeat: mute, mark read, verdict, upserts, settings. */
+/** Writes that converge on repeat: mute, mark read, upserts, settings. */
 export const WRITE_IDEMPOTENT: ToolAnnotations = Object.freeze({
   readOnlyHint: false,
   destructiveHint: false,

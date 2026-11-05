@@ -122,6 +122,7 @@ describe('agentchat_decide input schema', () => {
     ])
     expect(decide.DESCRIPTION).toContain('the server owns the reminder ladder')
     expect(decide.DESCRIPTION).toContain('+15 min, then +24 h, then it stops')
+    expect(decide.DESCRIPTION).toContain('a repeated `defer` climbs the ladder')
     expect(decide.INPUT_SHAPE.decision.description).toContain('+15 min, then +24 h, then stops')
     expect(decide.NEXT.defer).toContain('step 1: +15 min')
     expect(decide.NEXT.defer).toContain('step 2: +24 h')
@@ -393,7 +394,7 @@ describe('agentchat_decide over the MCP protocol', () => {
     }
   }
 
-  it('tools/list advertises the enums and required fields, no defer_seconds, and idempotent-write hints', async () => {
+  it('tools/list advertises the enums and required fields, no defer_seconds, and non-idempotent write hints', async () => {
     const { client, close } = await connect(null)
     try {
       const { tools } = await client.listTools()
@@ -405,10 +406,11 @@ describe('agentchat_decide over the MCP protocol', () => {
       expect(schema.properties!['decision']).toMatchObject({ enum: [...decide.DECISIONS] })
       expect(schema.properties!['category']).toMatchObject({ enum: [...decide.CATEGORIES] })
       expect(schema.properties!['defer_seconds']).toBeUndefined()
+      // Not idempotent: a retried `defer` would climb the server's ladder.
       expect(tool!.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       })
     } finally {

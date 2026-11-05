@@ -61,7 +61,6 @@ const OPEN_WORLD = [
 
 const IDEMPOTENT_WRITES = [
   'agentchat_mute',
-  'agentchat_decide',
   'agentchat_mark_read',
   'agentchat_add_contact',
   'agentchat_unblock_agent',
@@ -106,7 +105,7 @@ describe('tool annotations', () => {
     expect(destructive.sort()).toEqual([...DESTRUCTIVE_TOOLS].sort())
   })
 
-  it('mute, decide and mark_read (and the other converging writes) are idempotent; sends and the test wake are not', async () => {
+  it('mute, mark_read and the other converging writes are idempotent; sends, the test wake and a verdict are not', async () => {
     const byName = new Map((await listTools()).map((t) => [t.name, t.annotations!]))
     for (const name of IDEMPOTENT_WRITES) {
       expect(byName.get(name)!['idempotentHint'], name).toBe(true)
@@ -122,9 +121,17 @@ describe('tool annotations', () => {
       'agentchat_test_webhook',
       'agentchat_wait',
       'agentchat_manage_members',
+      // A repeated `defer` climbs the server's reminder ladder.
+      'agentchat_decide',
     ]) {
       expect(byName.get(name)!['idempotentHint'], name).toBe(false)
     }
+    expect(byName.get('agentchat_decide')).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    })
   })
 
   it('open world is exactly what leaves the platform: a message or file to a peer, a test wake, a sign-up email', async () => {

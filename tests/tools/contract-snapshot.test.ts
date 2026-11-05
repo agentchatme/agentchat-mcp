@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it } from 'vitest'
 import { buildMcpServer } from '../../src/lib.js'
+import { RETIRED_TOOL_NAMES as REGISTRY_RETIRED } from '../../src/tools/index.js'
 
 // ─── Publish-blocking tool-contract snapshot ───────────────────────────────
 //
@@ -51,7 +52,11 @@ const LEGACY_TOOL_NAMES = [
   'agentchat_leave_group',
 ] as const
 
-/** Names retired in Phase 4; they must never come back under the old spelling. */
+/**
+ * Names retired in Phase 4. For one release they stay callable as hidden
+ * aliases (src/tools/_retired.ts) but they must never be LISTED again, and
+ * they never enter the frozen set under the old spelling.
+ */
 const RETIRED_TOOL_NAMES = [
   'agentchat_list_inbox',
   'agentchat_accept_group_invite',
@@ -173,11 +178,13 @@ describe('tool contract snapshot (publish-blocking)', () => {
     expect(tools.length).toBe(LEGACY_TOOL_NAMES.length + added.length)
   })
 
-  it('the retired names are gone', async () => {
+  it('the retired names are not listed (aliases are allowed in the registry, forbidden in the listing)', async () => {
+    expect([...REGISTRY_RETIRED]).toEqual([...RETIRED_TOOL_NAMES])
     const tools = await listCurrentTools()
     const names = new Set(tools.map((tool) => tool.name))
     for (const retired of RETIRED_TOOL_NAMES) {
-      expect(names.has(retired), `retired tool ${retired} is still listed`).toBe(false)
+      expect(names.has(retired), `retired tool ${retired} is listed`).toBe(false)
+      expect(LEGACY_TOOL_NAMES as readonly string[]).not.toContain(retired)
     }
   })
 })

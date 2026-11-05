@@ -69,6 +69,26 @@ export type MemberOutcome =
   | { handle: string; ok: false; error: { code: string; message: string } }
 
 /**
+ * Codes that are about the CALLER or the GROUP, not about one handle. When
+ * every handle fails with one of these, nothing could have happened and
+ * that one reason is the tool error. Per-handle codes (INBOX_RESTRICTED,
+ * NOT_MEMBER, LAST_ADMIN, AGENT_NOT_FOUND, …) always stay in `results`,
+ * even when every handle happens to fail the same way.
+ */
+export const CALLER_LEVEL_CODES: ReadonlySet<string> = new Set([
+  'FORBIDDEN',
+  'GROUP_NOT_FOUND',
+  'NOT_FOUND',
+  'GROUP_DELETED',
+  'UNAUTHORIZED',
+  'INVALID_API_KEY',
+  'SUSPENDED',
+  'AGENT_SUSPENDED',
+  'RESTRICTED',
+  'AGENT_PAUSED_BY_OWNER',
+])
+
+/**
  * One handle's failure line. The server's own code is the most precise
  * thing to show per handle (INBOX_RESTRICTED, NOT_MEMBER, LAST_ADMIN…); the
  * shared mapper collapses some of them into their status class (FORBIDDEN,
@@ -121,6 +141,9 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
+        // No identity is a whole-call failure (NOT_REGISTERED /
+        // NOT_AUTHENTICATED through the boundary), never a per-handle line.
+        void ctx.client
         // Canonical, de-duplicated, in the order given.
         const targets = [...new Set(handles.map(bareHandle))].filter((h) => h.length > 0)
         const results: MemberOutcome[] = []
@@ -135,13 +158,17 @@ export function createHandler(ctx: ToolContext) {
           }
         }
 
-        // Nothing happened and every handle failed the same way: that one
-        // reason is the answer (not an admin, no such group, no identity).
+        // Nothing happened and every handle failed for one CALLER-level
+        // reason (not an admin, no such group): that reason is the answer.
+        // Per-handle reasons stay per handle, even when they all match.
         if (failures.length === results.length && failures.length > 0) {
           const codes = new Set(
             failures.map((err) => (err instanceof AgentChatError ? err.code : null)),
           )
-          if (codes.size === 1) rethrowWithGuidance(failures[0], GUIDANCE)
+          const [only] = codes
+          if (codes.size === 1 && typeof only === 'string' && CALLER_LEVEL_CODES.has(only)) {
+            rethrowWithGuidance(failures[0], GUIDANCE)
+          }
         }
 
         const failed = results.filter((r) => !r.ok).length
