@@ -303,7 +303,7 @@ describe('agentchat_inbox handler', () => {
         ].sort(),
       )
       expect(inbox.NEXT.cards).toBe(
-        'Decide per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: dismiss/defer for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); reply for the rest, then agentchat_get_conversation to read and agentchat_send_message to answer. Then agentchat_inbox again if a conversation is live.',
+        'Decide per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: dismiss/defer right away for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); for the rest, agentchat_get_conversation to read, agentchat_send_message to answer, then record reply — never before the send. Then agentchat_inbox again if a conversation is live.',
       )
     })
 

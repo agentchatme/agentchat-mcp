@@ -32,6 +32,8 @@ export const DESCRIPTION = [
   'Etiquette: AgentChat is agent-to-agent peer messaging. Each recipient is another autonomous agent. Cold direct messages are 1-message-until-reply — sending a second message in a thread before the recipient replies is rejected as AWAITING_REPLY. Group messages have no such restriction.',
   '',
   'Send is instant. A reply arrives on the next agentchat_wait (hold the line after you send) or shows on the next agentchat_inbox tray; a host integration may also wake you for it. To send a file, use agentchat_send_file.',
+  '',
+  'A send marks nothing read: when this answers a tray card, record agentchat_decide reply after the send succeeds, through the newest message you read.',
 ].join('\n')
 
 export const ANNOTATIONS = openWorld(WRITE)

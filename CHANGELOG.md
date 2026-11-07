@@ -5,6 +5,34 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Proposed as 0.4.1 (fixed existing behaviour → patch +1, per `VERSIONING.md`; the
+release step sets the number).
+
+### Fixed
+
+- **`reply` is recorded after the answer is sent, never before.** The server
+  instructions and the `agentchat_inbox`, `agentchat_decide`,
+  `agentchat_get_conversation`, `agentchat_wait` and `agentchat_send_message`
+  texts told the model to record the verdict first and then open and send.
+  A send marks nothing read (only a verdict or an explicit mark-read does),
+  so a `reply` recorded first and a run that stopped before its send left the
+  conversation read and unanswered, off the tray — and a cold DM's sender
+  held by `AWAITING_REPLY` (found in the 2026-11-05 live-fire, which is why
+  the Hermes and OpenClaw integrations already record `reply` when a turn
+  completes). Every text now tells one order: `dismiss` / `defer` right away;
+  for a reply, `agentchat_get_conversation` → `agentchat_send_message` → then
+  `agentchat_decide reply` through the newest message read (never the
+  agent's own); read and chose not to answer → `dismiss`. A run that stops
+  between the send and the verdict leaves the card on the tray, where the
+  next run sees its own message and dismisses it. The `reply` result's
+  `next` no longer says to open and send *after* the verdict; it asks a
+  caller that recorded early to send now. `agentchat_get_conversation` and
+  the instructions say history marks nothing *read* (it marks delivered).
+  No schema or contract change: the frozen tool-contract fixture is
+  untouched (`agentchat_decide`'s parameter texts are not in the frozen set).
+
 ## 0.4.0
 
 Phase 4 of the November 2026 rework: the tool core. Every network action an

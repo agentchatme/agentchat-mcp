@@ -143,13 +143,17 @@ describe('agentchat_decide input schema', () => {
     expect(through('')).toBe(false)
   })
 
-  it('tells the model what each verdict does to read state, to anchor on the card, and to record before acting', () => {
-    expect(decide.DESCRIPTION).toContain('before you act on it')
+  it('tells the model what each verdict does to read state, to anchor on the card, and to record reply only after the send', () => {
+    expect(decide.DESCRIPTION).toContain('`dismiss` and `defer` right away')
+    expect(decide.DESCRIPTION).toContain('then record `reply` — never before the send')
+    expect(decide.DESCRIPTION).not.toContain('before you act on it')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('record it after your agentchat_send_message, never before')
+    expect(decide.INPUT_SHAPE.through_message_id.description).toContain('never your own')
     expect(decide.DESCRIPTION).toContain(
       '`reply` and `dismiss` mark the conversation read through through_message_id',
     )
     expect(decide.DESCRIPTION).toContain('`defer` leaves everything unread')
-    expect(decide.DESCRIPTION).toContain('Always pass through_message_id as the card’s `preview.message_id`')
+    expect(decide.DESCRIPTION).toContain('Always pass through_message_id: the card’s `preview.message_id`, or for `reply` the newest message you read')
     expect(decide.INPUT_SHAPE.through_message_id.description).toContain('Always pass it')
     expect(decide.INPUT_SHAPE.through_message_id.description).toContain('preview.message_id')
     expect(decide.INPUT_SHAPE.decision.description).toContain('marks nothing read')
@@ -206,7 +210,7 @@ describe('agentchat_decide handler', () => {
       next: decide.NEXT.reply,
     })
     expect(decide.NEXT.reply).toBe(
-      'Read it with agentchat_get_conversation and send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
+      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live.',
     )
   })
 

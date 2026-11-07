@@ -10,8 +10,11 @@ import { TOOL_COUNT } from '../../src/tools/index.js'
 // Every text the model reads — the server instructions and each tool's
 // description — must tell the same story:
 //
-//   woken → agentchat_inbox → per card: agentchat_decide (dismiss / defer,
-//   or reply) → for reply: agentchat_get_conversation → agentchat_send_message
+//   woken → agentchat_inbox → per card: agentchat_decide dismiss / defer at
+//   once, or agentchat_get_conversation → agentchat_send_message → then
+//   agentchat_decide reply (never before the send: a send marks nothing read,
+//   so a reply recorded first and a run that stops in between leaves the peer
+//   read and unanswered)
 //
 // with agentchat_wait as the live-conversation body puller, and two read
 // states: delivered (the machine received it) and read (a verdict or an
@@ -62,6 +65,8 @@ describe('one receive sequence across every text', () => {
       expect(text).not.toContain('agentchat_accept_group_invite')
       expect(text).not.toContain('agentchat_reject_group_invite')
       expect(text).not.toContain('defer_seconds')
+      // The reply verdict is never told to come before the send.
+      expect(text).not.toMatch(/record the verdict first|before you act on it|before you open|recorded before you|the send is (your |the )?verdict/i)
     }
   })
 
@@ -72,7 +77,14 @@ describe('one receive sequence across every text', () => {
       expect(positions.every((p) => p >= 0), text).toBe(true)
       expect([...positions].sort((a, b) => a - b)).toEqual(positions)
       expect(text).toContain('call agentchat_inbox first')
-      expect(text).toContain('record the verdict first')
+      expect(text).toContain('record dismiss (or defer) right away')
+      // reply comes last: after the send, through the newest message read.
+      const send = text.indexOf('answer with agentchat_send_message')
+      const reply = text.indexOf('and only then record reply, through the newest message you read')
+      expect(send, text).toBeGreaterThan(0)
+      expect(reply, text).toBeGreaterThan(send)
+      expect(text).toContain('a send alone marks nothing read')
+      expect(text).toContain('If after reading you choose not to answer, record dismiss instead')
       expect(text).toContain('looking marks nothing delivered or read')
       expect(text).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
       expect(text).toContain('delivered means your machine received a message; read means you looked')
@@ -158,5 +170,19 @@ describe('one receive sequence across every text', () => {
       expect(positions.every((p) => p >= 0), name).toBe(true)
       expect([...positions].sort((a, b) => a - b), name).toEqual(positions)
     }
+  })
+
+  it('every text that spells out the reply path records reply after the send', async () => {
+    const descriptions = await listDescriptions()
+    const after = (text: string, first: string, then: string) => {
+      const a = text.indexOf(first)
+      const b = text.indexOf(then, a)
+      expect(a, `${first} in: ${text}`).toBeGreaterThanOrEqual(0)
+      expect(b, `${then} after ${first} in: ${text}`).toBeGreaterThan(a)
+    }
+    after(descriptions.get('agentchat_inbox')!, 'agentchat_send_message to answer', 'only then record reply')
+    after(descriptions.get('agentchat_decide')!, 'agentchat_send_message to answer', 'then record `reply`')
+    after(descriptions.get('agentchat_send_message')!, 'A send marks nothing read', 'record agentchat_decide reply after the send')
+    after(descriptions.get('agentchat_get_conversation')!, 'or reply once your agentchat_send_message has gone out', 'through the newest message you read')
   })
 })
