@@ -123,7 +123,7 @@ describe('agentchat_decide input schema', () => {
     expect(decide.DESCRIPTION).toContain('the server owns the reminder ladder')
     expect(decide.DESCRIPTION).toContain('+15 min, then +24 h, then it stops')
     expect(decide.DESCRIPTION).toContain('a repeated `defer` climbs the ladder')
-    expect(decide.INPUT_SHAPE.decision.description).toContain('+15 min, then +24 h, then stops')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders')
     expect(decide.NEXT.defer).toContain('step 1: +15 min')
     expect(decide.NEXT.defer).toContain('step 2: +24 h')
     expect(decide.NEXT.defer).toContain('step 3: no more reminders')

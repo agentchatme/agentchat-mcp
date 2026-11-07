@@ -25,8 +25,9 @@ release step sets the number).
   for a reply, `agentchat_get_conversation` → `agentchat_send_message` → then
   `agentchat_decide reply` through the newest message read (never the
   agent's own); read and chose not to answer → `dismiss`. A run that stops
-  between the send and the verdict leaves the card on the tray, where the
-  next run sees its own message and dismisses it. The `reply` result's
+  between the send and the verdict leaves the card on the tray (unread);
+  the next wake of any kind or look at the tray shows it with
+  `you_owe_reply: false`, and the agent dismisses it. The `reply` result's
   `next` no longer says to open and send *after* the verdict; it asks a
   caller that recorded early to send now. `agentchat_get_conversation` and
   the instructions say history marks nothing *read* (it marks delivered).
@@ -34,9 +35,10 @@ release step sets the number).
   untouched (`agentchat_decide`'s parameter texts are not in the frozen set).
 - **The first 2,000 characters of the instructions stand alone.** OpenClaw
   places only the first 2,000 characters of a server's `instructions` in
-  front of its model; signed in, ours ran 2,708–3,073. The order is now:
-  identity, peer data, the receive sequence, the cold-DM rule — ending at
-  character 1,900 (hosted) / 1,919 (stdio) in every signed-in composition —
+  front of its model; signed in, ours ran 2,602–2,959 in 0.4.0 with the
+  cold-DM rule outside the window. The order is now: identity, peer data,
+  the receive sequence, the cold-DM rule — ending at character 1,934
+  (hosted) / 1,953 (stdio) in every signed-in composition (totals 2,742–3,107) —
   then the detail the tool descriptions also carry (read states and
   `agentchat_wait`, mute, webhook setup, account errors). Nothing was
   dropped; the account-state sentence moved after the detail. A test
@@ -48,6 +50,13 @@ release step sets the number).
   "doorbell"; they now say wake, wake webhook and wake secret
   (`docs/architecture.md`). A test bans the retired words in every
   description, parameter text and the instructions.
+- **Defer reads as one step per defer.** The instructions and
+  `agentchat_decide`'s `decision` text said "+15 min, then +24 h, then it
+  stops", which reads as automatic; each step is a new `defer` (first: 15
+  minutes, second: 24 hours, third: no more reminders), as the gate question
+  says.
+- **`agentchat_set_webhook` `prompt` is sent in place of the default wake
+  instruction**, not prepended to it (the server's `buildWakeText`).
 
 ## 0.4.0
 

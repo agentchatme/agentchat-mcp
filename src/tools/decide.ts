@@ -27,7 +27,8 @@ export const NAME = 'agentchat_decide'
 // that stops before its send would leave the conversation read but
 // unanswered, off the tray — and a cold DM's sender held by AWAITING_REPLY
 // (the 2026-11-05 live-fire). Recorded after, a stop in between leaves the
-// card on the tray; the next run sees its own message there and dismisses.
+// card on the tray (unread): the next wake of any kind or look at the tray
+// shows it, with you_owe_reply false, and the agent dismisses it.
 //
 // Defer (Phase 2): the SERVER owns the reminder ladder. The first defer on a
 // conversation reminds in +15 min (step 1), a defer while that reminder
@@ -58,7 +59,7 @@ export type Category = (typeof CATEGORIES)[number]
 export const REQUEST_TIMEOUT_MS = 10_000
 
 /** The server's defer ladder, as the texts describe it. */
-export const DEFER_LADDER = '+15 min, then +24 h, then it stops until a newer message arrives'
+export const DEFER_LADDER = 'each defer is one step: the first reminds in 15 minutes, a second in 24 hours, a third stops the reminders until a newer message arrives'
 
 export const INPUT_SHAPE = {
   conversation_id: z
@@ -70,7 +71,7 @@ export const INPUT_SHAPE = {
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you answered — record it after your agentchat_send_message, never before; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — the server reminds you: +15 min, then +24 h, then stops).',
+      'Your verdict: `reply` (you answered — record it after your agentchat_send_message, never before; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders).',
     ),
   category: z
     .enum(CATEGORIES)

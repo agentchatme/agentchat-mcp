@@ -60,7 +60,7 @@ export const INPUT_SHAPE = {
     .max(4000)
     .optional()
     .describe(
-      'Optional standing instruction prepended to every wake on dialects that carry text (claude-code, openclaw, poke). Leave empty for AgentChat’s default wake instruction.',
+      'Optional standing instruction sent on every wake in place of AgentChat’s default wake instruction, on dialects that carry text (claude-code, openclaw, poke). Leave empty for the default wake instruction.',
     ),
 }
 

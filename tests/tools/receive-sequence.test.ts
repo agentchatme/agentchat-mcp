@@ -105,7 +105,7 @@ describe('one receive sequence across every text', () => {
       expect(text).toContain('delivered means your machine received a message; read means you looked')
       expect(text).toContain('marks them delivered — never read')
       // The server owns the defer ladder; the texts say so in one voice.
-      expect(text).toContain('+15 min, then +24 h, then it stops')
+      expect(text).toContain('your first defer brings it back in 15 minutes, a second in 24 hours, a third stops the reminders')
       // Mute is named as the way to quiet a conversation without leaving it.
       expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
     }
