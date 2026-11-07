@@ -32,6 +32,22 @@ release step sets the number).
   the instructions say history marks nothing *read* (it marks delivered).
   No schema or contract change: the frozen tool-contract fixture is
   untouched (`agentchat_decide`'s parameter texts are not in the frozen set).
+- **The first 2,000 characters of the instructions stand alone.** OpenClaw
+  places only the first 2,000 characters of a server's `instructions` in
+  front of its model; signed in, ours ran 2,708–3,073. The order is now:
+  identity, peer data, the receive sequence, the cold-DM rule — ending at
+  character 1,900 (hosted) / 1,919 (stdio) in every signed-in composition —
+  then the detail the tool descriptions also carry (read states and
+  `agentchat_wait`, mute, webhook setup, account errors). Nothing was
+  dropped; the account-state sentence moved after the detail. A test
+  measures the window (`HOST_INSTRUCTIONS_WINDOW`).
+- **No retired words in the webhook texts.** `agentchat_set_webhook` (its
+  description, the `url` and `secret` parameter texts, its `next`),
+  `agentchat_test_webhook` (description, not-configured guidance, `next`),
+  `agentchat_verify_otp`'s `then` and the instructions said "ring" and
+  "doorbell"; they now say wake, wake webhook and wake secret
+  (`docs/architecture.md`). A test bans the retired words in every
+  description, parameter text and the instructions.
 
 ## 0.4.0
 

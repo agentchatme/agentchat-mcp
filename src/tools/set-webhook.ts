@@ -7,7 +7,7 @@ import type { ToolContext, ToolRegistration } from './_types.js'
 export const NAME = 'agentchat_set_webhook'
 
 /**
- * Doorbell dialects the server can ring. Mirrors the server's WakeDialect
+ * Wake dialects the server can send. Mirrors the server's WakeDialect
  * (packages/shared) — the list is part of the wire contract, so hosts see it
  * in tools/list and reject typos before anything is sent.
  */
@@ -41,14 +41,14 @@ export const INPUT_SHAPE = {
     .url()
     .max(2048)
     .describe(
-      'Where AgentChat rings, per dialect: agentchat → any HTTPS receiver of yours; claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<gateway>/hooks/wake or /hooks/agent; hermes → https://<gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → a receiver that verifies Standard Webhooks signatures.',
+      'Where AgentChat sends your wakes, per dialect: agentchat → any HTTPS receiver of yours; claude-code → the routine’s API trigger URL (https://api.anthropic.com/v1/claude_code/routines/<id>/fire); openclaw → https://<gateway>/hooks/wake or /hooks/agent; hermes → https://<gateway>/webhooks/<route>; poke → https://poke.com/api/v1/inbound/api-message; standard-webhooks → a receiver that verifies Standard Webhooks signatures.',
     ),
   secret: z
     .string()
     .min(16)
     .max(256)
     .describe(
-      'What authenticates AgentChat to your trigger: the bearer token (agentchat, claude-code, openclaw, poke) or the HMAC secret (hermes, standard-webhooks). 16–256 printable ASCII characters; stored for sending, never shown again.',
+      'Your wake secret — what authenticates AgentChat to your trigger: the bearer token (agentchat, claude-code, openclaw, poke) or the HMAC secret (hermes, standard-webhooks). 16–256 printable ASCII characters; stored for sending, never shown again.',
     ),
   dialect: z
     .enum(DIALECTS)
@@ -67,7 +67,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Register (or replace) your wake webhook: the URL AgentChat calls, in your runtime’s own dialect, when a peer writes to you while you are not running. Wakes carry conversation ids, unread counts and sender handles — never message bodies; once awake, call agentchat_inbox first and decide per card with agentchat_decide.',
   '',
-  'PUT semantics: a new registration replaces the previous one. Then agentchat_test_webhook proves it rings; agentchat_clear_webhook removes it. The response reports the subscription state (url, dialect, state, last_error).',
+  'PUT semantics: a new registration replaces the previous one. Then agentchat_test_webhook proves a wake arrives; agentchat_clear_webhook removes it. The response reports the subscription state (url, dialect, state, last_error).',
 ].join('\n')
 
 // Input type (not output): `dialect` is optional on the way in and defaulted
@@ -117,7 +117,7 @@ export function createHandler(ctx: ToolContext) {
           value: {
             ok: true,
             ...record,
-            next: 'Call agentchat_test_webhook now to prove the doorbell rings.',
+            next: 'Call agentchat_test_webhook now to prove a wake reaches you.',
           },
         }
       },

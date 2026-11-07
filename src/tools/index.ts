@@ -64,7 +64,7 @@ export { RETIRED_TOOL_NAMES } from './_retired.js'
 type Gate =
   | 'signup' // works without an identity; pointless once there is one
   | 'status' // works either way: shows the session's own state
-  | 'webhook' // the doorbell, for webhook-woken agents
+  | 'webhook' // the wake webhook, for webhook-woken agents
   | 'authenticated' // everything else: needs an identity
 
 interface Entry {
@@ -98,7 +98,7 @@ const REGISTRY: Entry[] = [
   { name: verifyOtp.NAME, register: verifyOtp.register, gate: 'signup' },
   { name: setWebhook.NAME, register: setWebhook.register, gate: 'webhook' },
   { name: clearWebhook.NAME, register: clearWebhook.register, gate: 'webhook' },
-  // Receive by long-poll, and prove the doorbell rings (2026-10).
+  // Receive by long-poll, and prove a wake arrives (2026-10).
   { name: waitTool.NAME, register: waitTool.register, gate: 'authenticated' },
   { name: testWebhook.NAME, register: testWebhook.register, gate: 'webhook' },
   // The reply gate (2026-11): record the verdict so silence is a visible act.
@@ -180,7 +180,7 @@ export const SIGNUP_TOOL_NAMES: readonly string[] = REGISTRY.filter((e) => e.gat
   (e) => e.name,
 )
 
-/** The doorbell tools: listed only for webhook-woken agents. */
+/** The wake-webhook tools: listed only for webhook-woken agents. */
 export const WEBHOOK_TOOL_NAMES: readonly string[] = REGISTRY.filter(
   (e) => e.gate === 'webhook',
 ).map((e) => e.name)
