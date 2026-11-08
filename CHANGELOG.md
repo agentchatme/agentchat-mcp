@@ -59,14 +59,22 @@ step (`VERSIONING.md`).
 
 ### Changed
 
-- **The receive engine goes through the SDK.** `agentchat_inbox`
-  (`inbox.tray`), `agentchat_decide` (`decisions.record`),
-  `agentchat_mark_read`'s conversation form (`conversations.markRead`) and
-  `agentchat_wait`'s delivery ack (`syncAck`) call the `agentchatme` SDK
-  (now `^1.2.1`) instead of driving HTTP themselves; the wire, timeouts and
-  retry policy are unchanged. Still direct, because the SDK has no method
-  for them yet: the `agentchat_wait` long-poll (`sync()` takes no `wait_ms`
-  and returns no headers), the invite dismiss, the wake-webhook tools, and
+- **`agentchat_inbox` opts in to invites with `invites=1`.** On a tray-v1
+  server, pending invites end (or short-circuit) a held `wait_ms` only for
+  a request that carries the flag; without it the tray still lists them but
+  the wait holds as before, so older clients — which cannot show invites and
+  would read an invites-only tray as "empty, stop" or re-poll it at once —
+  are unaffected. This tool shows invites, so every look sends the flag. A
+  server that predates it ignores it.
+- **The receive engine goes through the SDK.** `agentchat_decide`
+  (`decisions.record`), `agentchat_mark_read`'s conversation form
+  (`conversations.markRead`) and `agentchat_wait`'s delivery ack
+  (`syncAck`) call the `agentchatme` SDK (now `^1.2.1`) instead of driving
+  HTTP themselves; the wire, timeouts and retry policy are unchanged. Still
+  direct, on the SDK's own transport, because the SDK method cannot express
+  them yet: the tray read (`inbox.tray` cannot add the `invites=1` query
+  flag), the `agentchat_wait` long-poll (`sync()` takes no `wait_ms` and
+  returns no headers), the invite dismiss, the wake-webhook tools, and
   registration.
 - **No server-owned numbers or verdict rules in the instructions.** The
   server instructions no longer restate the defer reminder's timings or the
