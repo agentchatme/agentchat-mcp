@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { READ } from './_annotations.js'
 import { withErrorBoundary, type SuccessShape } from './_handler.js'
-import { engineClient, NO_RETRY, requireRestAuth, rethrowWithGuidance } from './_rest.js'
+import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import {
   blankToDefault,
@@ -15,7 +15,7 @@ export const NAME = 'agentchat_inbox'
 
 // ─── The tray ──────────────────────────────────────────────────────────────
 //
-// Presents GET /v1/inbox (through the SDK's `inbox.tray`): one briefing card
+// Presents GET /v1/inbox?invites=1 (see "Invites opt-in" below): one briefing card
 // per conversation with UNREAD messages, the group invites still waiting for
 // this agent (tray v1: `invites`, newest first, capped, `invites_truncated`),
 // plus the one gate question, built by the server from facts it already
@@ -34,6 +34,21 @@ export const NAME = 'agentchat_inbox'
 // purpose: agentchat_decide's `category` schema is the list the model can
 // actually send, and a served category that schema does not know yet would
 // be rejected.
+//
+// Invites opt-in: the request always carries `invites=1`. On a tray-v1
+// server, pending invites end (or short-circuit) a held `wait_ms` ONLY for a
+// request that carries the flag; without it the body still lists them but
+// the wait holds as before. That keeps older clients — which cannot show
+// invites and would read an invites-only tray as "empty, stop", or re-poll
+// it at once in a hot loop — exactly as they were. This tool shows invites
+// (outcome "invites"), so it opts in. A server that predates the flag
+// ignores it.
+//
+// Wire: this one call drives the SDK's HttpTransport directly, as the wait
+// tool's poll does, because the SDK's `inbox.tray` (1.2.1) cannot add a
+// query parameter. Same identity headers (the session's fetch), same
+// composed timeout, one attempt. It moves back to `inbox.tray` when that
+// method gains the option.
 //
 // The endpoint long-polls exactly like /v1/messages/sync (same lease, same
 // ticket ordering, one server implementation), so the time budget is the
@@ -59,6 +74,12 @@ export const HOSTED_TOOL_BUDGET_MS = 30_000
 
 /** Server ceiling for one tray page (INBOX_TRAY_MAX_LIMIT). */
 export const MAX_LIMIT = 50
+/**
+ * Query flag that lets pending invites end a held tray request (tray v1).
+ * Requests without it keep today's wait semantics; see "Invites opt-in".
+ */
+export const INVITES_QUERY_FLAG = 'invites'
+
 /** Server default for one tray page (INBOX_TRAY_DEFAULT_LIMIT). */
 export const DEFAULT_LIMIT = 20
 /** The server trims every preview to this many characters. */
@@ -265,8 +286,8 @@ function nonNegativeInt(value: unknown): number | null {
 /**
  * How long the server held the request: the body's `waited_ms` (null for a
  * plain wait_ms = 0 read). The server writes the same number into the
- * X-AgentChat-Waited-Ms header; the SDK's tray call returns the body, which
- * carries it on every server that serves the tray. A tray the server
+ * X-AgentChat-Waited-Ms header; the body carries it on every server that
+ * serves the tray, so the body is the one source. A tray the server
  * answered is never timed locally — the tray says what the server did; only
  * the cancelled path reports the local elapsed.
  */
@@ -331,9 +352,7 @@ export function createHandler(ctx: ToolContext) {
       },
       async (): Promise<SuccessShape> => {
         const rest = requireRestAuth(ctx)
-        // A long-poll is never auto-retried: a retry would park again and
-        // overrun the deadline.
-        const client = engineClient(rest, NO_RETRY)
+        const http = restTransport(rest, { withAuth: true })
         const fallbackYou = publicHandle(ctx.selfHandle)
 
         if (signal?.aborted) {
@@ -346,18 +365,24 @@ export function createHandler(ctx: ToolContext) {
           deadlineAt - Date.now(),
         )
 
+        const query = new URLSearchParams({ limit: String(limit) })
+        if (waitMs > 0) query.set('wait_ms', String(waitMs))
+        // This tool shows invites: let them end the wait (see "Invites opt-in").
+        query.set(INVITES_QUERY_FLAG, '1')
+
         const startedAt = Date.now()
         let data: unknown
         try {
-          data = await client.inbox.tray({
-            waitMs,
-            limit,
-            // Explicit, so the SDK's own wait-derived timeout never applies:
-            // the composed budget keeps the poll inside the host deadline.
+          const res = await http.request<unknown>('GET', `/v1/inbox?${query.toString()}`, {
+            // The composed budget keeps the poll inside the host deadline.
             timeoutMs,
+            // A long-poll is never auto-retried: a retry would park again and
+            // overrun the deadline.
+            retry: 'never',
             // The host's cancellation aborts the park at once.
             ...(signal ? { signal } : {}),
           })
+          data = res.data
         } catch (err) {
           if (signal?.aborted) {
             const waited = Date.now() - startedAt

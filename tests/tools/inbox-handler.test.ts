@@ -241,7 +241,7 @@ describe('agentchat_inbox handler', () => {
   })
 
   describe('the request', () => {
-    it('timeout 45: one GET /v1/inbox?limit=20&wait_ms=45000 with Bearer auth, no second call', async () => {
+    it('timeout 45: one GET /v1/inbox?limit=20&wait_ms=45000&invites=1 with Bearer auth, no second call', async () => {
       const { impl, calls } = fetchStub(() => json(200, EMPTY_TRAY))
       const result = await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 45, limit: 20 })
       expect(result.isError).toBeFalsy()
@@ -249,22 +249,42 @@ describe('agentchat_inbox handler', () => {
       const call = calls[0]!
       expect(call.method).toBe('GET')
       expect(isInbox(call)).toBe(true)
-      expect(queryOf(call)).toEqual({ limit: '20', wait_ms: '45000' })
+      expect(queryOf(call)).toEqual({ limit: '20', wait_ms: '45000', invites: '1' })
       expect(call.headers.get('authorization')).toBe(`Bearer ${KEY}`)
       expect(call.body).toBeNull()
     })
 
-    it('timeout 0: one GET /v1/inbox?limit=20 — no wait_ms at all', async () => {
+    it('timeout 0: one GET /v1/inbox?limit=20&invites=1 — no wait_ms at all', async () => {
       const { impl, calls } = fetchStub(() => json(200, EMPTY_TRAY))
       await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 })
       expect(calls).toHaveLength(1)
-      expect(queryOf(calls[0]!)).toEqual({ limit: '20' })
+      expect(queryOf(calls[0]!)).toEqual({ limit: '20', invites: '1' })
     })
 
     it('carries the limit asked for', async () => {
       const { impl, calls } = fetchStub(() => json(200, EMPTY_TRAY))
       await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 5, limit: 3 })
-      expect(queryOf(calls[0]!)).toEqual({ limit: '3', wait_ms: '5000' })
+      expect(queryOf(calls[0]!)).toEqual({ limit: '3', wait_ms: '5000', invites: '1' })
+    })
+
+    it('always opts in to invites (invites=1): on a tray-v1 server only a flagged request lets invites end the wait', async () => {
+      expect(inbox.INVITES_QUERY_FLAG).toBe('invites')
+      for (const timeout_seconds of [0, 5, 25, 45]) {
+        const { impl, calls } = fetchStub(() => json(200, EMPTY_TRAY))
+        await inbox.createHandler(makeCtx(impl))({ timeout_seconds, limit: 20 })
+        expect(calls).toHaveLength(1)
+        expect(new URL(calls[0]!.url).searchParams.getAll('invites'), `timeout ${timeout_seconds}`).toEqual(['1'])
+      }
+    })
+
+    it('an invites-only tray answered to the flagged request is outcome "invites", not "empty"', async () => {
+      const INVITE = { invite_id: 'inv_1', group: { id: 'grp_3', name: 'ops', member_count: 2 }, invited_by: '@dan', at: '2026-11-08T09:00:00.000Z' }
+      const { impl, calls } = fetchStub(() =>
+        json(200, { ...EMPTY_TRAY, version: 1, invites: [INVITE], invites_truncated: false, waited_ms: 800 }),
+      )
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 25, limit: 20 }))
+      expect(queryOf(calls[0]!)).toMatchObject({ invites: '1', wait_ms: '25000' })
+      expect(payload).toMatchObject({ outcome: 'invites', waited_ms: 800, invites: [INVITE], next: inbox.NEXT.invites })
     })
   })
 
@@ -750,7 +770,7 @@ describe('agentchat_inbox over the MCP protocol', () => {
       })
       expect(result.isError).toBeFalsy()
       expect(calls).toHaveLength(1)
-      expect(queryOf(calls[0]!)).toEqual({ limit: '20', wait_ms: '25000' })
+      expect(queryOf(calls[0]!)).toEqual({ limit: '20', wait_ms: '25000', invites: '1' })
     } finally {
       await close()
     }
