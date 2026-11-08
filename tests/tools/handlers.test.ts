@@ -14,6 +14,7 @@ import * as removeContact from '../../src/tools/remove-contact.js'
 import * as reportAgent from '../../src/tools/report-agent.js'
 import * as sendMessage from '../../src/tools/send-message.js'
 import type { ToolContext } from '../../src/tools/_types.js'
+import { noNetworkFetch, TEST_API_BASE } from './_no-network.js'
 
 // ─── Tool handler call-shape tests ─────────────────────────────────────────
 //
@@ -36,9 +37,9 @@ function makeCtx(client: Partial<AgentChatClient>): ToolContext {
     semaphore: new Semaphore(10),
     inflight: new Set(),
     rest: {
-      apiBase: 'https://api.agentchat.me',
+      apiBase: TEST_API_BASE,
       apiKey: 'ac_test_0123456789abcdef0123456789abcdef',
-      fetchImpl: globalThis.fetch,
+      fetchImpl: noNetworkFetch,
     },
     // Mirror the stdio composition: the turn key is read from the env at
     // call time — the idempotency tests below pin exactly that contract.

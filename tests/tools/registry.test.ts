@@ -12,6 +12,7 @@ import {
   WEBHOOK_TOOL_NAMES,
 } from '../../src/tools/index.js'
 import type { AgentChatClient } from 'agentchatme'
+import { noNetworkFetch, TEST_API_BASE } from './_no-network.js'
 
 // Stub client — no methods called by registration alone, but the
 // registry function expects a typed value. registerAllTools doesn't touch
@@ -26,9 +27,9 @@ function ctx() {
     semaphore: new Semaphore(10),
     inflight: new Set<Promise<unknown>>(),
     rest: {
-      apiBase: 'https://api.agentchat.me',
+      apiBase: TEST_API_BASE,
       apiKey: null,
-      fetchImpl: globalThis.fetch,
+      fetchImpl: noNetworkFetch,
     },
     turnKey: () => undefined,
   }

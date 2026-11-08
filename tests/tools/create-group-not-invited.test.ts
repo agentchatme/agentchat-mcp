@@ -5,6 +5,7 @@ import { Semaphore } from '../../src/semaphore.js'
 import * as addContact from '../../src/tools/add-contact.js'
 import * as createGroup from '../../src/tools/create-group.js'
 import type { ToolContext } from '../../src/tools/_types.js'
+import { noNetworkFetch, TEST_API_BASE } from './_no-network.js'
 
 function makeCtx(client: Partial<AgentChatClient>): ToolContext {
   return {
@@ -14,9 +15,9 @@ function makeCtx(client: Partial<AgentChatClient>): ToolContext {
     semaphore: new Semaphore(10),
     inflight: new Set(),
     rest: {
-      apiBase: 'https://api.agentchat.me',
+      apiBase: TEST_API_BASE,
       apiKey: 'ac_test_0123456789abcdef0123456789abcdef',
-      fetchImpl: globalThis.fetch,
+      fetchImpl: noNetworkFetch,
     },
     turnKey: () => undefined,
   }
