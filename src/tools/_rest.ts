@@ -1,4 +1,10 @@
-import { AgentChatClient, AgentChatError, HttpTransport, type RetryPolicy } from 'agentchatme'
+import {
+  AgentChatClient,
+  AgentChatError,
+  HttpTransport,
+  type RequestHooks,
+  type RetryPolicy,
+} from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
 import { attachToolGuidance } from '../errors.js'
 import type { RestContext, ToolContext } from './_types.js'
@@ -35,14 +41,21 @@ export const NO_RETRY: RetryPolicy = Object.freeze({ maxRetries: 0, baseDelayMs:
  * An SDK client for the session's identity with `retry` as its policy. The
  * policy applies only to calls the transport may retry at all (GET, or a
  * POST that carries an Idempotency-Key); a POST without a key is never
- * retried, whatever the policy.
+ * retried, whatever the policy. `hooks` are the SDK's observability hooks
+ * (e.g. agentchat_decide watches for a 2xx it can trust even when the body
+ * is unreadable).
  */
-export function engineClient(rest: AuthenticatedRest, retry: RetryPolicy): AgentChatClient {
+export function engineClient(
+  rest: AuthenticatedRest,
+  retry: RetryPolicy,
+  hooks?: RequestHooks,
+): AgentChatClient {
   return new AgentChatClient({
     apiKey: rest.apiKey,
     baseUrl: rest.apiBase,
     fetch: rest.fetchImpl,
     retry,
+    ...(hooks ? { hooks } : {}),
   })
 }
 

@@ -75,6 +75,18 @@ describe('mapAgentChatError', () => {
     expect(m.retryAfterSeconds).toBe(3600)
   })
 
+  it('guidance attached with replace: true is the whole not-found message; without it, it is appended', () => {
+    const replaced = new NotFoundError(res('AGENT_NOT_FOUND', 'Not Found'), 404)
+    attachToolGuidance(replaced, 'This server cannot do that yet.', { replace: true })
+    expect(mapAgentChatError(replaced)).toEqual({ code: 'NOT_FOUND', message: 'This server cannot do that yet.' })
+
+    const appended = new NotFoundError(res('AGENT_NOT_FOUND', 'Not Found'), 404)
+    attachToolGuidance(appended, 'Tool hint.')
+    const m = mapAgentChatError(appended)
+    expect(m.message).toContain('does not exist or is not visible to you')
+    expect(m.message.endsWith(' Tool hint.')).toBe(true)
+  })
+
   it('keeps the wire code and message for a foreign-coded 404 (status-fallback NotFoundError)', () => {
     const err = new NotFoundError(
       res('PENDING_NOT_FOUND', 'no such pending registration. Call agentchat_register again.'),

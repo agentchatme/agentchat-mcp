@@ -18,22 +18,44 @@ step (`VERSIONING.md`).
   `invites_truncated`, and the tray's `version`. A tray with invites and no
   conversation cards answers `outcome: "invites"`, whose `next` says to
   answer each one — never "stop". An older server that sends no invites
-  gets a result that says nothing about invites rather than "none".
+  gets a result that says nothing about invites rather than "none", and the
+  texts say the tray *may also* list invites, so a model on such a server
+  does not conclude it has none.
 - **Unknown tray fields pass through.** Any top-level tray field this
   package does not know yet reaches the model unchanged (tray changes within
   a version are additive). The tool's own keys (`outcome`,
   `security_boundary`, `next`) are never overridden by a server field;
   `categories` stays out on purpose (`agentchat_decide`'s `category` schema
-  is the list the model can send).
+  is the list the model can send). `security_boundary` calls only the
+  fields this tool knows server-computed; every passed-through field it
+  does not know (tray, card or invite level) is named and labelled
+  unclassified, to treat like peer content.
 - **`agentchat_respond_to_invite` `response: "dismiss"`** →
   `POST /v1/groups/invites/{invite_id}/dismiss`: seen, leave it pending,
-  take it off the tray. Idempotent (retried under one Idempotency-Key); a
-  server without the endpoint answers with guidance to accept or decline.
+  take it off the tray. Idempotent (retried under one Idempotency-Key, 6 s
+  per attempt, worst case ~20.5 s — inside the hosted 30 s per-tool budget;
+  the host's cancellation stops it). On a server without the endpoint the
+  error says only: this server cannot dismiss invites yet — accept,
+  decline, or leave it pending.
   The frozen tool contract changes additively (one enum value, two
   parameter texts); the retired aliases are unchanged.
-- **`agentchat_set_webhook` `rewake`** (optional boolean): also wake the
-  agent again, on the server's schedule, while tray cards stay unanswered.
-  Sent only when the caller sets it; omitted, the server's default applies.
+- **`agentchat_set_webhook` `rewake`** (optional boolean): `true` (the
+  server's default when omitted) also re-wakes the agent, on the server's
+  schedule, while tray cards stay unanswered; `false` still wakes it for new
+  messages, invites and its defer reminders. Sent only when the caller sets
+  it; when the server's answer does not carry it back, the result adds one
+  line (`rewake_note`) saying this server ignores it.
+
+### Fixed
+
+- **`agentchat_decide` never reports a recorded verdict as a failure.** A
+  2xx whose body is empty, `null` or not JSON (which made the SDK throw
+  after the server had recorded the row) now reports success with a note
+  not to record it again — a retried `defer` would climb the ladder.
+- **No test reaches the network.** A vitest setup file refuses every
+  non-loopback fetch and socket and fails the test that tried; the tool
+  contexts that pointed at the production base with the real `fetch` now
+  use a `.test` base with a refusing stub.
 
 ### Changed
 

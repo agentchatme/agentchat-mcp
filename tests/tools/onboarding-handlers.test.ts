@@ -293,8 +293,10 @@ describe('agentchat_set_webhook handler', () => {
         dialect: 'agentchat',
         rewake,
       })
-      // The server's record (rewake included) passes through.
-      expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, rewake })
+      // The server's record (rewake included) passes through, with no note.
+      const payload = JSON.parse(firstText(result)) as Record<string, unknown>
+      expect(payload).toMatchObject({ ok: true, rewake })
+      expect(payload).not.toHaveProperty('rewake_note')
     }
     const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
     await setWebhook.createHandler(makeCtx(impl))({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' })
@@ -324,6 +326,43 @@ describe('agentchat_set_webhook handler', () => {
     const text = String(props['rewake']!['description'])
     expect(text.split(/(?<=[.!?])\s/).length).toBe(1)
     expect(text).toContain('unanswered')
+    expect(text).toContain('false means you are woken for new messages, invites and your defer reminders, but not re-woken for unanswered cards')
+  })
+
+  it('rewake sent but the answer does not carry it: one line says this server ignores it', async () => {
+    for (const rewake of [true, false] as const) {
+      // Today's server: `{ wake_webhook: { … } }` without rewake.
+      const { impl } = fetchStub(() => json(200, { wake_webhook: { url: 'https://hooks.example/wake', dialect: 'agentchat', state: 'active' } }))
+      const payload = JSON.parse(
+        firstText(
+          await setWebhook.createHandler(makeCtx(impl))({
+            url: 'https://hooks.example/wake',
+            secret: 'shhh-0123456789abcdef',
+            rewake,
+          }),
+        ),
+      ) as Record<string, unknown>
+      expect(payload['rewake_note']).toBe(setWebhook.REWAKE_IGNORED_NOTE)
+    }
+    // A contract-v1 server echoes it inside wake_webhook: no note.
+    const v1 = fetchStub(() => json(200, { wake_webhook: { url: 'https://hooks.example/wake', state: 'active', rewake: true } }))
+    const echoed = JSON.parse(
+      firstText(
+        await setWebhook.createHandler(makeCtx(v1.impl))({
+          url: 'https://hooks.example/wake',
+          secret: 'shhh-0123456789abcdef',
+          rewake: true,
+        }),
+      ),
+    ) as Record<string, unknown>
+    expect(echoed).not.toHaveProperty('rewake_note')
+    // Not sent: nothing to say.
+    const quiet = fetchStub(() => json(200, { wake_webhook: { state: 'active' } }))
+    const omitted = JSON.parse(
+      firstText(await setWebhook.createHandler(makeCtx(quiet.impl))({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' })),
+    ) as Record<string, unknown>
+    expect(omitted).not.toHaveProperty('rewake_note')
+    expect(setWebhook.REWAKE_IGNORED_NOTE.split(/(?<=[.!?])\s/).length).toBe(1)
   })
 
   it('rejects an unknown dialect in the input schema', () => {

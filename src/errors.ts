@@ -24,17 +24,33 @@ import type { ServerMode } from './instructions.js'
 // whose message the mapper rebuilds from scratch (plain RATE_LIMITED) the
 // appended text would be lost, so the same guidance is also recorded out of
 // band on the error object and the mapper prefers it over its generic text.
+//
+// `replace: true` marks guidance that is the WHOLE answer: the mapper then
+// drops its generic sentence for that class (today: the not-found text) and
+// says only what the tool knows — e.g. a dismiss on a server that has no
+// dismiss endpoint is not "the resource does not exist".
 const TOOL_GUIDANCE = Symbol.for('@agentchatme/mcp.toolGuidance')
-type Guided = { [TOOL_GUIDANCE]?: string }
+const TOOL_GUIDANCE_REPLACES = Symbol.for('@agentchatme/mcp.toolGuidanceReplaces')
+type Guided = { [TOOL_GUIDANCE]?: string; [TOOL_GUIDANCE_REPLACES]?: boolean }
 
 /** Record the endpoint-specific guidance a tool attached to a server error. */
-export function attachToolGuidance(err: object, guidance: string): void {
+export function attachToolGuidance(
+  err: object,
+  guidance: string,
+  options: { replace?: boolean } = {},
+): void {
   ;(err as Guided)[TOOL_GUIDANCE] = guidance
+  if (options.replace) (err as Guided)[TOOL_GUIDANCE_REPLACES] = true
 }
 
 /** The guidance a tool attached via attachToolGuidance, if any. */
 export function toolGuidanceOf(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null ? (err as Guided)[TOOL_GUIDANCE] : undefined
+}
+
+/** True when the attached guidance replaces the mapper's generic text. */
+function toolGuidanceReplaces(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as Guided)[TOOL_GUIDANCE_REPLACES] === true
 }
 
 // What a 429 means depends on the endpoint — the send path, the inbox long-
@@ -214,6 +230,7 @@ export function mapAgentChatError(
     // means on ITS endpoint (agentchat_decide: not a participant, nothing
     // recorded) attaches that; the generic sentence stays for the rest.
     const guidance = toolGuidanceOf(err)
+    if (guidance && toolGuidanceReplaces(err)) return { code: 'NOT_FOUND', message: guidance }
     return {
       code: 'NOT_FOUND',
       message:

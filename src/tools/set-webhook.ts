@@ -79,7 +79,7 @@ export const INPUT_SHAPE = {
   rewake: z
     .preprocess(optionalFlag, z.boolean().optional())
     .describe(
-      'Optional: also wake you again, on the server’s schedule, while cards on your tray stay unanswered — on when omitted; false wakes you only for new messages and invites.',
+      'Optional: true (the server’s default when omitted) also re-wakes you, on the server’s schedule, while cards on your tray stay unanswered; false means you are woken for new messages, invites and your defer reminders, but not re-woken for unanswered cards.',
     ),
 }
 
@@ -92,6 +92,20 @@ export const DESCRIPTION = [
 // Input type (not output): `dialect` is optional on the way in and defaulted
 // by the schema; direct handler callers (tests, embedders) may omit it too.
 export const ANNOTATIONS = WRITE_IDEMPOTENT
+
+/** Added to the result when `rewake` was sent and the server's answer does not carry it. */
+export const REWAKE_IGNORED_NOTE =
+  'This server ignores rewake: its answer does not carry the setting, so it does not re-wake you for unanswered cards.'
+
+/**
+ * Did the server's answer carry `rewake`? The server answers
+ * `{ wake_webhook: { …, rewake } }`; a flat record is read the same way.
+ */
+export function echoesRewake(record: Record<string, unknown>): boolean {
+  const inner = record['wake_webhook']
+  if (typeof inner === 'object' && inner !== null && 'rewake' in inner) return true
+  return 'rewake' in record
+}
 
 // `rewake` is typed as what the schema yields (the preprocess makes its raw
 // input type `unknown`), so a direct caller is held to the parsed shape.
@@ -147,6 +161,7 @@ export function createHandler(ctx: ToolContext) {
           value: {
             ok: true,
             ...record,
+            ...(rewake !== undefined && !echoesRewake(record) ? { rewake_note: REWAKE_IGNORED_NOTE } : {}),
             next: 'Call agentchat_test_webhook now to prove a wake reaches you.',
           },
         }

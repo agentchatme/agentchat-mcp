@@ -106,6 +106,14 @@ export const DESCRIPTION = [
  */
 export const ANNOTATIONS = WRITE
 
+/**
+ * Said when the server answered 2xx but its body could not be read: the
+ * verdict IS recorded (one attempt, no retry), so recording it again would
+ * be a second row — and a second defer climbs the ladder.
+ */
+export const RECORDED_WITHOUT_ROW_NOTE =
+  'The server accepted this verdict (2xx) but its answer carried no readable row, so defer_until, defer_step and recorded_at are unknown. It is recorded: do not record it again.'
+
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
   reply:
@@ -163,9 +171,19 @@ export function createHandler(ctx: ToolContext) {
         // sent — and without one the transport never retries a POST (NO_RETRY
         // says so out loud). A failure is reported to the model rather than
         // re-sent behind its back.
-        const client = engineClient(rest, NO_RETRY)
+        // A 2xx is the server's word that the row exists. The SDK reads the
+        // body after it; an empty, null or non-JSON body then throws (a
+        // TypeError or a parse error) although the verdict was recorded. With
+        // one attempt, a 2xx seen here is exactly that call's answer.
+        let accepted = false
+        const client = engineClient(rest, NO_RETRY, {
+          onResponse: (info) => {
+            if (info.status >= 200 && info.status < 300) accepted = true
+          },
+        })
 
         let data: unknown
+        let rowUnreadable = false
         try {
           // Only the fields the caller set travel — the server treats a
           // present key as a value to validate; the SDK serializes an
@@ -177,14 +195,25 @@ export function createHandler(ctx: ToolContext) {
             timeoutMs: REQUEST_TIMEOUT_MS,
           })
         } catch (err) {
-          rethrowWithGuidance(err, {
-            NOT_FOUND: NOT_FOUND_GUIDANCE,
-            RATE_LIMITED: RATE_LIMITED_GUIDANCE,
-            VALIDATION_ERROR: VALIDATION_GUIDANCE,
-          })
+          if (!accepted) {
+            rethrowWithGuidance(err, {
+              NOT_FOUND: NOT_FOUND_GUIDANCE,
+              RATE_LIMITED: RATE_LIMITED_GUIDANCE,
+              VALIDATION_ERROR: VALIDATION_GUIDANCE,
+            })
+          }
+          ctx.logger.warn(
+            { tool: NAME, conversation_id, decision, err: err instanceof Error ? err.message : String(err) },
+            'verdict accepted (2xx) but its body was unreadable; reporting success',
+          )
+          data = null
+          rowUnreadable = true
         }
 
         const row = decisionRowOf(data)
+        // A 2xx without the row (`{}`, or a body the SDK read as empty) is
+        // the same situation as an unreadable one.
+        if (!rowUnreadable && row.created_at === undefined && row.id === undefined) rowUnreadable = true
         return {
           type: 'json',
           value: {
@@ -197,6 +226,7 @@ export function createHandler(ctx: ToolContext) {
             defer_until: stringOrNull(row.defer_until),
             defer_step: stepOrNull(row.defer_step),
             recorded_at: stringOrNull(row.created_at),
+            ...(rowUnreadable ? { note: RECORDED_WITHOUT_ROW_NOTE } : {}),
             next: NEXT[decision],
           },
         }

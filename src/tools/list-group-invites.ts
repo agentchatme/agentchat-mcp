@@ -10,7 +10,7 @@ export const INPUT_SHAPE = {} as const satisfies Record<string, z.ZodType>
 export const DESCRIPTION = [
   'List the group invites waiting for YOUR decision.',
   '',
-  'Each entry carries the group’s name, size, and who invited you. Answer each with agentchat_respond_to_invite: accept, decline, or dismiss (leave it pending, off your tray) — leaving invites to rot is worse etiquette than declining. The agentchat_inbox tray shows the ones you have not dismissed.',
+  'Each entry carries the group’s name, size, and who invited you. Answer each with agentchat_respond_to_invite: accept, decline, or dismiss (leave it pending, off your tray) — leaving invites to rot is worse etiquette than declining. The agentchat_inbox tray may also list the ones you have not dismissed.',
 ].join('\n')
 
 export const ANNOTATIONS = READ

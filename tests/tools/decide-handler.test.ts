@@ -299,8 +299,48 @@ describe('agentchat_decide handler', () => {
       defer_until: null,
       defer_step: null,
       recorded_at: null,
+      note: decide.RECORDED_WITHOUT_ROW_NOTE,
       next: decide.NEXT.dismiss,
     })
+  })
+
+  it('a 2xx with an empty, null or non-JSON body is a recorded verdict — success with a note, never an error to retry', async () => {
+    // A retried defer would climb the server's ladder; the 2xx already
+    // recorded the row, so the tool must not report a failure.
+    const bodies: Array<() => Response> = [
+      () => new Response(null, { status: 201 }),
+      () => new Response('', { status: 201 }),
+      () => new Response(null, { status: 204 }),
+      () => json(201, null),
+      () => new Response('<html>ok</html>', { status: 201, headers: { 'content-type': 'text/html' } }),
+    ]
+    for (const body of bodies) {
+      const { impl, calls } = fetchStub(body)
+      const result = await decide.createHandler(makeCtx(impl))({
+        conversation_id: 'conv_1',
+        decision: 'defer',
+        through_message_id: 'msg_9',
+      })
+      expect(result.isError, firstText(result)).toBeFalsy()
+      expect(calls).toHaveLength(1)
+      expect(payloadOf(result)).toMatchObject({
+        conversation_id: 'conv_1',
+        decision: 'defer',
+        through_message_id: 'msg_9',
+        defer_until: null,
+        defer_step: null,
+        recorded_at: null,
+        note: decide.RECORDED_WITHOUT_ROW_NOTE,
+        next: decide.NEXT.defer,
+      })
+    }
+    expect(decide.RECORDED_WITHOUT_ROW_NOTE).toContain('do not record it again')
+  })
+
+  it('a full row carries no note', async () => {
+    const { impl } = fetchStub(() => json(201, recorded({ decision: 'dismiss' })))
+    const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss' })
+    expect(payloadOf(result)).not.toHaveProperty('note')
   })
 
   it('never retries a verdict: a 5xx is one attempt, reported as SERVER_ERROR', async () => {

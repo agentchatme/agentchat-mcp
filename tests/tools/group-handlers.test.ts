@@ -9,14 +9,10 @@ import * as leaveGroup from '../../src/tools/leave-group.js'
 import * as listGroupInvites from '../../src/tools/list-group-invites.js'
 import * as respondToInvite from '../../src/tools/respond-to-invite.js'
 import type { ToolContext } from '../../src/tools/_types.js'
+import { noNetworkFetch, TEST_API_BASE } from './_no-network.js'
 
 // Same call-shape discipline as handlers.test.ts: stub the SDK, assert the
 // exact arguments each handler forwards and the JSON it shapes back.
-
-/** The default network for this file: none. A test that needs the wire passes its own stub. */
-const noNetwork = (async () => {
-  throw new Error('group-handlers tests never reach the network: pass a fetch stub')
-}) as typeof fetch
 
 type FetchCall = { url: string; method: string; headers: Headers; body: unknown }
 
@@ -44,7 +40,7 @@ const TEST_KEY = 'ac_test_0123456789abcdef0123456789abcdef'
 
 function makeCtx(
   client: Partial<AgentChatClient>,
-  fetchImpl: typeof fetch = noNetwork,
+  fetchImpl: typeof fetch = noNetworkFetch,
   apiKey: string | null = TEST_KEY,
 ): ToolContext {
   return {
@@ -54,7 +50,7 @@ function makeCtx(
     semaphore: new Semaphore(10),
     inflight: new Set(),
     rest: {
-      apiBase: 'https://api.agentchat.test',
+      apiBase: TEST_API_BASE,
       apiKey,
       fetchImpl,
     },
@@ -140,6 +136,13 @@ describe('agentchat_list_group_invites', () => {
     const handler = listGroupInvites.createHandler(makeCtx({ listGroupInvites: mock }))
     const result = await handler()
     expect(parseJsonContent(result)).toMatchObject({ count: 1, invites: [{ id: 'inv_9' }] })
+  })
+})
+
+describe('agentchat_list_group_invites text', () => {
+  it('names all three answers and says the tray MAY also list invites (an older tray lists none)', () => {
+    expect(listGroupInvites.DESCRIPTION).toContain('accept, decline, or dismiss')
+    expect(listGroupInvites.DESCRIPTION).toContain('The agentchat_inbox tray may also list the ones you have not dismissed')
   })
 })
 
@@ -229,14 +232,67 @@ describe('agentchat_respond_to_invite (accept + decline + dismiss)', () => {
     expect(calls[1]!.headers.get('idempotency-key')).toBe(calls[0]!.headers.get('idempotency-key'))
   })
 
-  it('dismiss on a server without the endpoint (bare 404) says to accept or decline instead', async () => {
+  it('dismiss on a server without the endpoint (bare 404) says only that — no generic not-found text', async () => {
     const { impl } = fetchStub(() => new Response('404 Not Found', { status: 404 }))
     const handler = respondToInvite.createHandler(makeCtx({}, impl))
     const result = await handler({ invite_id: 'inv_9', response: 'dismiss' })
     expect(result.isError).toBe(true)
     const text = (result.content as Array<{ text: string }>)[0]!.text
-    expect(text).toContain('Error: NOT_FOUND')
-    expect(text).toContain('cannot dismiss invites yet: answer it with accept or decline instead')
+    expect(text).toBe(`Error: NOT_FOUND\n\n${respondToInvite.DISMISS_UNSUPPORTED_GUIDANCE}`)
+    expect(respondToInvite.DISMISS_UNSUPPORTED_GUIDANCE).toBe(
+      'This server cannot dismiss invites yet — accept, decline, or leave it pending.',
+    )
+  })
+
+  it('dismiss fits the hosted 30 s per-tool budget: the worst case (every attempt timing out, maximal sleeps) is under 25 s', () => {
+    const { DISMISS_RETRY_POLICY, DISMISS_TIMEOUT_MS, DISMISS_WORST_CASE_MS } = respondToInvite
+    expect(DISMISS_WORST_CASE_MS).toBe(
+      (DISMISS_RETRY_POLICY.maxRetries + 1) * DISMISS_TIMEOUT_MS +
+        DISMISS_RETRY_POLICY.maxRetries * DISMISS_RETRY_POLICY.maxDelayMs * 1.25,
+    )
+    expect(DISMISS_WORST_CASE_MS).toBeLessThan(25_000)
+  })
+
+  it('dismiss: every attempt carries its own timeout, and a server Retry-After cannot stretch the sleep past maxDelayMs', async () => {
+    const started = Date.now()
+    const { impl, calls } = fetchStub(() =>
+      new Response(JSON.stringify({ code: 'INTERNAL_ERROR', message: 'busy' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'retry-after': '3600' },
+      }),
+    )
+    const result = await respondToInvite.createHandler(makeCtx({}, impl))({ invite_id: 'inv_9', response: 'dismiss' })
+    expect(result.isError).toBe(true)
+    expect(calls).toHaveLength(respondToInvite.DISMISS_RETRY_POLICY.maxRetries + 1)
+    // Two sleeps, each capped at maxDelayMs (1 s) despite Retry-After: 3600.
+    expect(Date.now() - started).toBeLessThan(respondToInvite.DISMISS_WORST_CASE_MS)
+  })
+
+  it('dismiss: the host’s cancellation aborts the attempt at once and no retry follows', async () => {
+    const calls: Array<AbortSignal | undefined> = []
+    const impl = ((_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      calls.push(init?.signal ?? undefined)
+      return new Promise<Response>((_, reject) => {
+        const fail = () => {
+          const err = new Error('This operation was aborted')
+          err.name = 'AbortError'
+          reject(err)
+        }
+        if (init?.signal?.aborted) fail()
+        else init?.signal?.addEventListener('abort', fail, { once: true })
+      })
+    }) as typeof fetch
+    const host = new AbortController()
+    const pending = respondToInvite.createHandler(makeCtx({}, impl))(
+      { invite_id: 'inv_9', response: 'dismiss' },
+      { signal: host.signal },
+    )
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    host.abort(new Error('host gave up'))
+    const result = await pending
+    expect(result.isError).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.aborted).toBe(true)
   })
 
   it('dismiss without an identity makes no network call', async () => {

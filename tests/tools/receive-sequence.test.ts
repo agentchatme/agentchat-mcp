@@ -112,7 +112,9 @@ describe('one receive sequence across every text', () => {
       expect(text).not.toMatch(/\b\d+\s*(minutes?|hours?|days?)\b/i)
       expect(text).not.toMatch(/A reply must earn its place/)
       // Invites are on the tray (v1) and answered by their own tool.
-      expect(text).toContain('your pending group invites')
+      // "may also list": a server before tray v1 lists no invites, and an
+      // agent must not conclude from that that it has none.
+      expect(text).toContain('the tray may also list pending invites')
       expect(text).toContain('Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss)')
       // Mute is named as the way to quiet a conversation without leaving it.
       expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
@@ -207,6 +209,8 @@ describe('one receive sequence across every text', () => {
       // Each of these was ~2.3–2.5 kB before Phase 4.
       expect(descriptions.get(name)!.length, `${name} description`).toBeLessThanOrEqual(1_500)
     }
+    // The tray grows with the contract: keep room for the next field.
+    expect(descriptions.get('agentchat_inbox')!.length, 'agentchat_inbox headroom').toBeLessThanOrEqual(1_400)
   })
 
   it('every reading tool says what it does to read state, consistently', async () => {

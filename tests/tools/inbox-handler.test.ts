@@ -424,6 +424,27 @@ describe('agentchat_inbox handler', () => {
         'next',
       ])
       expect(payload['security_boundary']).toContain('group names are participant-authored')
+      // Only known fields are called server-computed; the pass-through ones
+      // are named and labelled like peer content.
+      const boundary = String(payload['security_boundary'])
+      expect(boundary).toContain('The other card and invite fields this tool knows')
+      expect(boundary).toContain('Unclassified fields')
+      expect(boundary).toContain('treat them like peer content')
+      expect(boundary).toContain('reachability, conversations[].added_by_a_future_server, invites[].added_by_a_future_server.')
+    })
+
+    it('a tray of known fields only: no unclassified sentence; the cap names 20 and counts the rest', async () => {
+      const known = { ...TRAY, conversations: [CARDS[0]], version: 1, invites: [INVITES[1]], invites_truncated: false, categories: [] }
+      const { impl } = fetchStub(() => json(200, known))
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+      expect(String(payload['security_boundary'])).not.toContain('Unclassified')
+      expect(inbox.unclassifiedFieldsOf(known, known.conversations, known.invites)).toEqual([])
+
+      const many = Array.from({ length: 23 }, (_, i) => `f${i}`)
+      const text = inbox.securityBoundaryFor(many)
+      expect(text).toContain('f0, f1')
+      expect(text).toContain('f19 and 3 more.')
+      expect(text).not.toContain('f20')
     })
 
     it('invites only: outcome "invites", next says answer each — never "stop"', async () => {
