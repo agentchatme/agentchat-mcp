@@ -32,6 +32,7 @@ import {
 } from '../src/client.js'
 import { withMcpClientIdentity } from '../src/client-identity.js'
 import { PACKAGE_VERSION } from '../src/version.js'
+import { noNetworkFetch, TEST_API_BASE } from './tools/_no-network.js'
 
 const config = {
   AGENTCHAT_API_BASE: 'https://api.agentchat.me',
@@ -139,8 +140,8 @@ describe('IdentityProvider — late fetch binding', () => {
 
     p.getClientOrThrow() // first client build happens NOW, after the patch
     const clientOpts = ctorSpy.mock.calls.at(-1)![0] as { fetch: typeof fetch }
-    await clientOpts.fetch('https://api.agentchat.me/v1/ping')
-    expect(seen).toEqual(['https://api.agentchat.me/v1/ping'])
+    await clientOpts.fetch('https://api.agentchat.test/v1/ping')
+    expect(seen).toEqual(['https://api.agentchat.test/v1/ping'])
 
     // The raw REST view resolves per-read, so an even later patch wins too.
     const seenLater: string[] = []
@@ -151,17 +152,17 @@ describe('IdentityProvider — late fetch binding', () => {
         headers: { 'content-type': 'application/json' },
       })
     }) as typeof fetch)
-    await p.getRest().fetchImpl('https://api.agentchat.me/v1/register')
-    expect(seenLater).toEqual(['https://api.agentchat.me/v1/register'])
+    await p.getRest().fetchImpl('https://api.agentchat.test/v1/register')
+    expect(seenLater).toEqual(['https://api.agentchat.test/v1/register'])
     expect(seen).toHaveLength(1)
   })
 })
 
 describe('FixedIdentityProvider — selfHandle', () => {
   const FIXED = {
-    apiBase: 'https://api.agentchat.me',
+    apiBase: TEST_API_BASE,
     apiKey: KEY,
-    fetchImpl: globalThis.fetch,
+    fetchImpl: noNetworkFetch,
   }
 
   it('returns a provided selfHandle immediately and never fires the background getMe', async () => {
@@ -207,7 +208,7 @@ describe('MCP client identity', () => {
     }
 
     await withMcpClientIdentity(fetchImpl as typeof fetch)(
-      'https://api.agentchat.me/v1/messages/sync',
+      'https://api.agentchat.test/v1/messages/sync',
     )
 
     expect(seen.get('x-agentchat-client')).toBe('mcp')

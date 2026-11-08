@@ -4,7 +4,7 @@ import type { HttpResponse, RetryPolicy } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE } from './_annotations.js'
 import { withErrorBoundary, type SuccessShape } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import { engineClient, requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_wait'
@@ -23,6 +23,11 @@ export const NAME = 'agentchat_wait'
 // deadline is therefore anchored at handler ENTRY (time queued on the
 // concurrency semaphore is host budget already spent) and split so the poll
 // can never eat the ack's slice.
+//
+// Wires: the ack is the SDK's (`syncAck`, the one engine). The poll is a
+// direct GET on the SDK's own transport, because the SDK's `sync()` carries
+// neither the long-poll `wait_ms` nor the response headers (the server's
+// X-AgentChat-Waited-Ms); it moves onto the SDK when the SDK gains both.
 
 /** Server ceiling for one long-poll (GET /v1/messages/sync?wait_ms). */
 export const MAX_WAIT_SECONDS = 50
@@ -326,6 +331,9 @@ export function createHandler(ctx: ToolContext) {
       async (): Promise<SuccessShape> => {
         const rest = requireRestAuth(ctx)
         const http = restTransport(rest, { withAuth: true })
+        // The cursor ack is idempotent: a couple of quick retries under one
+        // Idempotency-Key (ACK_RETRY_POLICY), bounded by the deadline signal.
+        const engine = engineClient(rest, ACK_RETRY_POLICY)
         const you = publicHandle(ctx.selfHandle)
 
         if (signal?.aborted) {
@@ -390,14 +398,12 @@ export function createHandler(ctx: ToolContext) {
           } else {
             const deadline = deadlineSignal(signal, remainingMs)
             try {
-              const ack = await http.request<{ acked?: unknown }>('POST', '/v1/messages/sync/ack', {
-                body: { last_delivery_id: cursor },
+              const ack: { acked?: unknown } | undefined = await engine.syncAck(cursor, {
                 timeoutMs: ackBudget.timeoutMs,
-                retry: ACK_RETRY_POLICY,
                 idempotencyKey: randomUUID(),
                 signal: deadline.signal,
               })
-              acked = typeof ack.data?.acked === 'number' ? ack.data.acked : rows.length
+              acked = typeof ack?.acked === 'number' ? ack.acked : rows.length
             } catch (err) {
               if (signal?.aborted) {
                 ctx.logger.info(

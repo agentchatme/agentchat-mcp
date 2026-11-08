@@ -1,4 +1,10 @@
-import { AgentChatError, HttpTransport } from 'agentchatme'
+import {
+  AgentChatClient,
+  AgentChatError,
+  HttpTransport,
+  type RequestHooks,
+  type RetryPolicy,
+} from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
 import { attachToolGuidance } from '../errors.js'
 import type { RestContext, ToolContext } from './_types.js'
@@ -6,13 +12,52 @@ import type { RestContext, ToolContext } from './_types.js'
 // ─── Direct REST plumbing for the onboarding + webhook tools ───────────────
 //
 // A few endpoints sit outside the SDK client's surface: registration (which
-// must work with NO identity at all) and the wake-webhook management pair
-// (whose server endpoint is newer than the pinned SDK). Rather than
+// must work with NO identity at all), the wake-webhook endpoints, the
+// long-poll body pull (/v1/messages/sync?wait_ms) and the invite dismiss —
+// each newer than, or shaped beyond, the pinned SDK's methods. Rather than
 // hand-rolling fetch + error parsing, we drive the SDK's own exported
 // HttpTransport, so these calls get the exact same behavior as every other
 // tool call: typed AgentChatError subclasses via createAgentChatError,
 // Retry-After handling, timeouts, and retry policy. `mapAgentChatError`
 // then surfaces server codes (HANDLE_TAKEN, EMAIL_TAKEN, …) faithfully.
+//
+// ─── The engine calls go through the SDK client ───────────────────────────
+//
+// The receive engine — the tray, verdicts, mark-read, the delivery ack — is
+// the SDK's (`inbox.tray`, `decisions.record`, `conversations.markRead`,
+// `syncAck`): one implementation of those wires for every integration, this
+// tool core included. Each engine tool builds its client per call with
+// `engineClient`, bound to the same identity and fetch as `ctx.client`, for
+// one reason: the retry policy. The SDK's per-call options carry signal,
+// timeout and idempotency key but no retry override, and the shared client's
+// default (3 retries, up to 8 s apart) would re-park a long-poll past the
+// host's deadline or stretch a 10 s write past a 30 s tool budget. Building
+// a client is synchronous and does no I/O.
+
+/** One attempt only: long-polls, whose retry would park again past the deadline. */
+export const NO_RETRY: RetryPolicy = Object.freeze({ maxRetries: 0, baseDelayMs: 0, maxDelayMs: 0 })
+
+/**
+ * An SDK client for the session's identity with `retry` as its policy. The
+ * policy applies only to calls the transport may retry at all (GET, or a
+ * POST that carries an Idempotency-Key); a POST without a key is never
+ * retried, whatever the policy. `hooks` are the SDK's observability hooks
+ * (e.g. agentchat_decide watches for a 2xx it can trust even when the body
+ * is unreadable).
+ */
+export function engineClient(
+  rest: AuthenticatedRest,
+  retry: RetryPolicy,
+  hooks?: RequestHooks,
+): AgentChatClient {
+  return new AgentChatClient({
+    apiKey: rest.apiKey,
+    baseUrl: rest.apiBase,
+    fetch: rest.fetchImpl,
+    retry,
+    ...(hooks ? { hooks } : {}),
+  })
+}
 
 /** Transport bound to the session's base URL and (optionally) its key. */
 export function restTransport(

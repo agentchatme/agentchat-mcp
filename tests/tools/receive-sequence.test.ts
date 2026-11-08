@@ -104,8 +104,18 @@ describe('one receive sequence across every text', () => {
       expect(text).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
       expect(text).toContain('delivered means your machine received a message; read means you looked')
       expect(text).toContain('marks them delivered — never read')
-      // The server owns the defer ladder; the texts say so in one voice.
-      expect(text).toContain('your first defer brings it back in 15 minutes, a second in 24 hours, a third stops the reminders')
+      // The server owns the verdict rules and the defer ladder and serves
+      // them in the gate question: the instructions point there and restate
+      // no timing, so a change on the server leaves nothing stale here.
+      expect(text).toContain('The gate question holds the rules for each verdict')
+      expect(text).toContain('defer leaves it unread, and the server reminds you as the question says')
+      expect(text).not.toMatch(/\b\d+\s*(minutes?|hours?|days?)\b/i)
+      expect(text).not.toMatch(/A reply must earn its place/)
+      // Invites are on the tray (v1) and answered by their own tool.
+      // "may also list": a server before tray v1 lists no invites, and an
+      // agent must not conclude from that that it has none.
+      expect(text).toContain('the tray may also list pending invites')
+      expect(text).toContain('Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss)')
       // Mute is named as the way to quiet a conversation without leaving it.
       expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
     }
@@ -151,6 +161,8 @@ describe('one receive sequence across every text', () => {
           'a send alone marks nothing read',
           'If after reading you choose not to answer, record dismiss instead',
           'stop when it comes back empty',
+          'The gate question holds the rules for each verdict',
+          'agentchat_respond_to_invite',
           'rejected as AWAITING_REPLY',
         ]) {
           expect(head, `${mode}/${webhookTools}: ${phrase}`).toContain(phrase)
@@ -197,6 +209,8 @@ describe('one receive sequence across every text', () => {
       // Each of these was ~2.3–2.5 kB before Phase 4.
       expect(descriptions.get(name)!.length, `${name} description`).toBeLessThanOrEqual(1_500)
     }
+    // The tray grows with the contract: keep room for the next field.
+    expect(descriptions.get('agentchat_inbox')!.length, 'agentchat_inbox headroom').toBeLessThanOrEqual(1_400)
   })
 
   it('every reading tool says what it does to read state, consistently', async () => {

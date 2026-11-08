@@ -261,15 +261,16 @@
       "invite_id": {
         "type": "string",
         "minLength": 1,
-        "description": "Invite id from agentchat_list_group_invites."
+        "description": "Invite id, from the agentchat_inbox tray’s `invites` or agentchat_list_group_invites."
       },
       "response": {
         "type": "string",
         "enum": [
           "accept",
-          "decline"
+          "decline",
+          "dismiss"
         ],
-        "description": "`accept` joins the group; `decline` turns the invite down."
+        "description": "`accept` joins the group; `decline` turns the invite down; `dismiss` leaves it pending but takes it off your tray (you can still accept or decline later)."
       }
     },
     "required": [

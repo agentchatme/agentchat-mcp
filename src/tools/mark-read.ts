@@ -3,7 +3,7 @@ import type { RetryPolicy } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import { engineClient, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_mark_read'
@@ -19,9 +19,10 @@ export const NAME = 'agentchat_mark_read'
 //
 // This tool is the explicit mark-read, in two forms:
 //   * conversation_id + through_message_id → POST /v1/conversations/{id}/read
-//     marks every unread message in the conversation up to and including the
-//     anchor (by its position) and sends the senders read receipts. One call
-//     per conversation, which is how a real inbox works.
+//     (the SDK's `conversations.markRead`) marks every unread message in the
+//     conversation up to and including the anchor (by its position) and
+//     sends the senders read receipts. One call per conversation, which is
+//     how a real inbox works.
 //   * message_id → POST /v1/messages/{id}/read, one message. The original
 //     form, kept for compatibility and for servers without the conversation
 //     endpoint.
@@ -160,22 +161,16 @@ export function createHandler(ctx: ToolContext) {
         }
 
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
+        // Idempotent, so a transient failure is retried under one key (see
+        // READ_RETRY_POLICY); a verdict POST, by contrast, never is.
+        const client = engineClient(rest, READ_RETRY_POLICY)
         let data: unknown
         try {
-          const res = await http.request<unknown>(
-            'POST',
-            `/v1/conversations/${encodeURIComponent(form.conversation_id)}/read`,
-            {
-              body: { through_message_id: form.through_message_id },
-              timeoutMs: REQUEST_TIMEOUT_MS,
-              // Idempotent, so a transient failure is retried under one key
-              // (see READ_RETRY_POLICY); a verdict POST, by contrast, never is.
-              idempotencyKey: randomUUID(),
-              retry: READ_RETRY_POLICY,
-            },
+          data = await client.conversations.markRead(
+            form.conversation_id,
+            form.through_message_id,
+            { timeoutMs: REQUEST_TIMEOUT_MS, idempotencyKey: randomUUID() },
           )
-          data = res.data
         } catch (err) {
           rethrowWithGuidance(err, {
             NOT_FOUND: NOT_FOUND_GUIDANCE,

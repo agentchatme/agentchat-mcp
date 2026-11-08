@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "agentchatme": "^1.0.2212",
+    "agentchatme": "^1.2.1",
     "pino": "^9.5.0",
     "zod": "^4.6.7"
   },

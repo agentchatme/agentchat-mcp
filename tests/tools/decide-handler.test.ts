@@ -121,12 +121,17 @@ describe('agentchat_decide input schema', () => {
       'through_message_id',
     ])
     expect(decide.DESCRIPTION).toContain('the server owns the reminder ladder')
-    expect(decide.DESCRIPTION).toContain('+15 min, then +24 h, then it stops')
+    expect(decide.DESCRIPTION).toContain('the tray’s question gives its steps')
     expect(decide.DESCRIPTION).toContain('a repeated `defer` climbs the ladder')
-    expect(decide.INPUT_SHAPE.decision.description).toContain('each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders')
-    expect(decide.NEXT.defer).toContain('step 1: +15 min')
-    expect(decide.NEXT.defer).toContain('step 2: +24 h')
-    expect(decide.NEXT.defer).toContain('step 3: no more reminders')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('each defer is one step of the server’s reminder ladder')
+    expect(decide.NEXT.defer).toContain('The server reminds you at defer_until')
+    expect(decide.NEXT.defer).toContain('a null defer_until means no more reminders until a newer message arrives')
+    // The ladder's timings are the server's (served in the gate question and
+    // in defer_until); no text here restates them, so none can go stale.
+    const timings = /\b\d+\s*(min(ute)?s?|h(ours?)?|days?)\b|\+\d/i
+    for (const text of [decide.DESCRIPTION, decide.INPUT_SHAPE.decision.description ?? '', ...Object.values(decide.NEXT)]) {
+      expect(text).not.toMatch(timings)
+    }
     // A legacy caller's extra field is stripped by the object schema, so an
     // old client keeps working and the server never sees defer_seconds.
     const parsed = shape.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 })
@@ -294,8 +299,48 @@ describe('agentchat_decide handler', () => {
       defer_until: null,
       defer_step: null,
       recorded_at: null,
+      note: decide.RECORDED_WITHOUT_ROW_NOTE,
       next: decide.NEXT.dismiss,
     })
+  })
+
+  it('a 2xx with an empty, null or non-JSON body is a recorded verdict — success with a note, never an error to retry', async () => {
+    // A retried defer would climb the server's ladder; the 2xx already
+    // recorded the row, so the tool must not report a failure.
+    const bodies: Array<() => Response> = [
+      () => new Response(null, { status: 201 }),
+      () => new Response('', { status: 201 }),
+      () => new Response(null, { status: 204 }),
+      () => json(201, null),
+      () => new Response('<html>ok</html>', { status: 201, headers: { 'content-type': 'text/html' } }),
+    ]
+    for (const body of bodies) {
+      const { impl, calls } = fetchStub(body)
+      const result = await decide.createHandler(makeCtx(impl))({
+        conversation_id: 'conv_1',
+        decision: 'defer',
+        through_message_id: 'msg_9',
+      })
+      expect(result.isError, firstText(result)).toBeFalsy()
+      expect(calls).toHaveLength(1)
+      expect(payloadOf(result)).toMatchObject({
+        conversation_id: 'conv_1',
+        decision: 'defer',
+        through_message_id: 'msg_9',
+        defer_until: null,
+        defer_step: null,
+        recorded_at: null,
+        note: decide.RECORDED_WITHOUT_ROW_NOTE,
+        next: decide.NEXT.defer,
+      })
+    }
+    expect(decide.RECORDED_WITHOUT_ROW_NOTE).toContain('do not record it again')
+  })
+
+  it('a full row carries no note', async () => {
+    const { impl } = fetchStub(() => json(201, recorded({ decision: 'dismiss' })))
+    const result = await decide.createHandler(makeCtx(impl))({ conversation_id: 'conv_1', decision: 'dismiss' })
+    expect(payloadOf(result)).not.toHaveProperty('note')
   })
 
   it('never retries a verdict: a 5xx is one attempt, reported as SERVER_ERROR', async () => {
