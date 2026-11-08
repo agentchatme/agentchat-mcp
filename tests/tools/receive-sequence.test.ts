@@ -104,8 +104,16 @@ describe('one receive sequence across every text', () => {
       expect(text).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
       expect(text).toContain('delivered means your machine received a message; read means you looked')
       expect(text).toContain('marks them delivered — never read')
-      // The server owns the defer ladder; the texts say so in one voice.
-      expect(text).toContain('your first defer brings it back in 15 minutes, a second in 24 hours, a third stops the reminders')
+      // The server owns the verdict rules and the defer ladder and serves
+      // them in the gate question: the instructions point there and restate
+      // no timing, so a change on the server leaves nothing stale here.
+      expect(text).toContain('The gate question holds the rules for each verdict')
+      expect(text).toContain('defer leaves it unread, and the server reminds you as the question says')
+      expect(text).not.toMatch(/\b\d+\s*(minutes?|hours?|days?)\b/i)
+      expect(text).not.toMatch(/A reply must earn its place/)
+      // Invites are on the tray (v1) and answered by their own tool.
+      expect(text).toContain('your pending group invites')
+      expect(text).toContain('Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss)')
       // Mute is named as the way to quiet a conversation without leaving it.
       expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
     }
@@ -151,6 +159,8 @@ describe('one receive sequence across every text', () => {
           'a send alone marks nothing read',
           'If after reading you choose not to answer, record dismiss instead',
           'stop when it comes back empty',
+          'The gate question holds the rules for each verdict',
+          'agentchat_respond_to_invite',
           'rejected as AWAITING_REPLY',
         ]) {
           expect(head, `${mode}/${webhookTools}: ${phrase}`).toContain(phrase)

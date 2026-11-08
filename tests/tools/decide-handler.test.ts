@@ -121,12 +121,17 @@ describe('agentchat_decide input schema', () => {
       'through_message_id',
     ])
     expect(decide.DESCRIPTION).toContain('the server owns the reminder ladder')
-    expect(decide.DESCRIPTION).toContain('+15 min, then +24 h, then it stops')
+    expect(decide.DESCRIPTION).toContain('the tray’s question gives its steps')
     expect(decide.DESCRIPTION).toContain('a repeated `defer` climbs the ladder')
-    expect(decide.INPUT_SHAPE.decision.description).toContain('each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders')
-    expect(decide.NEXT.defer).toContain('step 1: +15 min')
-    expect(decide.NEXT.defer).toContain('step 2: +24 h')
-    expect(decide.NEXT.defer).toContain('step 3: no more reminders')
+    expect(decide.INPUT_SHAPE.decision.description).toContain('each defer is one step of the server’s reminder ladder')
+    expect(decide.NEXT.defer).toContain('The server reminds you at defer_until')
+    expect(decide.NEXT.defer).toContain('a null defer_until means no more reminders until a newer message arrives')
+    // The ladder's timings are the server's (served in the gate question and
+    // in defer_until); no text here restates them, so none can go stale.
+    const timings = /\b\d+\s*(min(ute)?s?|h(ours?)?|days?)\b|\+\d/i
+    for (const text of [decide.DESCRIPTION, decide.INPUT_SHAPE.decision.description ?? '', ...Object.values(decide.NEXT)]) {
+      expect(text).not.toMatch(timings)
+    }
     // A legacy caller's extra field is stripped by the object schema, so an
     // old client keeps working and the server never sees defer_seconds.
     const parsed = shape.safeParse({ conversation_id: 'conv_1', decision: 'defer', defer_seconds: 600 })

@@ -101,7 +101,7 @@ describe('agentchat_register handler', () => {
   it.each([
     ['HANDLE_TAKEN', 409, /different handle/],
     ['EMAIL_TAKEN', 409, /existing API key/],
-    ['EMAIL_EXHAUSTED', 429, /different email/],
+    ['EMAIL_EXHAUSTED', 409, /different email/],
   ])('surfaces %s with the server message plus guidance', async (code, status, guidance) => {
     const { impl } = fetchStub(() => json(status, { code, message: `server says ${code}` }))
     const handler = registerAccount.createHandler(makeCtx(impl, null))
@@ -113,25 +113,27 @@ describe('agentchat_register handler', () => {
     expect(text).toMatch(guidance)
   })
 
-  it('keeps guidance AND the Retry-After hint for EMAIL_EXHAUSTED (429 + guided code)', async () => {
-    // Regression: rethrowWithGuidance used to re-mint the RateLimitedError as
-    // a base AgentChatError, so the retry timing vanished from the mapped
-    // tool error. The subclass (and its retryAfterMs) must now survive.
+  it('EMAIL_EXHAUSTED as the server sends it (409, a lifetime cap): code, server message and guidance survive, one attempt, no retry hint', async () => {
+    // The SDK types this code (EmailExhaustedError). Guidance is
+    // appended to the original error in place — never re-minted onto a base
+    // AgentChatError — so the class and its extras survive; for a guided
+    // 429 the retry hint is kept too (tests/errors.test.ts, foreign-coded
+    // 429). A lifetime cap has no retry time, and none is invented.
     const { impl, calls } = fetchStub(() =>
-      json(
-        429,
-        { code: 'EMAIL_EXHAUSTED', message: 'server says EMAIL_EXHAUSTED' },
-        { 'retry-after': '3600' },
-      ),
+      json(409, {
+        code: 'EMAIL_EXHAUSTED',
+        message: 'server says EMAIL_EXHAUSTED',
+        details: { limit: 30 },
+      }),
     )
     const handler = registerAccount.createHandler(makeCtx(impl, null))
     const result = await handler({ email: 'a@b.example', handle: 'new-bot' })
     expect(result.isError).toBe(true)
     const text = firstText(result)
-    expect(text).toContain('EMAIL_EXHAUSTED')
+    expect(text).toContain('Error: EMAIL_EXHAUSTED')
     expect(text).toContain('server says EMAIL_EXHAUSTED')
     expect(text).toMatch(/different email/)
-    expect(text).toContain('Retry after: 3600 seconds')
+    expect(text).not.toContain('Retry after')
     expect(calls).toHaveLength(1)
   })
 
@@ -274,6 +276,54 @@ describe('agentchat_set_webhook handler', () => {
     expect(rejected.isError).toBe(true)
     expect(firstText(rejected)).toContain('INVALID_WAKE_WEBHOOK_URL')
     expect(firstText(rejected)).toContain('URL shape the dialect expects')
+  })
+
+  it('rewake: sent only when chosen — true and false travel as given, omitted means the server default', async () => {
+    for (const rewake of [true, false] as const) {
+      const { impl, calls } = fetchStub(() => json(200, { state: 'active', rewake }))
+      const result = await setWebhook.createHandler(makeCtx(impl))({
+        url: 'https://hooks.example/wake',
+        secret: 'shhh-0123456789abcdef',
+        rewake,
+      })
+      expect(result.isError).toBeFalsy()
+      expect(calls[0]!.body).toEqual({
+        url: 'https://hooks.example/wake',
+        secret: 'shhh-0123456789abcdef',
+        dialect: 'agentchat',
+        rewake,
+      })
+      // The server's record (rewake included) passes through.
+      expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, rewake })
+    }
+    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
+    await setWebhook.createHandler(makeCtx(impl))({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' })
+    expect(calls[0]!.body).not.toHaveProperty('rewake')
+  })
+
+  it('rewake in the input schema: a plain optional boolean; blanks mean unset, "true"/"false" mean the booleans, false is never blank', () => {
+    const shape = z.object(setWebhook.INPUT_SHAPE)
+    const base = { url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' }
+    const parse = (rewake: unknown) => shape.parse({ ...base, rewake })['rewake']
+    expect(parse(true)).toBe(true)
+    expect(parse(false)).toBe(false)
+    expect(parse('true')).toBe(true)
+    expect(parse('false')).toBe(false)
+    expect(parse(null)).toBeUndefined()
+    expect(parse('')).toBeUndefined()
+    expect(parse(undefined)).toBeUndefined()
+    expect(shape.parse(base)).not.toHaveProperty('rewake')
+    expect(shape.safeParse({ ...base, rewake: 'yes' }).success).toBe(false)
+    expect(shape.safeParse({ ...base, rewake: 1 }).success).toBe(false)
+
+    const emitted = z.toJSONSchema(shape, { target: 'draft-7', io: 'input' })
+    const props = emitted['properties'] as Record<string, Record<string, unknown>>
+    expect(props['rewake']).toMatchObject({ type: 'boolean' })
+    expect(emitted['required']).toEqual(['url', 'secret'])
+    // One sentence, and no retired word.
+    const text = String(props['rewake']!['description'])
+    expect(text.split(/(?<=[.!?])\s/).length).toBe(1)
+    expect(text).toContain('unanswered')
   })
 
   it('rejects an unknown dialect in the input schema', () => {

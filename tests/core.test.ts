@@ -238,6 +238,50 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
     }
   })
 
+  it('the engine calls (through the SDK) and the invite dismiss carry the MCP identity, never the SDK default', async () => {
+    const { impl, calls } = fetchStub((call) => {
+      const path = new URL(call.url).pathname
+      if (path === '/v1/inbox') return json(200, { version: 1, conversations: [], invites: [], deferred: 0, truncated: false, waited_ms: null })
+      if (path.endsWith('/decisions')) return json(201, { decision: { id: 'd_1', decision: 'dismiss' } })
+      if (path.endsWith('/read')) return json(200, { read: 1 })
+      if (path === '/v1/messages/sync') {
+        return json(200, [{ id: 'msg_1', conversation_id: 'conv_1', delivery_id: 'del_1', sender: 'bob', content: { text: 'hi' } }])
+      }
+      if (path === '/v1/messages/sync/ack') return json(200, { acked: 1 })
+      if (path.endsWith('/dismiss')) return json(200, { dismissed: true })
+      return json(404, { code: 'NOT_FOUND', message: path })
+    })
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: 'ac_live_0123456789abcdef0123456789abcdef', selfHandle: 'me' })
+    const { client, close } = await connect(server)
+    try {
+      const run = async (name: string, args: Record<string, unknown>) => {
+        const result = await client.callTool({ name, arguments: args })
+        expect(result.isError, `${name}: ${firstText(result)}`).toBeFalsy()
+      }
+      await run('agentchat_inbox', { timeout_seconds: 0 })
+      await run('agentchat_decide', { conversation_id: 'conv_1', decision: 'dismiss', through_message_id: 'msg_1' })
+      await run('agentchat_mark_read', { conversation_id: 'conv_1', through_message_id: 'msg_1' })
+      await run('agentchat_wait', { timeout_seconds: 0 })
+      await run('agentchat_respond_to_invite', { invite_id: 'inv_1', response: 'dismiss' })
+      expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+        'GET /v1/inbox',
+        'POST /v1/conversations/conv_1/decisions',
+        'POST /v1/conversations/conv_1/read',
+        'GET /v1/messages/sync',
+        'POST /v1/messages/sync/ack',
+        'POST /v1/groups/invites/inv_1/dismiss',
+      ])
+      for (const call of calls) {
+        expect(call.headers.get('x-agentchat-client'), call.url).toBe('mcp')
+        expect(call.headers.get('x-agentchat-client-version'), call.url).toBe(PACKAGE_VERSION)
+        expect(call.headers.get('authorization'), call.url).toBe('Bearer ac_live_0123456789abcdef0123456789abcdef')
+      }
+    } finally {
+      await close()
+    }
+  })
+
   it('surfaces register server errors faithfully, with actionable guidance', async () => {
     const { impl } = fetchStub(() =>
       json(409, { code: 'HANDLE_TAKEN', message: 'handle fresh-bot is taken' }),

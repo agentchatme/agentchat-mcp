@@ -1,14 +1,15 @@
 import { z } from 'zod'
 import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import { engineClient, NO_RETRY, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_decide'
 
 // ─── The reply gate's vocabulary ───────────────────────────────────────────
 //
-// Presents POST /v1/conversations/{conversation_id}/decisions. Whether an
+// Presents POST /v1/conversations/{conversation_id}/decisions, through the
+// SDK's `decisions.record` (the one engine every integration uses). Whether an
 // agent replies is judged by its OWN model — this tool only records the
 // verdict, so the platform can see the gate working (and so a `dismiss`
 // is a visible act, not an absence). Vocabulary: reply | dismiss | defer.
@@ -30,14 +31,15 @@ export const NAME = 'agentchat_decide'
 // card on the tray (unread): the next wake of any kind or look at the tray
 // shows it, with you_owe_reply false, and the agent dismisses it.
 //
-// Defer (Phase 2): the SERVER owns the reminder ladder. The first defer on a
-// conversation reminds in +15 min (step 1), a defer while that reminder
-// exists reminds in +24 h (step 2), a defer at step 2 stops (step 3: no more
-// reminders; the conversation stays unread and off the tray until a message
-// newer than the anchor arrives, which resets the ladder). The old
-// `defer_seconds` is gone from this tool; a server that still accepts it
-// ignores it. The response carries the ladder's `defer_until` (null at step
-// 3) and `defer_step`.
+// Defer (Phase 2): the SERVER owns the reminder ladder — its steps and their
+// timing. Each defer is one step; after the last one there are no more
+// reminders, and the conversation stays unread and off the tray until a
+// message newer than the anchor arrives, which resets the ladder. This tool
+// states no step timings: the gate question served with every tray does, and
+// the response carries what the server chose — `defer_until` (null once the
+// reminders have stopped) and `defer_step` — so a change to the ladder on
+// the server never leaves a stale number here. The old `defer_seconds` is
+// gone from this tool; a server that still accepts it ignores it.
 
 export const DECISIONS = ['reply', 'dismiss', 'defer'] as const
 export type Decision = (typeof DECISIONS)[number]
@@ -58,9 +60,6 @@ export type Category = (typeof CATEGORIES)[number]
 /** Transport timeout: a verdict is one small row; a slow server is an error, not a wait. */
 export const REQUEST_TIMEOUT_MS = 10_000
 
-/** The server's defer ladder, as the texts describe it. */
-export const DEFER_LADDER = 'each defer is one step: the first reminds in 15 minutes, a second in 24 hours, a third stops the reminders until a newer message arrives'
-
 export const INPUT_SHAPE = {
   conversation_id: z
     .string()
@@ -71,7 +70,7 @@ export const INPUT_SHAPE = {
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you answered — record it after your agentchat_send_message, never before; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders).',
+      'Your verdict: `reply` (you answered — record it after your agentchat_send_message, never before; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — each defer is one step of the server’s reminder ladder, and the result’s defer_until says when the conversation comes back).',
     ),
   category: z
     .enum(CATEGORIES)
@@ -92,7 +91,7 @@ export const INPUT_SHAPE = {
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
 export const DESCRIPTION = [
-  'Record your reply-gate verdict for one tray card. `dismiss` and `defer` right away. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives); a repeated `defer` climbs the ladder, so record it once per card. `reply` last: agentchat_get_conversation to read, agentchat_send_message to answer, then record `reply` — never before the send, or a run that stops in between leaves the peer read and unanswered. If after reading you choose not to answer, record `dismiss` instead.',
+  'Record your reply-gate verdict for one tray card. `dismiss` and `defer` right away. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (the tray’s question gives its steps; the result’s defer_until says when this one comes back, null once the reminders have stopped and the conversation waits, unread and off the tray, for a newer message); a repeated `defer` climbs the ladder, so record it once per card. `reply` last: agentchat_get_conversation to read, agentchat_send_message to answer, then record `reply` — never before the send, or a run that stops in between leaves the peer read and unanswered. If after reading you choose not to answer, record `dismiss` instead.',
   '',
   'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id: the card’s `preview.message_id`, or for `reply` the newest message you read. Nothing else marks read for you: not the tray, not history, not agentchat_wait, not a send.',
   '',
@@ -101,9 +100,9 @@ export const DESCRIPTION = [
 
 /**
  * Not idempotent: every accepted call is a new decision row, and a repeated
- * `defer` advances the server's ladder (step 1 → +24 h → stop). A host that
- * retried a timed-out defer on an idempotent hint would slide the reminder
- * to +24 h, then to never — which is also why no Idempotency-Key is sent.
+ * `defer` advances the server's ladder one step. A host that retried a
+ * timed-out defer on an idempotent hint would slide the reminder a step
+ * later, then to never — which is also why no Idempotency-Key is sent.
  */
 export const ANNOTATIONS = WRITE
 
@@ -114,7 +113,7 @@ export const NEXT: Record<Decision, string> = {
   dismiss:
     'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
   defer:
-    'Nothing is marked read. The server reminds you at defer_until (step 1: +15 min; step 2: +24 h; step 3: no more reminders until a newer message arrives). Nothing else to do now.',
+    'Nothing is marked read. The server reminds you at defer_until; defer_step is the step this defer reached, and a null defer_until means no more reminders until a newer message arrives. Nothing else to do now.',
 }
 
 const NOT_FOUND_GUIDANCE =
@@ -124,7 +123,7 @@ const RATE_LIMITED_GUIDANCE =
 const VALIDATION_GUIDANCE =
   'Check the body: decision is reply | dismiss | defer, category is one of the listed values, through_message_id is 1–128 characters.'
 
-/** The 201 body: `{ decision: { id, conversation_id, decision, category, through_message_id, defer_until, defer_step?, created_at } }`. */
+/** The recorded row the SDK returns from the 201 body's `decision`: `{ id, conversation_id, decision, category, through_message_id, defer_until, defer_step?, created_at }`. */
 interface DecisionRow {
   id?: unknown
   conversation_id?: unknown
@@ -136,12 +135,9 @@ interface DecisionRow {
   created_at?: unknown
 }
 
-function decisionRowOf(data: unknown): DecisionRow {
-  if (typeof data === 'object' && data !== null && 'decision' in data) {
-    const inner = (data as { decision: unknown }).decision
-    if (typeof inner === 'object' && inner !== null) return inner as DecisionRow
-  }
-  return {}
+/** Read loosely: a server that answered 201 with an odd body still recorded the verdict. */
+function decisionRowOf(row: unknown): DecisionRow {
+  return typeof row === 'object' && row !== null ? (row as DecisionRow) : {}
 }
 
 const stringOrNull = (value: unknown): string | null =>
@@ -163,31 +159,23 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
-
-        // Only the fields the caller set travel — the server treats a present
-        // key as a value to validate, so `category: undefined` must not be sent.
-        const body = {
-          decision,
-          ...(category !== undefined ? { category } : {}),
-          ...(through_message_id !== undefined ? { through_message_id } : {}),
-        }
+        // Every accepted call is a new decision row, so no Idempotency-Key is
+        // sent — and without one the transport never retries a POST (NO_RETRY
+        // says so out loud). A failure is reported to the model rather than
+        // re-sent behind its back.
+        const client = engineClient(rest, NO_RETRY)
 
         let data: unknown
         try {
-          const res = await http.request<unknown>(
-            'POST',
-            `/v1/conversations/${encodeURIComponent(conversation_id)}/decisions`,
-            {
-              body,
-              timeoutMs: REQUEST_TIMEOUT_MS,
-              // Every accepted call is a new decision row, so no
-              // Idempotency-Key is sent — and without one the transport never
-              // retries a POST. A failure is reported to the model rather
-              // than re-sent behind its back.
-            },
-          )
-          data = res.data
+          // Only the fields the caller set travel — the server treats a
+          // present key as a value to validate; the SDK serializes an
+          // undefined option as an absent key.
+          data = await client.decisions.record(conversation_id, {
+            decision,
+            ...(category !== undefined ? { category } : {}),
+            ...(through_message_id !== undefined ? { throughMessageId: through_message_id } : {}),
+            timeoutMs: REQUEST_TIMEOUT_MS,
+          })
         } catch (err) {
           rethrowWithGuidance(err, {
             NOT_FOUND: NOT_FOUND_GUIDANCE,

@@ -21,6 +21,20 @@ export const DIALECTS = [
 ] as const
 export type Dialect = (typeof DIALECTS)[number]
 
+/**
+ * Blank values an MCP host may send for an omitted optional (`null`, `''`)
+ * mean "not set"; the strings 'true' / 'false' mean the booleans. `false`
+ * itself is a value here (unlike the numeric optionals elsewhere), so it is
+ * never treated as blank. Runs before validation; the JSON Schema a host
+ * sees stays a plain boolean.
+ */
+export const optionalFlag = (value: unknown): unknown => {
+  if (value === null || value === '') return undefined
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return value
+}
+
 export const INPUT_SHAPE = {
   // https-only is enforced IN the zod shape (not by a handler check) so the
   // rule is part of the wire contract: MCP hosts see it in the tools/list
@@ -62,6 +76,11 @@ export const INPUT_SHAPE = {
     .describe(
       'Optional standing instruction sent on every wake in place of AgentChat’s default wake instruction, on dialects that carry text (claude-code, openclaw, poke). Leave empty for the default wake instruction.',
     ),
+  rewake: z
+    .preprocess(optionalFlag, z.boolean().optional())
+    .describe(
+      'Optional: also wake you again, on the server’s schedule, while cards on your tray stay unanswered — on when omitted; false wakes you only for new messages and invites.',
+    ),
 }
 
 export const DESCRIPTION = [
@@ -74,17 +93,25 @@ export const DESCRIPTION = [
 // by the schema; direct handler callers (tests, embedders) may omit it too.
 export const ANNOTATIONS = WRITE_IDEMPOTENT
 
-export type Input = z.input<z.ZodObject<typeof INPUT_SHAPE>>
+// `rewake` is typed as what the schema yields (the preprocess makes its raw
+// input type `unknown`), so a direct caller is held to the parsed shape.
+export type Input = Omit<z.input<z.ZodObject<typeof INPUT_SHAPE>>, 'rewake'> & { rewake?: boolean }
 
 export function createHandler(ctx: ToolContext) {
-  return async ({ url, secret, dialect, prompt }: Input) =>
+  return async ({ url, secret, dialect, prompt, rewake }: Input) =>
     withErrorBoundary(
       {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
         // Never log the secret — length only, for debuggability.
-        args: { url, dialect: dialect ?? 'agentchat', secret_length: secret.length, prompt_length: prompt?.length ?? 0 },
+        args: {
+          url,
+          dialect: dialect ?? 'agentchat',
+          secret_length: secret.length,
+          prompt_length: prompt?.length ?? 0,
+          ...(rewake !== undefined ? { rewake } : {}),
+        },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
       },
@@ -99,6 +126,9 @@ export function createHandler(ctx: ToolContext) {
               secret,
               dialect: dialect ?? 'agentchat',
               ...(prompt !== undefined ? { prompt } : {}),
+              // Sent only when the caller chose: an absent key takes the
+              // server's default for a new write.
+              ...(rewake !== undefined ? { rewake } : {}),
             },
           })
           data = res.data

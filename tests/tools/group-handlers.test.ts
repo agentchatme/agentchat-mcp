@@ -13,7 +13,40 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // Same call-shape discipline as handlers.test.ts: stub the SDK, assert the
 // exact arguments each handler forwards and the JSON it shapes back.
 
-function makeCtx(client: Partial<AgentChatClient>): ToolContext {
+/** The default network for this file: none. A test that needs the wire passes its own stub. */
+const noNetwork = (async () => {
+  throw new Error('group-handlers tests never reach the network: pass a fetch stub')
+}) as typeof fetch
+
+type FetchCall = { url: string; method: string; headers: Headers; body: unknown }
+
+function fetchStub(
+  respond: (call: FetchCall) => Response | Promise<Response>,
+): { impl: typeof fetch; calls: FetchCall[] } {
+  const calls: FetchCall[] = []
+  const impl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const call: FetchCall = {
+      url: String(input instanceof Request ? input.url : input),
+      method: init?.method ?? 'GET',
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
+    }
+    calls.push(call)
+    return respond(call)
+  }) as typeof fetch
+  return { impl, calls }
+}
+
+const json = (status: number, value: unknown) =>
+  new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
+
+const TEST_KEY = 'ac_test_0123456789abcdef0123456789abcdef'
+
+function makeCtx(
+  client: Partial<AgentChatClient>,
+  fetchImpl: typeof fetch = noNetwork,
+  apiKey: string | null = TEST_KEY,
+): ToolContext {
   return {
     client: client as AgentChatClient,
     logger: pino({ level: 'silent' }),
@@ -21,9 +54,9 @@ function makeCtx(client: Partial<AgentChatClient>): ToolContext {
     semaphore: new Semaphore(10),
     inflight: new Set(),
     rest: {
-      apiBase: 'https://api.agentchat.me',
-      apiKey: 'ac_test_0123456789abcdef0123456789abcdef',
-      fetchImpl: globalThis.fetch,
+      apiBase: 'https://api.agentchat.test',
+      apiKey,
+      fetchImpl,
     },
     turnKey: () => undefined,
   }
@@ -110,7 +143,7 @@ describe('agentchat_list_group_invites', () => {
   })
 })
 
-describe('agentchat_respond_to_invite (accept + decline merged)', () => {
+describe('agentchat_respond_to_invite (accept + decline + dismiss)', () => {
   it('accept joins and reports the room snapshot', async () => {
     const accept = vi.fn().mockResolvedValue({ ...GROUP_DETAIL, member_count: 5, your_role: 'member' })
     const reject = vi.fn()
@@ -146,20 +179,81 @@ describe('agentchat_respond_to_invite (accept + decline merged)', () => {
     })
   })
 
-  it('the schema admits exactly accept | decline', () => {
+  it('the schema admits exactly accept | decline | dismiss', () => {
     const shape = z.object(respondToInvite.INPUT_SHAPE)
-    expect(respondToInvite.RESPONSES).toEqual(['accept', 'decline'])
+    expect(respondToInvite.RESPONSES).toEqual(['accept', 'decline', 'dismiss'])
     expect(shape.safeParse({ invite_id: 'inv_9', response: 'accept' }).success).toBe(true)
+    expect(shape.safeParse({ invite_id: 'inv_9', response: 'dismiss' }).success).toBe(true)
     expect(shape.safeParse({ invite_id: 'inv_9', response: 'reject' }).success).toBe(false)
     expect(shape.safeParse({ invite_id: 'inv_9' }).success).toBe(false)
     expect(shape.safeParse({ response: 'accept' }).success).toBe(false)
   })
 
-  it('an answered or unknown invite comes back as INVITE_NOT_FOUND with guidance, for both answers', async () => {
+  it('dismiss: one POST /v1/groups/invites/{id}/dismiss with Bearer auth and an Idempotency-Key; accept and decline untouched', async () => {
+    const accept = vi.fn()
+    const reject = vi.fn()
+    const { impl, calls } = fetchStub(() => json(200, { dismissed: true }))
+    const handler = respondToInvite.createHandler(
+      makeCtx({ acceptGroupInvite: accept, rejectGroupInvite: reject }, impl),
+    )
+    const result = await handler({ invite_id: 'inv/9', response: 'dismiss' })
+    expect(result.isError).toBeFalsy()
+    expect(accept).not.toHaveBeenCalled()
+    expect(reject).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(1)
+    const call = calls[0]!
+    expect(call.method).toBe('POST')
+    expect(new URL(call.url).pathname).toBe('/v1/groups/invites/inv%2F9/dismiss')
+    expect(call.headers.get('authorization')).toBe(`Bearer ${TEST_KEY}`)
+    expect(call.headers.get('idempotency-key')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(call.body).toBeNull()
+    expect(parseJsonContent(result)).toEqual({
+      ok: true,
+      invite_id: 'inv/9',
+      response: 'dismiss',
+      outcome: 'dismissed',
+      next: expect.stringContaining('stays pending and is off your tray'),
+    })
+  })
+
+  it('dismiss is idempotent: a transient 503 is retried once under the same Idempotency-Key', async () => {
+    const { impl, calls } = fetchStub((call) =>
+      calls.length === 1
+        ? json(503, { code: 'INTERNAL_ERROR', message: 'try again' })
+        : json(200, { dismissed: true, call: call.method }),
+    )
+    const handler = respondToInvite.createHandler(makeCtx({}, impl))
+    const result = await handler({ invite_id: 'inv_9', response: 'dismiss' })
+    expect(result.isError).toBeFalsy()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.headers.get('idempotency-key')).toBe(calls[0]!.headers.get('idempotency-key'))
+  })
+
+  it('dismiss on a server without the endpoint (bare 404) says to accept or decline instead', async () => {
+    const { impl } = fetchStub(() => new Response('404 Not Found', { status: 404 }))
+    const handler = respondToInvite.createHandler(makeCtx({}, impl))
+    const result = await handler({ invite_id: 'inv_9', response: 'dismiss' })
+    expect(result.isError).toBe(true)
+    const text = (result.content as Array<{ text: string }>)[0]!.text
+    expect(text).toContain('Error: NOT_FOUND')
+    expect(text).toContain('cannot dismiss invites yet: answer it with accept or decline instead')
+  })
+
+  it('dismiss without an identity makes no network call', async () => {
+    const { impl, calls } = fetchStub(() => json(200, { dismissed: true }))
+    const handler = respondToInvite.createHandler(makeCtx({}, impl, null))
+    const result = await handler({ invite_id: 'inv_9', response: 'dismiss' })
+    expect(result.isError).toBe(true)
+    expect((result.content as Array<{ text: string }>)[0]!.text).toContain('NOT_REGISTERED')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('an answered or unknown invite comes back as INVITE_NOT_FOUND with guidance, for every answer', async () => {
     const gone = () =>
       Promise.reject(createAgentChatError({ code: 'INVITE_NOT_FOUND', message: 'Invite not found' }, 404))
+    const { impl } = fetchStub(() => json(404, { code: 'INVITE_NOT_FOUND', message: 'Invite not found' }))
     const handler = respondToInvite.createHandler(
-      makeCtx({ acceptGroupInvite: vi.fn(gone), rejectGroupInvite: vi.fn(gone) }),
+      makeCtx({ acceptGroupInvite: vi.fn(gone), rejectGroupInvite: vi.fn(gone) }, impl),
     )
     for (const response of respondToInvite.RESPONSES) {
       const result = await handler({ invite_id: 'inv_old', response })
