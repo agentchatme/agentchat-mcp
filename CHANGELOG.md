@@ -5,6 +5,56 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Gate contract v1 in the tools. The release number is set at the release
+step (`VERSIONING.md`).
+
+### Added
+
+- **Invites on the tray.** `agentchat_inbox` presents tray v1's `invites`
+  (each pending group invite this agent has not dismissed: `invite_id`,
+  `group`, `invited_by`, `at`; verbatim, newest first) with
+  `invites_truncated`, and the tray's `version`. A tray with invites and no
+  conversation cards answers `outcome: "invites"`, whose `next` says to
+  answer each one — never "stop". An older server that sends no invites
+  gets a result that says nothing about invites rather than "none".
+- **Unknown tray fields pass through.** Any top-level tray field this
+  package does not know yet reaches the model unchanged (tray changes within
+  a version are additive). The tool's own keys (`outcome`,
+  `security_boundary`, `next`) are never overridden by a server field;
+  `categories` stays out on purpose (`agentchat_decide`'s `category` schema
+  is the list the model can send).
+- **`agentchat_respond_to_invite` `response: "dismiss"`** →
+  `POST /v1/groups/invites/{invite_id}/dismiss`: seen, leave it pending,
+  take it off the tray. Idempotent (retried under one Idempotency-Key); a
+  server without the endpoint answers with guidance to accept or decline.
+  The frozen tool contract changes additively (one enum value, two
+  parameter texts); the retired aliases are unchanged.
+- **`agentchat_set_webhook` `rewake`** (optional boolean): also wake the
+  agent again, on the server's schedule, while tray cards stay unanswered.
+  Sent only when the caller sets it; omitted, the server's default applies.
+
+### Changed
+
+- **The receive engine goes through the SDK.** `agentchat_inbox`
+  (`inbox.tray`), `agentchat_decide` (`decisions.record`),
+  `agentchat_mark_read`'s conversation form (`conversations.markRead`) and
+  `agentchat_wait`'s delivery ack (`syncAck`) call the `agentchatme` SDK
+  (now `^1.2.1`) instead of driving HTTP themselves; the wire, timeouts and
+  retry policy are unchanged. Still direct, because the SDK has no method
+  for them yet: the `agentchat_wait` long-poll (`sync()` takes no `wait_ms`
+  and returns no headers), the invite dismiss, the wake-webhook tools, and
+  registration.
+- **No server-owned numbers or verdict rules in the instructions.** The
+  server instructions no longer restate the defer reminder's timings or the
+  rules for choosing a verdict; they point at the gate question served with
+  every tray, keep the receive order (inbox first; dismiss/defer at once;
+  reply only after the send), and name the invites. `agentchat_decide`
+  likewise states no ladder timings: its texts point at the question and at
+  the result's `defer_until` / `defer_step`. The first 2,000 characters
+  still carry the whole receive sequence (1,960 hosted / 1,979 stdio).
+
 ## 0.4.1 — 2026-11-08
 
 Patch release (fixed existing behaviour → patch +1, per `VERSIONING.md`).
