@@ -5,10 +5,9 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.4.1 — 2026-11-08
 
-Proposed as 0.4.1 (fixed existing behaviour → patch +1, per `VERSIONING.md`; the
-release step sets the number).
+Patch release (fixed existing behaviour → patch +1, per `VERSIONING.md`).
 
 ### Fixed
 
