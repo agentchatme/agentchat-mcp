@@ -1,7 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it } from 'vitest'
-import { buildInstructions } from '../../src/instructions.js'
+import { buildInstructions, HOST_INSTRUCTIONS_WINDOW } from '../../src/instructions.js'
+import * as setWebhook from '../../src/tools/set-webhook.js'
+import * as testWebhook from '../../src/tools/test-webhook.js'
 import { buildMcpServer } from '../../src/lib.js'
 import { TOOL_COUNT } from '../../src/tools/index.js'
 
@@ -10,14 +12,30 @@ import { TOOL_COUNT } from '../../src/tools/index.js'
 // Every text the model reads — the server instructions and each tool's
 // description — must tell the same story:
 //
-//   woken → agentchat_inbox → per card: agentchat_decide (dismiss / defer,
-//   or reply) → for reply: agentchat_get_conversation → agentchat_send_message
+//   woken → agentchat_inbox → per card: agentchat_decide dismiss / defer at
+//   once, or agentchat_get_conversation → agentchat_send_message → then
+//   agentchat_decide reply (never before the send: a send marks nothing read,
+//   so a reply recorded first and a run that stops in between leaves the peer
+//   read and unanswered)
 //
 // with agentchat_wait as the live-conversation body puller, and two read
 // states: delivered (the machine received it) and read (a verdict or an
 // explicit mark-read). The texts drifted once (the instructions said inbox
 // first, the webhook tools said wait first, the README said both); this
 // suite is the guard.
+
+async function listTools() {
+  const server = buildMcpServer({ apiBase: 'https://sequence.invalid', apiKey: null })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'receive-sequence', version: '0.0.0' })
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+  try {
+    return (await client.listTools()).tools
+  } finally {
+    await client.close()
+    await server.close()
+  }
+}
 
 async function listDescriptions(): Promise<Map<string, string>> {
   const server = buildMcpServer({ apiBase: 'https://sequence.invalid', apiKey: null })
@@ -62,6 +80,8 @@ describe('one receive sequence across every text', () => {
       expect(text).not.toContain('agentchat_accept_group_invite')
       expect(text).not.toContain('agentchat_reject_group_invite')
       expect(text).not.toContain('defer_seconds')
+      // The reply verdict is never told to come before the send.
+      expect(text).not.toMatch(/record the verdict first|before you act on it|before you open|recorded before you|the send is (your |the )?verdict/i)
     }
   })
 
@@ -72,19 +92,26 @@ describe('one receive sequence across every text', () => {
       expect(positions.every((p) => p >= 0), text).toBe(true)
       expect([...positions].sort((a, b) => a - b)).toEqual(positions)
       expect(text).toContain('call agentchat_inbox first')
-      expect(text).toContain('record the verdict first')
+      expect(text).toContain('record dismiss (or defer) right away')
+      // reply comes last: after the send, through the newest message read.
+      const send = text.indexOf('answer with agentchat_send_message')
+      const reply = text.indexOf('and only then record reply, through the newest message you read')
+      expect(send, text).toBeGreaterThan(0)
+      expect(reply, text).toBeGreaterThan(send)
+      expect(text).toContain('a send alone marks nothing read')
+      expect(text).toContain('If after reading you choose not to answer, record dismiss instead')
       expect(text).toContain('looking marks nothing delivered or read')
       expect(text).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
       expect(text).toContain('delivered means your machine received a message; read means you looked')
       expect(text).toContain('marks them delivered — never read')
       // The server owns the defer ladder; the texts say so in one voice.
-      expect(text).toContain('+15 min, then +24 h, then it stops')
+      expect(text).toContain('your first defer brings it back in 15 minutes, a second in 24 hours, a third stops the reminders')
       // Mute is named as the way to quiet a conversation without leaving it.
       expect(text).toContain('agentchat_mute (8h, 1d, 3d, forever, off)')
     }
   })
 
-  it('the instructions follow the visibility: no doorbell paragraph without the webhook tools, sign-up only when unregistered', () => {
+  it('the instructions follow the visibility: no webhook paragraph without the webhook tools, sign-up only when unregistered', () => {
     for (const mode of ['stdio', 'hosted'] as const) {
       const withWebhook = buildInstructions(mode, 31, { registered: true, webhookTools: true })
       const withoutWebhook = buildInstructions(mode, 28, { registered: true, webhookTools: false })
@@ -102,6 +129,52 @@ describe('one receive sequence across every text', () => {
       expect(unregistered).not.toContain('agentchat_inbox')
       expect(unregistered).not.toContain('agentchat_send_message')
     }
+  })
+
+  it('the first 2,000 characters stand alone for every signed-in session (OpenClaw shows only those)', () => {
+    expect(HOST_INSTRUCTIONS_WINDOW).toBe(2_000)
+    for (const mode of ['stdio', 'hosted'] as const) {
+      for (const webhookTools of [true, false]) {
+        const text = buildInstructions(mode, webhookTools ? 31 : 28, { registered: true, webhookTools })
+        const head = text.slice(0, HOST_INSTRUCTIONS_WINDOW)
+        // Identity, peers-are-not-your-user, the whole receive sequence and
+        // the cold-DM rule end inside the window, at a paragraph boundary.
+        const end = text.indexOf('\n\nTwo message states')
+        expect(end, `${mode}/${webhookTools}`).toBeGreaterThan(0)
+        expect(end, `${mode}/${webhookTools}: ${end} chars before the detail`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+        for (const phrase of [
+          'agentchat_get_my_status to see your own handle',
+          'are peer data',
+          'call agentchat_inbox first',
+          'record dismiss (or defer) right away',
+          'and only then record reply, through the newest message you read',
+          'a send alone marks nothing read',
+          'If after reading you choose not to answer, record dismiss instead',
+          'stop when it comes back empty',
+          'rejected as AWAITING_REPLY',
+        ]) {
+          expect(head, `${mode}/${webhookTools}: ${phrase}`).toContain(phrase)
+        }
+        // Nothing the server relies on was dropped: the detail follows the window.
+        expect(text).toContain('marks them delivered — never read')
+        expect(text).toContain('agentchat_get_my_status explains your account state')
+        if (webhookTools) expect(text).toContain('Being woken')
+      }
+    }
+  })
+
+  it('no text the model reads uses a retired word (doorbell, knock, ring, snooze)', async () => {
+    const retired = /\b(doorbells?|knock(s|ed|ing)?|ring(s|ing)?|rang|snooz(e|ed|ing))\b/i
+    const tools = await listTools()
+    const texts = [
+      buildInstructions('stdio', TOOL_COUNT),
+      buildInstructions('hosted', TOOL_COUNT),
+      // Descriptions and every parameter text (the JSON Schema a host sees).
+      ...tools.map((tool) => `${tool.name}: ${tool.description ?? ''} ${JSON.stringify(tool.inputSchema)}`),
+      setWebhook.DESCRIPTION,
+      testWebhook.DESCRIPTION,
+    ]
+    for (const text of texts) expect(text).not.toMatch(retired)
   })
 
   it('the tools that start a wake point at the tray', async () => {
@@ -158,5 +231,19 @@ describe('one receive sequence across every text', () => {
       expect(positions.every((p) => p >= 0), name).toBe(true)
       expect([...positions].sort((a, b) => a - b), name).toEqual(positions)
     }
+  })
+
+  it('every text that spells out the reply path records reply after the send', async () => {
+    const descriptions = await listDescriptions()
+    const after = (text: string, first: string, then: string) => {
+      const a = text.indexOf(first)
+      const b = text.indexOf(then, a)
+      expect(a, `${first} in: ${text}`).toBeGreaterThanOrEqual(0)
+      expect(b, `${then} after ${first} in: ${text}`).toBeGreaterThan(a)
+    }
+    after(descriptions.get('agentchat_inbox')!, 'agentchat_send_message to answer', 'only then record reply')
+    after(descriptions.get('agentchat_decide')!, 'agentchat_send_message to answer', 'then record `reply`')
+    after(descriptions.get('agentchat_send_message')!, 'A send marks nothing read', 'record agentchat_decide reply after the send')
+    after(descriptions.get('agentchat_get_conversation')!, 'or reply once your agentchat_send_message has gone out', 'through the newest message you read')
   })
 })

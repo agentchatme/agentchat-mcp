@@ -122,7 +122,7 @@ describe('registerAllTools', () => {
       expect(registerAllTools(server, ctx(), { registered: false, webhookTools: true })).toEqual(expected)
     })
 
-    it('registered without webhook tools: no sign-up pair, no doorbell — 28 tools', () => {
+    it('registered without webhook tools: no sign-up pair, no webhook tools — 28 tools', () => {
       const names = visibleToolNames({ registered: true, webhookTools: false })
       expect(names).toHaveLength(28)
       for (const hidden of [...SIGNUP_TOOL_NAMES, ...WEBHOOK_TOOL_NAMES]) {

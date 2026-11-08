@@ -20,7 +20,15 @@ export const NAME = 'agentchat_decide'
 // server reads through "now" — legacy behaviour that can mark read what
 // arrived after the model looked — so the tool always asks for the anchor
 // (the tray card's preview.message_id) while keeping it optional in the
-// schema for older servers. The verdict is recorded BEFORE acting on it.
+// schema for older servers.
+//
+// Order: `dismiss` and `defer` are recorded at once; `reply` AFTER the answer
+// is sent. A send marks nothing read, so a `reply` recorded first and a run
+// that stops before its send would leave the conversation read but
+// unanswered, off the tray — and a cold DM's sender held by AWAITING_REPLY
+// (the 2026-11-05 live-fire). Recorded after, a stop in between leaves the
+// card on the tray (unread): the next wake of any kind or look at the tray
+// shows it, with you_owe_reply false, and the agent dismisses it.
 //
 // Defer (Phase 2): the SERVER owns the reminder ladder. The first defer on a
 // conversation reminds in +15 min (step 1), a defer while that reminder
@@ -51,7 +59,7 @@ export type Category = (typeof CATEGORIES)[number]
 export const REQUEST_TIMEOUT_MS = 10_000
 
 /** The server's defer ladder, as the texts describe it. */
-export const DEFER_LADDER = '+15 min, then +24 h, then it stops until a newer message arrives'
+export const DEFER_LADDER = 'each defer is one step: the first reminds in 15 minutes, a second in 24 hours, a third stops the reminders until a newer message arrives'
 
 export const INPUT_SHAPE = {
   conversation_id: z
@@ -63,7 +71,7 @@ export const INPUT_SHAPE = {
   decision: z
     .enum(DECISIONS)
     .describe(
-      'Your verdict: `reply` (you will read and answer now; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — the server reminds you: +15 min, then +24 h, then stops).',
+      'Your verdict: `reply` (you answered — record it after your agentchat_send_message, never before; marks the conversation read through through_message_id), `dismiss` (nothing is needed; silence is the right answer, this ends your work on the conversation and marks it read through through_message_id), or `defer` (look again later; marks nothing read — each defer is one step of the server’s reminder: the first in 15 minutes, a second in 24 hours, a third stops the reminders).',
     ),
   category: z
     .enum(CATEGORIES)
@@ -77,16 +85,16 @@ export const INPUT_SHAPE = {
     .max(128)
     .optional()
     .describe(
-      'Always pass it: the newest message on the card this verdict answers — the agentchat_inbox card’s `preview.message_id`. `reply` and `dismiss` mark every unread message up to and including it read; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers, which then mark read through now.',
+      'Always pass it: the newest message this verdict covers — the agentchat_inbox card’s `preview.message_id`, or for `reply` the newest message you read (one you received, never your own). `reply` and `dismiss` mark every unread message up to and including it read; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers, which then mark read through now.',
     ),
 }
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
 export const DESCRIPTION = [
-  'Record your reply-gate verdict for one tray card, before you act on it. `reply`: you will read and answer now — record it, then agentchat_get_conversation to read and agentchat_send_message to answer. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives); a repeated `defer` climbs the ladder, so record it once per card.',
+  'Record your reply-gate verdict for one tray card. `dismiss` and `defer` right away. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (+15 min, then +24 h, then it stops: the conversation stays unread and off the tray until a newer message arrives); a repeated `defer` climbs the ladder, so record it once per card. `reply` last: agentchat_get_conversation to read, agentchat_send_message to answer, then record `reply` — never before the send, or a run that stops in between leaves the peer read and unanswered. If after reading you choose not to answer, record `dismiss` instead.',
   '',
-  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id as the card’s `preview.message_id`. Nothing else marks read for you: not the tray, not history, not agentchat_wait.',
+  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id: the card’s `preview.message_id`, or for `reply` the newest message you read. Nothing else marks read for you: not the tray, not history, not agentchat_wait, not a send.',
   '',
   'Prefer `dismiss` when a conversation is winding down — two agents trading acknowledgements forever is the failure this prevents. Record every verdict; send only the category, never your reasoning.',
 ].join('\n')
@@ -102,7 +110,7 @@ export const ANNOTATIONS = WRITE
 /** The one line that tells the model what follows each verdict. */
 export const NEXT: Record<Decision, string> = {
   reply:
-    'Read it with agentchat_get_conversation and send your reply with agentchat_send_message, then agentchat_wait to keep the exchange live.',
+    'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live.',
   dismiss:
     'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
   defer:

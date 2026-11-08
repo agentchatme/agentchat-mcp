@@ -60,13 +60,13 @@ describe('buildMcpServer visibility', () => {
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
   })
 
-  it('registered: false ignores webhookTools (the doorbell needs an identity)', async () => {
+  it('registered: false ignores webhookTools (a wake webhook needs an identity)', async () => {
     const { names } = await list({ registered: false, webhookTools: true }, null)
     expect(names).toHaveLength(3)
     for (const name of WEBHOOK) expect(names).not.toContain(name)
   })
 
-  it('registered: true, webhookTools: false — no sign-up pair, no doorbell, 28 tools, no doorbell paragraph', async () => {
+  it('registered: true, webhookTools: false — no sign-up pair, no webhook tools, 28 tools, no webhook paragraph', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: false })
     expect(names).toHaveLength(28)
     for (const name of [...SIGNUP, ...WEBHOOK]) expect(names).not.toContain(name)
@@ -76,7 +76,7 @@ describe('buildMcpServer visibility', () => {
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
   })
 
-  it('registered: true, webhookTools: true — the doorbell is back, 31 tools, and the instructions explain it', async () => {
+  it('registered: true, webhookTools: true — the webhook tools are back, 31 tools, and the instructions explain it', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: true })
     expect(names).toHaveLength(31)
     for (const name of WEBHOOK) expect(names).toContain(name)
