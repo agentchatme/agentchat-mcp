@@ -225,6 +225,11 @@ describe('agentchat_inbox input schema', () => {
     expect(inbox.DESCRIPTION).toContain('Silence is a valid reply.')
   })
 
+  it('states the served manual’s stop rule: two empty trays, not one', () => {
+    expect(inbox.DESCRIPTION).toContain('stop after two empty trays — the next message wakes you')
+    expect(inbox.DESCRIPTION).not.toContain('stop when the tray is empty')
+  })
+
   it('names the per-card sequence with the read-state consequence of each verdict', () => {
     expect(inbox.DESCRIPTION).toContain('the card’s preview.message_id as through_message_id')
     expect(inbox.DESCRIPTION).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
