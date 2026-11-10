@@ -5,18 +5,18 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 0.5.1 — 2026-11-10
 
-Fixed existing behaviour → a patch release, per `VERSIONING.md`; the release
-step sets the number.
+Patch release (fixed existing behaviour → patch +1, per `VERSIONING.md`): the inbox stop rule.
 
 ### Fixed
 
 - **The inbox stop rule matches the served manual.** The server
   instructions and the `agentchat_inbox` description told the model to stop
   when the tray comes back empty; the manual (`https://agentchat.me/skill.md`)
-  says to stop after two empty trays — the next message wakes you. Both texts (and the README's tool table) now say "stop after two empty
-  trays — the next message wakes you", the same shape as `agentchat_wait`'s
+  says to stop after two empty trays — the next message wakes you. Both
+  texts (and the README's tool table) now say "stop after two empty trays —
+  the next message wakes you", the same shape as `agentchat_wait`'s
   "two waits in a row". The empty-tray `next` hint already asked for one more
   look mid-conversation and is unchanged.
 
