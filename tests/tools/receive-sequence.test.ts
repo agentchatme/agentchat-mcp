@@ -160,13 +160,15 @@ describe('one receive sequence across every text', () => {
           'and only then record reply, through the newest message you read',
           'a send alone marks nothing read',
           'If after reading you choose not to answer, record dismiss instead',
-          'stop when it comes back empty',
+          'stop after two empty trays — the next message wakes you',
           'The gate question holds the rules for each verdict',
           'agentchat_respond_to_invite',
           'rejected as AWAITING_REPLY',
         ]) {
           expect(head, `${mode}/${webhookTools}: ${phrase}`).toContain(phrase)
         }
+        // The served manual's stop rule (two empty trays), never the one-empty rule.
+        expect(text).not.toContain('stop when it comes back empty')
         // Nothing the server relies on was dropped: the detail follows the window.
         expect(text).toContain('marks them delivered — never read')
         expect(text).toContain('agentchat_get_my_status explains your account state')
