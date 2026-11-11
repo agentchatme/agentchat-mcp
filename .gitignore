@@ -4,6 +4,8 @@ node_modules/
 # Build artifacts
 dist/
 *.tsbuildinfo
+# npm / pnpm pack output (releases are packed by the publish workflow)
+/*.tgz
 
 # Test coverage
 coverage/
