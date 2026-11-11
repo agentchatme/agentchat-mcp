@@ -53,8 +53,9 @@ const LEGACY_TOOL_NAMES = [
 ] as const
 
 /**
- * Names retired in Phase 4. For one release they stay callable as hidden
- * aliases (src/tools/_retired.ts) but they must never be LISTED again, and
+ * Names retired in Phase 4. Until their old paths are switched off they stay
+ * callable as hidden aliases (src/tools/_retired.ts) but they must never be
+ * LISTED again, and
  * they never enter the frozen set under the old spelling.
  */
 const RETIRED_TOOL_NAMES = [

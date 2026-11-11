@@ -57,8 +57,9 @@ export { RETIRED_TOOL_NAMES } from './_retired.js'
 // Each tool is gated by what it is for, never by name matching elsewhere.
 // The option type (ToolVisibility) lives in _types.ts next to ToolContext.
 //
-// Retired names (_retired.ts) are registered as hidden aliases for one
-// release whenever their successor is visible: callable, never listed.
+// Retired names (_retired.ts) are registered as hidden aliases whenever
+// their successor is visible, until their old paths are switched off:
+// callable, never listed.
 
 /** What a tool is for, which decides when it is listed. */
 type Gate =

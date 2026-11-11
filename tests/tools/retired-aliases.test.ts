@@ -13,10 +13,12 @@ import { fetchStub, json, KEY, makeRealCtx, pathOf } from './_real-client.js'
 
 // ─── Retired names: callable, never listed ─────────────────────────────────
 //
-// For one release the three old names still work (texts in the field name
-// them) but never show in tools/list under any visibility, and every answer
-// ends with the line that names the successor. Driven through the public
-// library entry and a real MCP transport, with the network stubbed.
+// Until their old paths are switched off (contract v1 §7) the three old
+// names still work (texts in the field name them) but never show in
+// tools/list under any visibility, and every answer ends with the line that
+// names the successor and says how long it keeps working. Driven through
+// the public library entry and a real MCP transport, with the network
+// stubbed.
 
 async function connect(visibility?: ToolVisibility, apiKey: string | null = KEY) {
   const server = buildMcpServer({
@@ -100,7 +102,7 @@ describe('retired tool names', () => {
         conversations: [{ conversation_id: 'conv_1', counterparty: { handle: '@bob' } }],
       })
       expect(line).toBe(
-        'agentchat_list_inbox is a retired name and is removed in the next minor: call agentchat_list_conversations instead.',
+        'agentchat_list_inbox is a retired name: call agentchat_list_conversations instead. It keeps working until its old path is switched off (https://agentchat.me/contract/v1/#deprecations), then it is removed.',
       )
     } finally {
       await close()
