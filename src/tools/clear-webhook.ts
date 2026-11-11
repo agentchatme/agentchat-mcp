@@ -1,7 +1,8 @@
+import { DEFAULT_RETRY_POLICY } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport } from './_rest.js'
+import { engineClient, requireRestAuth } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_clear_webhook'
@@ -31,17 +32,12 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
-        const res = await http.request<unknown>(
-          'DELETE',
-          '/v1/agents/me/wake-webhook',
-        )
+        // DELETE is idempotent: the SDK's default retry policy, as before.
+        const answer: unknown = await engineClient(rest, DEFAULT_RETRY_POLICY).wakeWebhook.clear()
         // 204/empty body is a normal success shape for DELETE; pass through
-        // any state the server does report.
+        // any state the server does report (`{ ok, removed }`).
         const data =
-          typeof res.data === 'object' && res.data !== null
-            ? (res.data as Record<string, unknown>)
-            : {}
+          typeof answer === 'object' && answer !== null ? (answer as Record<string, unknown>) : {}
         return { type: 'json', value: { ok: true, ...data } }
       },
     )

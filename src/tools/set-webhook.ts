@@ -1,7 +1,14 @@
+import { DEFAULT_RETRY_POLICY, type WakeWebhookStatus } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import {
+  engineClient,
+  isUnreadAnswer,
+  requireRestAuth,
+  rethrowWithGuidance,
+  watchAnswers,
+} from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_set_webhook'
@@ -99,12 +106,11 @@ export const REWAKE_IGNORED_NOTE =
 
 /**
  * Did the server's answer carry `rewake`? The server answers
- * `{ wake_webhook: { …, rewake } }`; a flat record is read the same way.
+ * `{ wake_webhook: { …, rewake } }`; this reads the subscription inside
+ * (what the SDK's `wakeWebhook.set` returns).
  */
-export function echoesRewake(record: Record<string, unknown>): boolean {
-  const inner = record['wake_webhook']
-  if (typeof inner === 'object' && inner !== null && 'rewake' in inner) return true
-  return 'rewake' in record
+export function echoesRewake(status: unknown): boolean {
+  return typeof status === 'object' && status !== null && 'rewake' in status
 }
 
 // `rewake` is typed as what the schema yields (the preprocess makes its raw
@@ -131,37 +137,42 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
-        let data: unknown
+        // PUT is idempotent: the SDK's default retry policy, as before.
+        const watch = watchAnswers(rest.fetchImpl)
+        const client = engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY)
+        // The subscription the server answered with (`wake_webhook`), or
+        // undefined when its 2xx carried none.
+        let status: WakeWebhookStatus | null | undefined
         try {
-          const res = await http.request<unknown>('PUT', '/v1/agents/me/wake-webhook', {
-            body: {
-              url,
-              secret,
-              dialect: dialect ?? 'agentchat',
-              ...(prompt !== undefined ? { prompt } : {}),
-              // Sent only when the caller chose: an absent key takes the
-              // server's default for a new write.
-              ...(rewake !== undefined ? { rewake } : {}),
-            },
+          status = await client.wakeWebhook.set({
+            url,
+            secret,
+            dialect: dialect ?? 'agentchat',
+            ...(prompt !== undefined ? { prompt } : {}),
+            // Sent only when the caller chose: an absent key takes the
+            // server's default for a new write.
+            ...(rewake !== undefined ? { rewake } : {}),
           })
-          data = res.data
         } catch (err) {
-          rethrowWithGuidance(err, {
-            INVALID_WAKE_WEBHOOK_URL:
-              'Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host.',
-            WAKE_WEBHOOK_URL_UNRESOLVED:
-              'DNS did not answer for that host just now; check the hostname and try again.',
-          })
+          // A 2xx with an empty or null body is a registration whose answer
+          // carried nothing to show, not a failure (see isUnreadAnswer).
+          if (!isUnreadAnswer(err, watch.answeredEmpty())) {
+            rethrowWithGuidance(err, {
+              INVALID_WAKE_WEBHOOK_URL:
+                'Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host.',
+              WAKE_WEBHOOK_URL_UNRESOLVED:
+                'DNS did not answer for that host just now; check the hostname and try again.',
+            })
+          }
+          status = undefined
         }
-        const record =
-          typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
         return {
           type: 'json',
           value: {
             ok: true,
-            ...record,
-            ...(rewake !== undefined && !echoesRewake(record) ? { rewake_note: REWAKE_IGNORED_NOTE } : {}),
+            // The server's answer as it came: `{ wake_webhook: … }`.
+            ...(status !== undefined ? { wake_webhook: status } : {}),
+            ...(rewake !== undefined && !echoesRewake(status) ? { rewake_note: REWAKE_IGNORED_NOTE } : {}),
             next: 'Call agentchat_test_webhook now to prove a wake reaches you.',
           },
         }

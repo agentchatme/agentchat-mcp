@@ -1,51 +1,39 @@
-import {
-  AgentChatClient,
-  AgentChatError,
-  HttpTransport,
-  type RequestHooks,
-  type RetryPolicy,
-} from 'agentchatme'
+import { AgentChatClient, AgentChatError, type RequestHooks, type RetryPolicy } from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
 import { attachToolGuidance } from '../errors.js'
-import type { RestContext, ToolContext } from './_types.js'
+import type { ToolContext } from './_types.js'
 
-// ─── Direct REST plumbing for the onboarding + webhook tools ───────────────
+// ─── Every server call goes through the SDK ────────────────────────────────
 //
-// A few endpoints sit outside the SDK client's surface: registration (which
-// must work with NO identity at all), the wake-webhook endpoints, the
-// long-poll body pull (/v1/messages/sync?wait_ms), the tray read (it sends
-// `invites=1`, which `inbox.tray` cannot add yet) and the invite dismiss —
-// each newer than, or shaped beyond, the pinned SDK's methods. Rather than
-// hand-rolling fetch + error parsing, we drive the SDK's own exported
-// HttpTransport, so these calls get the exact same behavior as every other
-// tool call: typed AgentChatError subclasses via createAgentChatError,
-// Retry-After handling, timeouts, and retry policy. `mapAgentChatError`
-// then surfaces server codes (HANDLE_TAKEN, EMAIL_TAKEN, …) faithfully.
+// Each tool reaches the server through an agentchatme SDK method, never a
+// hand-built request: the receive engine (the tray, verdicts, mark-read, the
+// long-poll body pull and its delivery ack), invite dismiss, the wake
+// webhook (set, test, clear), and the two sign-up calls (the SDK's static
+// `register` / `verify`, which work with no identity at all). One
+// implementation of each wire for every integration, this tool core
+// included, and the same typed AgentChatError subclasses, Retry-After
+// handling and timeouts everywhere; `mapAgentChatError` then surfaces server
+// codes (HANDLE_TAKEN, EMAIL_TAKEN, …) faithfully.
 //
-// ─── The engine calls go through the SDK client ───────────────────────────
-//
-// The receive engine — verdicts, mark-read, the delivery ack — is the
-// SDK's (`decisions.record`, `conversations.markRead`, `syncAck`): one
-// implementation of those wires for every integration, this tool core
-// included. (The tray read is back on the transport until `inbox.tray` can
-// send the `invites=1` opt-in; see tools/inbox.ts.) Each engine tool builds its client per call with
-// `engineClient`, bound to the same identity and fetch as `ctx.client`, for
-// one reason: the retry policy. The SDK's per-call options carry signal,
-// timeout and idempotency key but no retry override, and the shared client's
-// default (3 retries, up to 8 s apart) would re-park a long-poll past the
-// host's deadline or stretch a 10 s write past a 30 s tool budget. Building
-// a client is synchronous and does no I/O.
+// A tool builds its client per call with `engineClient`, bound to the same
+// identity and fetch as `ctx.client` (so the same product-identity headers),
+// with the retry policy that tool chose: a long-poll gets one attempt (a
+// retry would park again past the host's deadline), a keyed write a couple of
+// quick retries, the wake-webhook calls the SDK's default. The policy then
+// does not depend on how the composition built `ctx.client`. Building a
+// client is synchronous and does no I/O.
 
 /** One attempt only: long-polls, whose retry would park again past the deadline. */
 export const NO_RETRY: RetryPolicy = Object.freeze({ maxRetries: 0, baseDelayMs: 0, maxDelayMs: 0 })
 
 /**
  * An SDK client for the session's identity with `retry` as its policy. The
- * policy applies only to calls the transport may retry at all (GET, or a
- * POST that carries an Idempotency-Key); a POST without a key is never
- * retried, whatever the policy. `hooks` are the SDK's observability hooks
- * (e.g. agentchat_decide watches for a 2xx it can trust even when the body
- * is unreadable).
+ * policy applies only to calls the transport may retry at all (GET, PUT,
+ * DELETE, or a POST that carries an Idempotency-Key); a POST without a key
+ * is never retried, whatever the policy. A call may still narrow it with its
+ * own `retry` option (a long-poll passes `'never'`). `hooks` are the SDK's
+ * observability hooks (e.g. agentchat_decide watches for a 2xx it can trust
+ * even when the body is unreadable).
  */
 export function engineClient(
   rest: AuthenticatedRest,
@@ -58,18 +46,6 @@ export function engineClient(
     fetch: rest.fetchImpl,
     retry,
     ...(hooks ? { hooks } : {}),
-  })
-}
-
-/** Transport bound to the session's base URL and (optionally) its key. */
-export function restTransport(
-  rest: Pick<RestContext, 'apiBase' | 'fetchImpl'> & { apiKey?: string | null },
-  options: { withAuth: boolean },
-): HttpTransport {
-  return new HttpTransport({
-    baseUrl: rest.apiBase,
-    fetch: rest.fetchImpl,
-    ...(options.withAuth && rest.apiKey ? { apiKey: rest.apiKey } : {}),
   })
 }
 
@@ -100,6 +76,80 @@ export function requireRestAuth(ctx: ToolContext): AuthenticatedRest {
     throw new NotRegisteredError()
   }
   return { apiBase, apiKey, fetchImpl }
+}
+
+function isJsonNull(text: string): boolean {
+  try {
+    return JSON.parse(text) === null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A fetch that remembers whether the server's last answer was a 2xx with an
+ * empty or JSON-null body, for the calls below that must tell "the server
+ * answered, with nothing to read" apart from a failure (see
+ * `isUnreadAnswer`). Works for the client and for the SDK's static calls
+ * alike, which take a `fetch` but no hooks. Within one SDK call the last
+ * answer is the one that ended it: the transport stops at the first 2xx.
+ *
+ * It never reads the body itself: a 2xx body is handed to the transport
+ * through a pass-through stream that sees the text as the transport reads
+ * it, and decides once the body has ended — before the SDK looks inside it.
+ * The bytes, the timing (the read is outside the request timeout, as
+ * before) and every read failure (a connection cut mid-body rejects with
+ * its own error, and an unfinished body is never counted as empty) stay
+ * exactly what they were. Other statuses pass through untouched.
+ */
+export function watchAnswers(
+  fetchImpl: typeof fetch,
+): { fetch: typeof fetch; answeredEmpty: () => boolean } {
+  let answeredEmpty = false
+  const watched = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    answeredEmpty = false
+    const res = await fetchImpl(input, init)
+    if (res.status < 200 || res.status >= 300) return res
+    if (res.body === null) {
+      answeredEmpty = true // 204, or a 2xx built without a body
+      return res
+    }
+    const decoder = new TextDecoder()
+    let text = ''
+    const seeing = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        text += decoder.decode(chunk, { stream: true })
+        controller.enqueue(chunk)
+      },
+      flush() {
+        text += decoder.decode()
+        answeredEmpty = text === '' || isJsonNull(text)
+      },
+    })
+    return new Response(res.body.pipeThrough(seeing), {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    })
+  }) as typeof fetch
+  return { fetch: watched, answeredEmpty: () => answeredEmpty }
+}
+
+/**
+ * Did this SDK call fail only because the SDK could not read a 2xx body?
+ * Some SDK methods read one field off the body unguarded
+ * (`wakeWebhook.set` → `wake_webhook`, `wakeWebhook.test` → `test_wake`,
+ * static `verify` → `api_key`), so a 2xx whose body is empty or JSON null
+ * makes that read throw a TypeError although the server answered. That is
+ * exactly this case: the last answer was such a 2xx (watchAnswers saw the
+ * body) and the error is a TypeError. Every failure keeps failing: an HTTP
+ * error (AgentChatError), a connection failure, timeout or a 2xx body that
+ * is not JSON (the SDK's ConnectionError), an abort (AbortError), a body
+ * cut mid-read (its own error, as before). The caller treats the body as
+ * absent, exactly as reading it by hand did.
+ */
+export function isUnreadAnswer(err: unknown, answeredEmpty: boolean): boolean {
+  return answeredEmpty && err instanceof TypeError
 }
 
 /**

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js'
-import type { HttpResponse, RetryPolicy } from 'agentchatme'
+import type { RetryPolicy, SyncPage } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE } from './_annotations.js'
 import { withErrorBoundary, type SuccessShape } from './_handler.js'
-import { engineClient, requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import { engineClient, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_wait'
@@ -24,10 +24,9 @@ export const NAME = 'agentchat_wait'
 // concurrency semaphore is host budget already spent) and split so the poll
 // can never eat the ack's slice.
 //
-// Wires: the ack is the SDK's (`syncAck`, the one engine). The poll is a
-// direct GET on the SDK's own transport, because the SDK's `sync()` carries
-// neither the long-poll `wait_ms` nor the response headers (the server's
-// X-AgentChat-Waited-Ms); it moves onto the SDK when the SDK gains both.
+// Wires: both are the SDK's, the one engine — the poll is `syncPage` (the
+// long-poll `wait_ms`, with the response headers, where the server writes
+// X-AgentChat-Waited-Ms), the ack `syncAck`.
 
 /** Server ceiling for one long-poll (GET /v1/messages/sync?wait_ms). */
 export const MAX_WAIT_SECONDS = 50
@@ -330,9 +329,9 @@ export function createHandler(ctx: ToolContext) {
       },
       async (): Promise<SuccessShape> => {
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
         // The cursor ack is idempotent: a couple of quick retries under one
         // Idempotency-Key (ACK_RETRY_POLICY), bounded by the deadline signal.
+        // The poll narrows that to one attempt with its own `retry`.
         const engine = engineClient(rest, ACK_RETRY_POLICY)
         const you = publicHandle(ctx.selfHandle)
 
@@ -345,13 +344,13 @@ export function createHandler(ctx: ToolContext) {
           timeout_seconds * 1000,
           deadlineAt - Date.now(),
         )
-        const query = new URLSearchParams({ limit: String(limit) })
-        if (waitMs > 0) query.set('wait_ms', String(waitMs))
-
         const startedAt = Date.now()
-        let res: HttpResponse<unknown>
+        let page: SyncPage
         try {
-          res = await http.request<unknown>('GET', `/v1/messages/sync?${query.toString()}`, {
+          page = await engine.syncPage({
+            limit,
+            // 0 = drain: the SDK then sends no wait_ms at all.
+            waitMs,
             timeoutMs,
             // A long-poll is never auto-retried: a retry would park again and
             // overrun the deadline.
@@ -367,8 +366,13 @@ export function createHandler(ctx: ToolContext) {
           }
           rethrowWithGuidance(err, { RATE_LIMITED: POLL_RATE_LIMITED_GUIDANCE })
         }
-        const rows: SyncRow[] = Array.isArray(res.data) ? (res.data as SyncRow[]) : []
-        const waitedHeader = res.headers.get('x-agentchat-waited-ms')
+        // Read loosely, as served: a body that is not a list is no rows.
+        const served: unknown = page.rows
+        const rows: SyncRow[] = Array.isArray(served) ? (served as SyncRow[]) : []
+        // The header itself, not the SDK's integer-only `waitedMs`: a
+        // fractional value is rounded here, and only a missing header falls
+        // back to the local elapsed.
+        const waitedHeader = page.headers.get('x-agentchat-waited-ms')
         const waitedRaw = waitedHeader !== null ? Number(waitedHeader) : Date.now() - startedAt
         const waitedMs = Number.isFinite(waitedRaw) ? Math.max(0, Math.round(waitedRaw)) : null
 

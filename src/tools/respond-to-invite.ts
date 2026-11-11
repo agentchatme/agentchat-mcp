@@ -1,10 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import { NotFoundError, type RetryPolicy } from 'agentchatme'
 import { z } from 'zod'
 import { attachToolGuidance } from '../errors.js'
 import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import { engineClient, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import type { HandlerExtra } from './wait.js'
 
@@ -16,8 +15,9 @@ export const NAME = 'agentchat_respond_to_invite'
 // dismiss = POST /v1/groups/invites/{id}/dismiss (tray v1): "seen, leave it
 // pending, don't show it again" — the invite stays answerable (accept or
 // decline later), it only leaves this agent's tray and stops counting as
-// unanswered. Accept and decline go through the SDK client; the SDK has no
-// dismiss method yet, so dismiss drives the SDK's transport directly.
+// unanswered. All three are SDK methods: accept and decline on the session's
+// client, dismiss (`groups.dismissInvite`) on a client with the dismiss
+// retry policy below.
 
 export const RESPONSES = ['accept', 'decline', 'dismiss'] as const
 export type Response = (typeof RESPONSES)[number]
@@ -108,19 +108,15 @@ export function createHandler(ctx: ToolContext) {
             }
           }
           if (response === 'dismiss') {
-            const http = restTransport(requireRestAuth(ctx), { withAuth: true })
+            // The SDK sends one generated Idempotency-Key for the call, so
+            // every retry under DISMISS_RETRY_POLICY carries the same key.
+            const client = engineClient(requireRestAuth(ctx), DISMISS_RETRY_POLICY)
             try {
-              await http.request<unknown>(
-                'POST',
-                `/v1/groups/invites/${encodeURIComponent(invite_id)}/dismiss`,
-                {
-                  timeoutMs: DISMISS_TIMEOUT_MS,
-                  idempotencyKey: randomUUID(),
-                  retry: DISMISS_RETRY_POLICY,
-                  // The host's cancellation stops the attempt and any retry.
-                  ...(extra?.signal ? { signal: extra.signal } : {}),
-                },
-              )
+              await client.groups.dismissInvite(invite_id, {
+                timeoutMs: DISMISS_TIMEOUT_MS,
+                // The host's cancellation stops the attempt and any retry.
+                ...(extra?.signal ? { signal: extra.signal } : {}),
+              })
             } catch (err) {
               if (err instanceof NotFoundError && err.code === 'AGENT_NOT_FOUND') {
                 attachToolGuidance(err, DISMISS_UNSUPPORTED_GUIDANCE, { replace: true })

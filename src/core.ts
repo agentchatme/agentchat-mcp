@@ -214,9 +214,10 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
 
   const logger = opts.logger ?? createLogger({ level: 'silent' })
 
-  // One wrapped fetch feeds BOTH the SDK client and the direct REST
-  // transports (register/verify/webhook), so every upstream call carries the
-  // same product identity, User-Agent, and forwarded client IP.
+  // One wrapped fetch feeds the session's SDK client AND the per-call SDK
+  // clients and static sign-up calls the tools build from `ctx.rest`, so
+  // every upstream call carries the same product identity, User-Agent, and
+  // forwarded client IP.
   let baseFetch = globalThis.fetch
   if (opts.userAgent !== undefined) {
     baseFetch = withUserAgent(baseFetch, opts.userAgent)

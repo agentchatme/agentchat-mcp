@@ -273,7 +273,6 @@ describe('agentchat_inbox handler', () => {
     })
 
     it('always opts in to invites (invites=1): on a tray-v1 server only a flagged request lets invites end the wait', async () => {
-      expect(inbox.INVITES_QUERY_FLAG).toBe('invites')
       for (const timeout_seconds of [0, 5, 25, 45]) {
         const { impl, calls } = fetchStub(() => json(200, EMPTY_TRAY))
         await inbox.createHandler(makeCtx(impl))({ timeout_seconds, limit: 20 })

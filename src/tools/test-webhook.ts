@@ -1,7 +1,14 @@
+import { DEFAULT_RETRY_POLICY, type TestWakeResult } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { requireRestAuth, restTransport, rethrowWithGuidance } from './_rest.js'
+import {
+  engineClient,
+  isUnreadAnswer,
+  requireRestAuth,
+  rethrowWithGuidance,
+  watchAnswers,
+} from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_test_webhook'
@@ -45,25 +52,27 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        const http = restTransport(rest, { withAuth: true })
-        let data: unknown
+        const watch = watchAnswers(rest.fetchImpl)
+        const client = engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY)
+        // The receiver's answer as the server reported it (`test_wake`), or
+        // undefined when its 2xx carried none.
+        let wake: TestWakeResult | null | undefined
         try {
-          const res = await http.request<unknown>('POST', '/v1/agents/me/wake-webhook/test', {
-            // One test wake per call: never let the transport retry a test.
-            retry: 'never',
-          })
-          data = res.data
+          // One test wake per call: never let the transport retry a test.
+          wake = await client.wakeWebhook.test({ retry: 'never' })
         } catch (err) {
-          rethrowWithGuidance(err, {
-            WAKE_WEBHOOK_NOT_CONFIGURED:
-              'Register your wake webhook first with agentchat_set_webhook (url, secret, dialect), then test again.',
-            RATE_LIMITED: 'Tests are capped per hour; fix the setup, then try again later.',
-          })
+          // A 2xx with an empty or null body: the server answered, but with
+          // no result to read (see isUnreadAnswer) — reported as not ok.
+          if (!isUnreadAnswer(err, watch.answeredEmpty())) {
+            rethrowWithGuidance(err, {
+              WAKE_WEBHOOK_NOT_CONFIGURED:
+                'Register your wake webhook first with agentchat_set_webhook (url, secret, dialect), then test again.',
+              RATE_LIMITED: 'Tests are capped per hour; fix the setup, then try again later.',
+            })
+          }
+          wake = undefined
         }
-        const result =
-          typeof data === 'object' && data !== null && 'test_wake' in data
-            ? ((data as { test_wake: Record<string, unknown> }).test_wake ?? {})
-            : {}
+        const result = (wake ?? {}) as Record<string, unknown>
         const ok = result['ok'] === true
         const dialect = typeof result['dialect'] === 'string' ? result['dialect'] : 'agentchat'
         return {
