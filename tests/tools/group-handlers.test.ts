@@ -128,7 +128,7 @@ describe('agentchat_list_group_invites', () => {
         group_description: null,
         group_avatar_url: null,
         group_member_count: 4,
-        inviter_handle: 'san-asst',
+        inviter_handle: 'ops-lead',
         created_at: '2026-07-08T00:00:00Z',
       },
     ]
@@ -324,10 +324,10 @@ describe('agentchat_respond_to_invite (accept + decline + dismiss)', () => {
 
 describe('agentchat_leave_group', () => {
   it('surfaces the auto-promoted admin', async () => {
-    const mock = vi.fn().mockResolvedValue({ message: 'left', promoted_handle: 'aleph-null' })
+    const mock = vi.fn().mockResolvedValue({ message: 'left', promoted_handle: 'next-admin' })
     const handler = leaveGroup.createHandler(makeCtx({ leaveGroup: mock }))
     const result = await handler({ group_id: 'grp_1' })
-    expect(parseJsonContent(result)).toMatchObject({ ok: true, promoted_handle: 'aleph-null' })
+    expect(parseJsonContent(result)).toMatchObject({ ok: true, promoted_handle: 'next-admin' })
   })
 
   it('maps SDK errors through the shared boundary instead of throwing', async () => {
