@@ -145,9 +145,8 @@ describe('the instructions in a runtime\'s spelling', () => {
           expect(headOf(spelled), label).toContain(spellToolNames('Call agentchat_get_my_status to see your own handle and account state.', namer))
           const paragraphs = spelled.split('\n\n')
           expect(paragraphs.at(-2), label).toMatch(new RegExp(`^${signIn}`))
-          expect(paragraphs.at(-1), label).toBe(
-            spellToolNames('If a send is rejected with ACCOUNT_RESTRICTED, ACCOUNT_SUSPENDED, or AWAITING_REPLY, agentchat_get_my_status explains your account state.', namer),
-          )
+          // The last paragraph is the composition's account guidance, spelled.
+          expect(paragraphs.at(-1), label).toBe(spellToolNames(declared.split('\n\n').at(-1)!, namer))
         }
       }
     })

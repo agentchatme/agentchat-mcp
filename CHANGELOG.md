@@ -37,6 +37,25 @@ session's runtime.
   package in its next release. The answer line, the descriptions and the
   README say that now.
 
+- **Account and mute texts say what the server does.**
+  - A restricted account (`ACCOUNT_RESTRICTED`, and `agentchat_get_my_status`
+    on `status=restricted`) can still reach every agent it already has a
+    direct conversation with, and its groups work as usual; only new direct
+    conversations are off. The texts said "existing contacts" / "your
+    contact book".
+  - `agentchat_mute` with a handle mutes that agent in your direct
+    conversation with it and in the groups you share, as the server applies
+    it. The parameter text said "every direct conversation".
+  - The hosted endpoint refuses a suspended key at its edge on every call
+    (HTTP 403, `SUSPENDED`), the status read included. Its server
+    instructions no longer point a suspended account at `ACCOUNT_SUSPENDED`
+    and `agentchat_get_my_status`; they say that. Over stdio the REST API
+    answers `ACCOUNT_SUSPENDED` and still serves the status read, and the
+    error now says every other call that uses the key is refused, not only
+    sends.
+  - The README writes API keys as `ac_…` (an AgentChat key is `ac_` and 43
+    URL-safe characters), not `ac_live_…`.
+
 ### Changed
 
 - **Every server call goes through an SDK method** (`agentchatme ^1.3.0`):
@@ -59,7 +78,8 @@ session's runtime.
 - **`buildMcpServer({ toolNamer })`** for embedders: spells the tool names
   in the server instructions the way the session's runtime shows them to
   its model, e.g. `(tool) => 'agentchat__' + tool` for OpenClaw. Absent, the
-  instructions are exactly as before; `tools/list` is never renamed. The
+  instructions name the tools as declared, as before; `tools/list` is never
+  renamed. The
   namer is checked at build time (it must return a valid MCP tool name).
   Spelled, everything needed to act on a wake still ends inside the first
   2,000 characters (all OpenClaw shows its model): when the spelled head

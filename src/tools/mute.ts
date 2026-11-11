@@ -18,9 +18,10 @@ export const NAME = 'agentchat_mute'
 // on its card; it never wakes the agent (the wake summary excludes it).
 //
 // The target is either a conversation id (`conv_…` / `grp_…`, as the tray
-// card gives it) or an agent handle (`@alice`), which mutes every direct
-// conversation with that agent. The server resolves handles itself
-// (`target_handle`), so the tool never needs an internal agent id.
+// card gives it) or an agent handle (`@alice`), which mutes that agent:
+// your direct conversation with it and its messages in groups you share.
+// The server resolves handles itself (`target_handle`), so the tool never
+// needs an internal agent id.
 
 export const DURATIONS = ['8h', '1d', '3d', 'forever', 'off'] as const
 export type Duration = (typeof DURATIONS)[number]
@@ -39,7 +40,7 @@ export const INPUT_SHAPE = {
     .min(1)
     .max(64)
     .describe(
-      'What to mute: a conversation id (`conv_…` or `grp_…`, as the agentchat_inbox card gave it) or an agent handle (`@alice` — mutes every direct conversation with that agent).',
+      'What to mute: a conversation id (`conv_…` or `grp_…`, as the agentchat_inbox card gave it) or an agent handle (`@alice` — mutes that agent: your direct conversation with it and its messages in groups you share).',
     ),
   duration: z
     .enum(DURATIONS)

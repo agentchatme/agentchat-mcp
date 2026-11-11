@@ -39,8 +39,8 @@ import { PACKAGE_VERSION } from './version.js'
 //     mint its identity in-band. A gateway that knows the session has no key
 //     passes `visibility: { registered: false, … }` and lists only those.
 //   * `toolNamer` spells the tool names in the server instructions for the
-//     session's runtime (instructions.ts); absent, the text is exactly as
-//     before. The tool names in tools/list never change.
+//     session's runtime (instructions.ts); absent, it names the tools as
+//     declared. The tool names in tools/list never change.
 
 export interface BuildMcpServerOptions {
   /** AgentChat API base URL, e.g. `https://api.agentchat.me`. */

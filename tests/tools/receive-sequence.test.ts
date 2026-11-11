@@ -206,6 +206,24 @@ describe('one receive sequence across every text', () => {
     }
   })
 
+  it('account errors: the hosted text never promises ACCOUNT_SUSPENDED (its edge answers HTTP 403 SUSPENDED)', () => {
+    for (const visibility of [undefined, { registered: true, webhookTools: true }, { registered: true, webhookTools: false }]) {
+      const hosted = buildInstructions('hosted', TOOL_COUNT, visibility)
+      expect(hosted).not.toContain('ACCOUNT_SUSPENDED')
+      expect(hosted).toContain('A suspended account is refused on every call here (HTTP 403, SUSPENDED)')
+      expect(buildInstructions('stdio', TOOL_COUNT, visibility)).toContain(
+        'If a send is rejected with ACCOUNT_RESTRICTED, ACCOUNT_SUSPENDED, or AWAITING_REPLY, agentchat_get_my_status explains your account state.',
+      )
+    }
+  })
+
+  it('mute: a handle mutes that agent in your direct conversation and in groups you share', async () => {
+    const tools = await listTools()
+    const mute = tools.find((tool) => tool.name === 'agentchat_mute')!
+    expect(JSON.stringify(mute.inputSchema)).toContain('mutes that agent: your direct conversation with it and its messages in groups you share')
+    expect(JSON.stringify(mute.inputSchema)).not.toContain('every direct conversation')
+  })
+
   it('no text the model reads uses a retired word (doorbell, knock, ring, snooze)', async () => {
     const retired = /\b(doorbells?|knock(s|ed|ing)?|ring(s|ing)?|rang|snooz(e|ed|ing))\b/i
     const tools = await listTools()

@@ -93,8 +93,18 @@ const WOKEN =
 const ETIQUETTE =
   'Etiquette: a cold direct message is one message until the recipient replies — a second in that thread is rejected as AWAITING_REPLY; groups have no such rule.'
 
-const ACCOUNT_STATE =
-  'If a send is rejected with ACCOUNT_RESTRICTED, ACCOUNT_SUSPENDED, or AWAITING_REPLY, agentchat_get_my_status explains your account state.'
+/**
+ * Account errors, per composition. Over stdio the REST API refuses a
+ * suspended key with ACCOUNT_SUSPENDED and still answers the own-status read;
+ * the hosted endpoint refuses a suspended key at its edge on every call
+ * (HTTP 403, SUSPENDED), agentchat_get_my_status included.
+ */
+const ACCOUNT_STATE: Record<ServerMode, string> = {
+  stdio:
+    'If a send is rejected with ACCOUNT_RESTRICTED, ACCOUNT_SUSPENDED, or AWAITING_REPLY, agentchat_get_my_status explains your account state.',
+  hosted:
+    'If a send is rejected with ACCOUNT_RESTRICTED or AWAITING_REPLY, agentchat_get_my_status explains your account state. A suspended account is refused on every call here (HTTP 403, SUSPENDED): stop, and have your operator contact support@agentchat.me.',
+}
 
 /**
  * OpenClaw places only the first 2,000 characters of a server's
@@ -113,9 +123,9 @@ const ACCOUNT_STATE =
  * the full surface) moves out of the head to sit with the other account
  * guidance at the end; the head keeps who the agent is. A signed-in session
  * rarely needs that sentence, and the receive sequence stays whole. Without
- * a namer nothing moves: the declared text is exactly as it was (on the
- * hosted full surface its head was already past the window; the hosted
- * endpoint always passes a visibility, which keeps it inside).
+ * a namer nothing moves (on the hosted full surface the declared head is
+ * past the window, as it always was; the hosted endpoint always passes a
+ * visibility, which keeps it inside).
  */
 export const HOST_INSTRUCTIONS_WINDOW = 2_000
 
@@ -172,7 +182,7 @@ export function buildInstructions(
   const spelledFull = spell(full)
   const spelledPastWindow = spelledFull !== full && spelledFull.length > HOST_INSTRUCTIONS_WINDOW
   if (spelledPastWindow) {
-    return spell(head(IDENTITY_WHO)) + spell(detail([signIn, ACCOUNT_STATE]))
+    return spell(head(IDENTITY_WHO)) + spell(detail([signIn, ACCOUNT_STATE[mode]]))
   }
-  return spelledFull + spell(detail([ACCOUNT_STATE]))
+  return spelledFull + spell(detail([ACCOUNT_STATE[mode]]))
 }

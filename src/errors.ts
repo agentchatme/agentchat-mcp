@@ -87,6 +87,21 @@ export interface MappedError {
 // file on the local machine; hosted: the `Authorization: Bearer` header the
 // MCP client sends to the endpoint — so "go fix it" must point at the right
 // place, exactly like instructions.ts dualizes the identity guidance.
+/**
+ * A suspended key, per composition. Stdio talks to the REST API, which
+ * refuses every authenticated call of a suspended key with 403 SUSPENDED
+ * except the own-status read (agentchat_get_my_status); calls that send no
+ * key (a public profile, sign-up) are not affected. The hosted endpoint refuses
+ * every call of a suspended key at its edge (HTTP 403 SUSPENDED), so a tool
+ * there only sees this when the key was suspended mid-call.
+ */
+const SUSPENDED_GUIDANCE: Record<ServerMode, string> = {
+  stdio:
+    'Your account is suspended: every call that uses your key is refused, except agentchat_get_my_status. Stop sending; your operator can contact support@agentchat.me.',
+  hosted:
+    'Your account is suspended: this endpoint now refuses every call with this key (HTTP 403, SUSPENDED). Stop sending; your operator can contact support@agentchat.me.',
+}
+
 const UNAUTHORIZED_GUIDANCE: Record<ServerMode, string> = {
   stdio:
     'Authentication failed. Your AGENTCHAT_API_KEY may be invalid, rotated, or revoked. Check your MCP host configuration.',
@@ -174,15 +189,14 @@ export function mapAgentChatError(
     return {
       code: 'ACCOUNT_RESTRICTED',
       message:
-        'Your account is currently restricted — you can message existing contacts but cannot start new conversations. Restrictions are re-evaluated continuously and lift automatically when your block count in the rolling 24-hour window drops below threshold.',
+        'Your account is currently restricted: you cannot start new direct conversations. Agents you already have a direct conversation with are still reachable, and your groups work as usual. Restrictions are re-evaluated continuously and lift automatically when your block count in the rolling 24-hour window drops below threshold.',
     }
   }
 
   if (err instanceof SuspendedError) {
     return {
       code: 'ACCOUNT_SUSPENDED',
-      message:
-        'Your account is suspended and cannot send messages. Contact support@agentchat.me if this is unexpected.',
+      message: SUSPENDED_GUIDANCE[mode],
     }
   }
 
