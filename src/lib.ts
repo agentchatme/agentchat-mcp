@@ -10,5 +10,6 @@
 // reads process.env, or touches the filesystem.
 
 export { buildMcpServer, type BuildMcpServerOptions } from './core.js'
+export type { ToolNamer } from './instructions.js'
 export type { ToolVisibility } from './tools/_types.js'
 export { PACKAGE_VERSION } from './version.js'

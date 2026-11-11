@@ -1,9 +1,19 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it } from 'vitest'
-import { buildInstructions, type ServerMode } from '../src/instructions.js'
-import { visibleToolNames, type ToolVisibility } from '../src/tools/index.js'
+import {
+  buildInstructions,
+  HOST_INSTRUCTIONS_WINDOW,
+  spellToolNames,
+  type ServerMode,
+  type ToolNamer,
+} from '../src/instructions.js'
+import { buildMcpServer } from '../src/lib.js'
+import { TOOL_NAMES, visibleToolNames, type ToolVisibility } from '../src/tools/index.js'
+import { KEY } from './tools/_real-client.js'
 
 // ─── The server instructions, pinned ───────────────────────────────────────
 //
@@ -47,5 +57,178 @@ describe('the default instructions', () => {
     const pinned = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')) as Record<string, string>
     expect(Object.keys(texts).sort()).toEqual(Object.keys(pinned).sort())
     for (const [key, text] of Object.entries(texts)) expect(text, key).toBe(pinned[key])
+  })
+})
+
+// ─── A runtime's spelling of the tool names ────────────────────────────────
+
+const OPENCLAW: ToolNamer = (tool) => `agentchat__${tool}`
+const MCP_PREFIXED: ToolNamer = (tool) => `mcp__agentchat__${tool}`
+
+/** Whole `agentchat_…` tokens of a text (a spelled name is one token too). */
+function toolTokens(text: string): string[] {
+  return text.match(/\b[a-z_]*agentchat_[a-z0-9_]+\b/g) ?? []
+}
+
+describe('spellToolNames', () => {
+  it('spells every tool name and nothing else', () => {
+    const text =
+      'Call agentchat_inbox first, then agentchat_decide. Set AGENTCHAT_API_KEY, run `agentchat register`, read https://agentchat.me/skill.md; agentchat_not_a_tool stays.'
+    expect(spellToolNames(text, OPENCLAW)).toBe(
+      'Call agentchat__agentchat_inbox first, then agentchat__agentchat_decide. Set AGENTCHAT_API_KEY, run `agentchat register`, read https://agentchat.me/skill.md; agentchat_not_a_tool stays.',
+    )
+  })
+
+  it('leaves a name that is already spelled alone (never double-prefixes)', () => {
+    for (const namer of [OPENCLAW, MCP_PREFIXED]) {
+      const once = spellToolNames('agentchat_inbox and agentchat_wait', namer)
+      expect(spellToolNames(once, namer)).toBe(once)
+    }
+  })
+
+  it('knows every tool this server declares', () => {
+    for (const name of TOOL_NAMES) expect(spellToolNames(name, OPENCLAW)).toBe(`agentchat__${name}`)
+  })
+})
+
+describe('the instructions in a runtime\'s spelling', () => {
+  it('the identity namer gives the pinned default texts exactly', () => {
+    const pinned = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')) as Record<string, string>
+    for (const mode of MODES) {
+      for (const [label, visibility] of SITUATIONS) {
+        const text = buildInstructions(mode, visibleToolNames(visibility).length, visibility, (tool) => tool)
+        expect(text, `${mode} / ${label}`).toBe(pinned[`${mode} / ${label}`])
+      }
+    }
+  })
+
+  for (const [spelling, namer] of [
+    ['openclaw', OPENCLAW],
+    ['mcp__agentchat__', MCP_PREFIXED],
+  ] as const) {
+    it(`${spelling}: every tool name is spelled, and the text is otherwise the default`, () => {
+      const pinned = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')) as Record<string, string>
+      for (const mode of MODES) {
+        for (const [label, visibility] of SITUATIONS) {
+          const key = `${mode} / ${label}`
+          const text = buildInstructions(mode, visibleToolNames(visibility).length, visibility, namer)
+          // No declared name is left bare: every tool token is spelled.
+          for (const token of toolTokens(text)) {
+            expect(TOOL_NAMES.map(namer), `${key}: ${token}`).toContain(token)
+          }
+          // Same paragraphs as the default, names spelled; at most the
+          // sign-in sentence has moved (see the next test).
+          const paragraphs = (t: string) => t.split('\n\n').flatMap((p) => p.split(/(?<=\.) (?=If a tool returns NOT_)/))
+          expect([...paragraphs(text)].sort(), key).toEqual(
+            [...paragraphs(spellToolNames(pinned[key]!, namer))].sort(),
+          )
+        }
+      }
+    })
+
+    it(`${spelling}: when the spelled head runs past the window, the sign-in sentence moves to the end`, () => {
+      for (const mode of MODES) {
+        for (const webhookTools of [true, false]) {
+          const visibility = { registered: true, webhookTools }
+          const count = visibleToolNames(visibility).length
+          const declared = buildInstructions(mode, count, visibility)
+          const spelled = buildInstructions(mode, count, visibility, namer)
+          const headOf = (t: string) => t.slice(0, t.indexOf('\n\nTwo message states'))
+          const label = `${spelling}/${mode}/${webhookTools}`
+          expect(headOf(declared).length, label).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          expect(headOf(spelled).length, label).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          const signIn = mode === 'hosted' ? 'If a tool returns NOT_AUTHENTICATED' : 'If a tool returns NOT_REGISTERED'
+          // Both spellings lengthen this head past the window, so the sentence
+          // sits with the account guidance after it, just before the last
+          // paragraph; the head keeps who the agent is.
+          expect(headOf(spelled), label).not.toContain(signIn)
+          expect(headOf(spelled), label).toContain(spellToolNames('Call agentchat_get_my_status to see your own handle and account state.', namer))
+          const paragraphs = spelled.split('\n\n')
+          expect(paragraphs.at(-2), label).toMatch(new RegExp(`^${signIn}`))
+          expect(paragraphs.at(-1), label).toBe(
+            spellToolNames('If a send is rejected with ACCOUNT_RESTRICTED, ACCOUNT_SUSPENDED, or AWAITING_REPLY, agentchat_get_my_status explains your account state.', namer),
+          )
+        }
+      }
+    })
+  }
+
+  it('in a runtime\'s spelling the head fits the window in every composition and situation, the full surface included', () => {
+    for (const namer of [OPENCLAW, MCP_PREFIXED]) {
+      for (const mode of MODES) {
+        for (const [label, visibility] of SITUATIONS) {
+          if (visibility && !visibility.registered) continue // the short sign-up text
+          const text = buildInstructions(mode, visibleToolNames(visibility).length, visibility, namer)
+          const end = text.indexOf('\n\nTwo message states')
+          expect(end, `${mode} / ${label}`).toBeGreaterThan(0)
+          expect(end, `${mode} / ${label}`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          expect(text.slice(0, HOST_INSTRUCTIONS_WINDOW), `${mode} / ${label}`).toContain('rejected as AWAITING_REPLY')
+        }
+      }
+    }
+    // The hosted full surface keeps its sign-up hint, after the window.
+    const hosted = buildInstructions('hosted', visibleToolNames(undefined).length, undefined, OPENCLAW)
+    expect(hosted.slice(hosted.indexOf('\n\nTwo message states'))).toContain('No account yet? Call agentchat__agentchat_register')
+  })
+
+  it('without a namer nothing moves: the declared hosted full surface is as it was (its head already past the window)', () => {
+    const declared = buildInstructions('hosted', visibleToolNames(undefined).length)
+    expect(declared.indexOf('\n\nTwo message states')).toBeGreaterThan(HOST_INSTRUCTIONS_WINDOW)
+    expect(declared.indexOf('If a tool returns NOT_AUTHENTICATED')).toBeLessThan(declared.indexOf('\n\nTwo message states'))
+  })
+})
+
+describe('buildMcpServer({ toolNamer })', () => {
+  async function served(toolNamer?: ToolNamer) {
+    const server = buildMcpServer({
+      apiBase: 'https://namer.agentchat.test',
+      apiKey: KEY,
+      selfHandle: 'me',
+      visibility: { registered: true, webhookTools: false },
+      ...(toolNamer ? { toolNamer } : {}),
+    })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'namer', version: '0.0.0' })
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+    try {
+      return { instructions: client.getInstructions() ?? '', names: (await client.listTools()).tools.map((t) => t.name) }
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  }
+
+  it('without one: the declared names, exactly as before', async () => {
+    const { instructions, names } = await served()
+    const visibility = { registered: true, webhookTools: false }
+    expect(instructions).toBe(buildInstructions('hosted', visibleToolNames(visibility).length, visibility))
+    expect(instructions).toContain('call agentchat_inbox first')
+    expect(names).toEqual(visibleToolNames(visibility))
+  })
+
+  it('with one: the instructions are spelled for the runtime; tools/list is unchanged', async () => {
+    const { instructions, names } = await served(OPENCLAW)
+    const visibility = { registered: true, webhookTools: false }
+    expect(instructions).toBe(buildInstructions('hosted', visibleToolNames(visibility).length, visibility, OPENCLAW))
+    expect(instructions).toContain('call agentchat__agentchat_inbox first')
+    expect(instructions).not.toMatch(/(?<![a-z_])agentchat_inbox/)
+    expect(names).toEqual(visibleToolNames(visibility))
+  })
+
+  it('refuses a namer that does not return a valid MCP tool name, at build time', () => {
+    const build = (toolNamer: unknown) => () =>
+      buildMcpServer({ apiBase: 'https://namer.agentchat.test', apiKey: null, toolNamer: toolNamer as ToolNamer })
+    expect(build('agentchat__')).toThrow(/toolNamer must be a function/)
+    expect(build(() => '')).toThrow(/valid MCP tool name/)
+    expect(build((tool: string) => `agentchat :: ${tool}`)).toThrow(/valid MCP tool name/)
+    expect(build((tool: string) => `x`.repeat(120) + tool)).toThrow(/valid MCP tool name/)
+    expect(build(() => undefined)).toThrow(/valid MCP tool name/)
+    expect(
+      build(() => {
+        throw new Error('boom')
+      }),
+    ).toThrow(/toolNamer threw for agentchat_send_message: boom/)
+    expect(build(OPENCLAW)).not.toThrow()
+    expect(build(MCP_PREFIXED)).not.toThrow()
   })
 })

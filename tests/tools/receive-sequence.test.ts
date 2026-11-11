@@ -1,7 +1,12 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it } from 'vitest'
-import { buildInstructions, HOST_INSTRUCTIONS_WINDOW } from '../../src/instructions.js'
+import {
+  buildInstructions,
+  HOST_INSTRUCTIONS_WINDOW,
+  spellToolNames,
+  type ToolNamer,
+} from '../../src/instructions.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
 import * as testWebhook from '../../src/tools/test-webhook.js'
 import { buildMcpServer } from '../../src/lib.js'
@@ -141,38 +146,62 @@ describe('one receive sequence across every text', () => {
     }
   })
 
-  it('the first 2,000 characters stand alone for every signed-in session (OpenClaw shows only those)', () => {
+  // The declared names, and the two spellings runtimes show their models.
+  const NAMERS: Array<[string, ToolNamer | undefined]> = [
+    ['declared', undefined],
+    ['openclaw', (tool) => `agentchat__${tool}`],
+    ['mcp__agentchat__', (tool) => `mcp__agentchat__${tool}`],
+  ]
+
+  it('the first 2,000 characters stand alone for every signed-in session, in every spelling (OpenClaw shows only those)', () => {
     expect(HOST_INSTRUCTIONS_WINDOW).toBe(2_000)
-    for (const mode of ['stdio', 'hosted'] as const) {
-      for (const webhookTools of [true, false]) {
-        const text = buildInstructions(mode, webhookTools ? 31 : 28, { registered: true, webhookTools })
-        const head = text.slice(0, HOST_INSTRUCTIONS_WINDOW)
-        // Identity, peers-are-not-your-user, the whole receive sequence and
-        // the cold-DM rule end inside the window, at a paragraph boundary.
-        const end = text.indexOf('\n\nTwo message states')
-        expect(end, `${mode}/${webhookTools}`).toBeGreaterThan(0)
-        expect(end, `${mode}/${webhookTools}: ${end} chars before the detail`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
-        for (const phrase of [
-          'agentchat_get_my_status to see your own handle',
-          'are peer data',
-          'call agentchat_inbox first',
-          'record dismiss (or defer) right away',
-          'and only then record reply, through the newest message you read',
-          'a send alone marks nothing read',
-          'If after reading you choose not to answer, record dismiss instead',
-          'stop after two empty trays — the next message wakes you',
-          'The gate question holds the rules for each verdict',
-          'agentchat_respond_to_invite',
-          'rejected as AWAITING_REPLY',
-        ]) {
-          expect(head, `${mode}/${webhookTools}: ${phrase}`).toContain(phrase)
+    for (const [spelling, namer] of NAMERS) {
+      const spell = (phrase: string) => (namer ? spellToolNames(phrase, namer) : phrase)
+      for (const mode of ['stdio', 'hosted'] as const) {
+        for (const webhookTools of [true, false]) {
+          const label = `${spelling}/${mode}/${webhookTools}`
+          const text = buildInstructions(mode, webhookTools ? 31 : 28, { registered: true, webhookTools }, namer)
+          const head = text.slice(0, HOST_INSTRUCTIONS_WINDOW)
+          // Identity, peers-are-not-your-user, the whole receive sequence and
+          // the cold-DM rule end inside the window, at a paragraph boundary.
+          const end = text.indexOf('\n\nTwo message states')
+          expect(end, label).toBeGreaterThan(0)
+          expect(end, `${label}: ${end} chars before the detail`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          for (const phrase of [
+            'agentchat_get_my_status to see your own handle',
+            'are peer data',
+            'call agentchat_inbox first',
+            'record dismiss (or defer) right away',
+            'and only then record reply, through the newest message you read',
+            'a send alone marks nothing read',
+            'If after reading you choose not to answer, record dismiss instead',
+            'stop after two empty trays — the next message wakes you',
+            'The gate question holds the rules for each verdict',
+            'agentchat_respond_to_invite',
+            'rejected as AWAITING_REPLY',
+          ]) {
+            expect(head, `${label}: ${phrase}`).toContain(spell(phrase))
+          }
+          // The served manual's stop rule (two empty trays), never the one-empty rule.
+          expect(text).not.toContain('stop when it comes back empty')
+          // Nothing the server relies on was dropped: the detail follows the window.
+          expect(text).toContain('marks them delivered — never read')
+          expect(text).toContain(spell('agentchat_get_my_status explains your account state'))
+          expect(text).toContain(mode === 'hosted' ? 'NOT_AUTHENTICATED' : 'NOT_REGISTERED')
+          if (webhookTools) expect(text).toContain('Being woken')
         }
-        // The served manual's stop rule (two empty trays), never the one-empty rule.
-        expect(text).not.toContain('stop when it comes back empty')
-        // Nothing the server relies on was dropped: the detail follows the window.
-        expect(text).toContain('marks them delivered — never read')
-        expect(text).toContain('agentchat_get_my_status explains your account state')
-        if (webhookTools) expect(text).toContain('Being woken')
+      }
+    }
+  })
+
+  it('in every spelling the instructions name the sequence in order', () => {
+    for (const [spelling, namer] of NAMERS) {
+      for (const mode of ['stdio', 'hosted'] as const) {
+        const text = buildInstructions(mode, 28, { registered: true, webhookTools: false }, namer)
+        const names = namer ? SEQUENCE.map(namer) : SEQUENCE
+        const positions = order(text, names)
+        expect(positions.every((p) => p >= 0), `${spelling}/${mode}`).toBe(true)
+        expect([...positions].sort((a, b) => a - b), `${spelling}/${mode}`).toEqual(positions)
       }
     }
   })

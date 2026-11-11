@@ -2,11 +2,11 @@ import { isIP } from 'node:net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Logger } from 'pino'
 import { defaultMcpFetch, FixedIdentityProvider } from './client.js'
-import { buildInstructions } from './instructions.js'
+import { buildInstructions, type ToolNamer } from './instructions.js'
 import { createLogger } from './log.js'
 import { Semaphore } from './semaphore.js'
 import type { ToolContext, ToolVisibility } from './tools/_types.js'
-import { registerAllTools, visibleToolNames } from './tools/index.js'
+import { registerAllTools, TOOL_NAMES, visibleToolNames } from './tools/index.js'
 import { PACKAGE_VERSION } from './version.js'
 
 // ─── Hosted core: buildMcpServer ───────────────────────────────────────────
@@ -38,6 +38,9 @@ import { PACKAGE_VERSION } from './version.js'
 //     agentchat_verify_otp, which work without a key so a brand-new agent can
 //     mint its identity in-band. A gateway that knows the session has no key
 //     passes `visibility: { registered: false, … }` and lists only those.
+//   * `toolNamer` spells the tool names in the server instructions for the
+//     session's runtime (instructions.ts); absent, the text is exactly as
+//     before. The tool names in tools/list never change.
 
 export interface BuildMcpServerOptions {
   /** AgentChat API base URL, e.g. `https://api.agentchat.me`. */
@@ -107,6 +110,43 @@ export interface BuildMcpServerOptions {
    * `webhookTools` is true. The server instructions follow the same choice.
    */
   visibility?: ToolVisibility
+  /**
+   * How this session's runtime spells tool names to its model, for the server
+   * instructions only — e.g. `(tool) => 'agentchat__' + tool` for OpenClaw,
+   * `(tool) => 'mcp__agentchat__' + tool` for a runtime that shows MCP tools
+   * as `mcp__<server>__<tool>` with this server registered as `agentchat`.
+   * Absent = the declared names (`agentchat_inbox`), as before. tools/list
+   * never changes: the runtime adds its own prefix to the declared names.
+   * Called once per tool name at build time and checked: it must return a
+   * valid MCP tool name.
+   */
+  toolNamer?: ToolNamer
+}
+
+/** What an MCP tool name may be (1–128 of A–Z, a–z, 0–9, `_`, `-`, `.`). */
+const MCP_TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/
+
+function checkToolNamer(toolNamer: unknown): ToolNamer {
+  if (typeof toolNamer !== 'function') {
+    throw new Error('buildMcpServer: toolNamer must be a function from a tool name to the name the runtime shows its model')
+  }
+  const namer = toolNamer as ToolNamer
+  for (const name of TOOL_NAMES) {
+    let spelled: unknown
+    try {
+      spelled = namer(name)
+    } catch (err) {
+      throw new Error(
+        `buildMcpServer: toolNamer threw for ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    if (typeof spelled !== 'string' || !MCP_TOOL_NAME.test(spelled)) {
+      throw new Error(
+        `buildMcpServer: toolNamer must return a valid MCP tool name (1–128 of A–Z, a–z, 0–9, _ - .), got ${JSON.stringify(spelled)} for ${name}`,
+      )
+    }
+  }
+  return namer
 }
 
 function normalizeApiBase(apiBase: string): string {
@@ -212,6 +252,8 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     )
   }
 
+  const toolNamer = opts.toolNamer === undefined ? undefined : checkToolNamer(opts.toolNamer)
+
   const logger = opts.logger ?? createLogger({ level: 'silent' })
 
   // One wrapped fetch feeds the session's SDK client AND the per-call SDK
@@ -244,7 +286,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     },
     {
       capabilities: { tools: {} },
-      instructions: buildInstructions('hosted', toolCount, visibility),
+      instructions: buildInstructions('hosted', toolCount, visibility, toolNamer),
     },
   )
 

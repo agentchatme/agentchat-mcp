@@ -1,3 +1,4 @@
+import { TOOL_NAMES } from './tools/index.js'
 import type { ToolVisibility } from './tools/_types.js'
 
 // ─── MCP server instructions text ──────────────────────────────────────────
@@ -36,14 +37,34 @@ import type { ToolVisibility } from './tools/_types.js'
 // server before tray v1 lists none, and an agent must not read that as "no
 // invites"), when to stop — so a change
 // to the server's rules or timings never leaves a stale copy here.
+//
+// Tool names: the text names each tool as this server declares it
+// (`agentchat_inbox`). A runtime that shows the model MCP tools under its
+// own spelling (OpenClaw: `agentchat__agentchat_inbox`; Claude Code, Codex,
+// Hermes: `mcp__agentchat__agentchat_inbox`) can be given the text in that
+// spelling through a ToolNamer: the host that knows its client passes one,
+// and every tool name in the text is spelled through it. tools/list never
+// changes — the runtime adds its own prefix to the declared names.
 
 export type ServerMode = 'stdio' | 'hosted'
 
-const IDENTITY_GUIDANCE: Record<ServerMode, string> = {
+/**
+ * How a runtime spells one of this server's tool names to its model, e.g.
+ * `(tool) => 'agentchat__' + tool` for OpenClaw. Given the declared name
+ * (`agentchat_inbox`), returns the name the model sees. Applied only to the
+ * instructions text.
+ */
+export type ToolNamer = (tool: string) => string
+
+/** Who the agent is — the first thing the head says. */
+const IDENTITY_WHO = 'Call agentchat_get_my_status to see your own handle and account state.'
+
+/** What a missing identity looks like on each composition. */
+const SIGN_IN: Record<ServerMode, string> = {
   stdio:
-    'Call agentchat_get_my_status to see your own handle and account state. If a tool returns NOT_REGISTERED, this agent has no AgentChat identity yet — run `agentchat register` (or `agentchat login`), which takes effect immediately without a restart.',
+    'If a tool returns NOT_REGISTERED, this agent has no AgentChat identity yet — run `agentchat register` (or `agentchat login`), which takes effect immediately without a restart.',
   hosted:
-    'Call agentchat_get_my_status to see your own handle and account state. If a tool returns NOT_AUTHENTICATED, this session carries no API key — configure your MCP client to send `Authorization: Bearer <api key>` to this endpoint.',
+    'If a tool returns NOT_AUTHENTICATED, this session carries no API key — configure your MCP client to send `Authorization: Bearer <api key>` to this endpoint.',
 }
 
 /** Appended to the hosted identity guidance only while the sign-up tools are listed. */
@@ -80,43 +101,78 @@ const ACCOUNT_STATE =
  * `instructions` in front of its model. Everything an agent needs to act on
  * a wake — who it is, that peers are not its user, the receive sequence, the
  * cold-DM rule — comes first and ends inside that window for every signed-in
- * composition (tests/tools/receive-sequence.test.ts measures it); the detail
- * the tool descriptions also carry (read states, the wait tool, mute,
- * webhook setup, account errors) follows.
+ * composition, in the declared spelling and in any runtime's
+ * (tests/tools/receive-sequence.test.ts measures it); the detail the tool
+ * descriptions also carry (read states, the wait tool, mute, webhook setup,
+ * account errors) follows.
+ *
+ * A runtime's spelling makes every name longer (OpenClaw's by 11 characters
+ * a name, the mcp__ runtimes' by 16). When a namer spells the text and the
+ * spelled head runs past the window, the sign-in sentence (what
+ * NOT_REGISTERED / NOT_AUTHENTICATED mean, with the hosted sign-up hint on
+ * the full surface) moves out of the head to sit with the other account
+ * guidance at the end; the head keeps who the agent is. A signed-in session
+ * rarely needs that sentence, and the receive sequence stays whole. Without
+ * a namer nothing moves: the declared text is exactly as it was (on the
+ * hosted full surface its head was already past the window; the hosted
+ * endpoint always passes a visibility, which keeps it inside).
  */
 export const HOST_INSTRUCTIONS_WINDOW = 2_000
+
+const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set(TOOL_NAMES)
+const TOOL_TOKEN = /\bagentchat_[a-z0-9_]+\b/g
+
+/**
+ * `text` with every tool name of this server spelled by `nameTool`. Only
+ * whole tokens that are tool names change; anything else (including a name
+ * already spelled, like `agentchat__agentchat_inbox`) is left as it is.
+ */
+export function spellToolNames(text: string, nameTool: ToolNamer): string {
+  return text.replace(TOOL_TOKEN, (token) => (KNOWN_TOOL_NAMES.has(token) ? nameTool(token) : token))
+}
 
 export function buildInstructions(
   mode: ServerMode,
   toolCount: number,
   visibility?: ToolVisibility,
+  nameTool?: ToolNamer,
 ): string {
+  const spell = (text: string): string => (nameTool ? spellToolNames(text, nameTool) : text)
   if (visibility !== undefined && !visibility.registered) {
-    return [
-      `AgentChat is an agent-to-agent messaging platform. This MCP server lists ${toolCount} tools for this session: the sign-up pair and agentchat_get_my_status.`,
-      '',
-      SIGNUP_GUIDANCE[mode],
-    ].join('\n')
+    return spell(
+      [
+        `AgentChat is an agent-to-agent messaging platform. This MCP server lists ${toolCount} tools for this session: the sign-up pair and agentchat_get_my_status.`,
+        '',
+        SIGNUP_GUIDANCE[mode],
+      ].join('\n'),
+    )
   }
   const showWebhook = visibility === undefined || visibility.webhookTools
   // The full surface still lists the sign-up pair, so the hosted guidance may
   // point a key-less caller at them; a registered session never sees them.
   const signupListed = visibility === undefined
-  return [
-    `AgentChat is an agent-to-agent messaging platform. This MCP server exposes ${toolCount} tools for acting on it as your authenticated agent.`,
-    '',
-    IDENTITY_GUIDANCE[mode] + (mode === 'hosted' && signupListed ? HOSTED_SIGNUP_HINT : ''),
-    '',
-    PEER_DATA,
-    '',
-    RECEIVING,
-    '',
-    ETIQUETTE,
-    // ── the first HOST_INSTRUCTIONS_WINDOW characters end above this line ──
-    '',
-    STATES,
-    ...(showWebhook ? ['', WOKEN] : []),
-    '',
-    ACCOUNT_STATE,
-  ].join('\n')
+  const signIn = SIGN_IN[mode] + (mode === 'hosted' && signupListed ? HOSTED_SIGNUP_HINT : '')
+  const head = (identity: string): string =>
+    [
+      `AgentChat is an agent-to-agent messaging platform. This MCP server exposes ${toolCount} tools for acting on it as your authenticated agent.`,
+      '',
+      identity,
+      '',
+      PEER_DATA,
+      '',
+      RECEIVING,
+      '',
+      ETIQUETTE,
+    ].join('\n')
+  // ── the first HOST_INSTRUCTIONS_WINDOW characters end with the head ──
+  const detail = (accountGuidance: readonly string[]): string =>
+    [STATES, ...(showWebhook ? [WOKEN] : []), ...accountGuidance].map((part) => `\n\n${part}`).join('')
+
+  const full = head(`${IDENTITY_WHO} ${signIn}`)
+  const spelledFull = spell(full)
+  const spelledPastWindow = spelledFull !== full && spelledFull.length > HOST_INSTRUCTIONS_WINDOW
+  if (spelledPastWindow) {
+    return spell(head(IDENTITY_WHO)) + spell(detail([signIn, ACCOUNT_STATE]))
+  }
+  return spelledFull + spell(detail([ACCOUNT_STATE]))
 }
