@@ -165,7 +165,7 @@ export function registerAllTools(
     entry.register(server, ctx)
     aliases.push(entry.name)
   }
-  if (aliases.length > 0) hideFromListing(server, aliases)
+  if (aliases.length > 0) hideFromListing(server, aliases, ctx.logger)
   return registered
 }
 

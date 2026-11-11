@@ -1,9 +1,15 @@
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import pino from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildMcpServer, type ToolVisibility } from '../../src/lib.js'
-import { RETIRED_TOOL_NAMES, TOOL_NAMES } from '../../src/tools/index.js'
-import { fetchStub, json, KEY, pathOf } from './_real-client.js'
+import { registerAllTools, RETIRED_TOOL_NAMES, TOOL_NAMES } from '../../src/tools/index.js'
+import { hideFromListing, storedListHandler, UNHIDDEN_ALIASES_WARNING } from '../../src/tools/_retired.js'
+import { fetchStub, json, KEY, makeRealCtx, pathOf } from './_real-client.js'
 
 // ─── Retired names: callable, never listed ─────────────────────────────────
 //
@@ -160,6 +166,156 @@ describe('retired tool names', () => {
       expect(line).toContain('agentchat_respond_to_invite')
     } finally {
       await close()
+    }
+  })
+})
+
+// ─── The one private touch, and what happens without it ────────────────────
+//
+// hideFromListing reads the MCP SDK's stored tools/list handler from the
+// protocol layer's `_requestHandlers` map. The suite below fails the build
+// if the pinned SDK keeps it anywhere else (or if the pin stops being
+// exact), and proves that an install on such an SDK still starts: the
+// aliases are listed too, still work, and one warning is logged per logger.
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+function readJson(file: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+}
+
+function bareServer(): McpServer {
+  return new McpServer({ name: 'agentchat', version: '0.0.0' }, { capabilities: { tools: {} } })
+}
+
+/** A logger whose lines this test can read. */
+function capturingLogger(): { logger: pino.Logger; lines: () => Array<Record<string, unknown>> } {
+  const written: string[] = []
+  const logger = pino({ level: 'warn' }, { write: (line: string) => void written.push(line) })
+  return { logger, lines: () => written.map((line) => JSON.parse(line) as Record<string, unknown>) }
+}
+
+/**
+ * Stand in for an MCP SDK that stores its handlers in something other than a
+ * Map: the protocol layer keeps working (it only calls get / set / has /
+ * delete), but the shape hideFromListing reads is gone.
+ */
+function moveHandlersOutOfAMap(server: McpServer): void {
+  const inner = server.server as unknown as { _requestHandlers: Map<string, unknown> }
+  const real = inner._requestHandlers
+  const registry = {
+    get: (key: string) => real.get(key),
+    set: (key: string, value: unknown) => {
+      real.set(key, value)
+      return registry
+    },
+    has: (key: string) => real.has(key),
+    delete: (key: string) => real.delete(key),
+  }
+  ;(inner as unknown as { _requestHandlers: unknown })._requestHandlers = registry
+}
+
+async function connectServer(server: McpServer) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'retired-hook', version: '0.0.0' })
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+  return {
+    client,
+    close: async () => {
+      await client.close()
+      await server.close()
+    },
+  }
+}
+
+describe('the listing filter and the MCP SDK it reads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('the installed MCP SDK keeps its tools/list handler where hideFromListing reads it', () => {
+    const server = bareServer()
+    server.registerTool('agentchat_probe', { description: 'probe' }, async () => ({ content: [] }))
+    // If this fails, the pinned SDK moved the handler: update storedListHandler
+    // in src/tools/_retired.ts for it before shipping that SDK.
+    expect(typeof storedListHandler(server)).toBe('function')
+    const { logger, lines } = capturingLogger()
+    expect(hideFromListing(server, ['agentchat_probe'], logger)).toBe(true)
+    expect(lines()).toEqual([])
+  })
+
+  it('@modelcontextprotocol/sdk is pinned to one exact version, and that version is installed', () => {
+    const spec = (readJson(path.join(ROOT, 'package.json'))['dependencies'] as Record<string, string>)[
+      '@modelcontextprotocol/sdk'
+    ]
+    expect(spec, 'an exact version, never a range').toMatch(/^\d+\.\d+\.\d+$/)
+    const installed = readJson(path.join(ROOT, 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'))
+    expect(installed['version']).toBe(spec)
+  })
+
+  it('a stored handler that answers another shape is passed through, never broken', async () => {
+    const odd = { nextCursor: 'c1' } // no `tools` array
+    let installed: ((request: unknown, extra: unknown) => Promise<unknown>) | null = null
+    const fake = {
+      server: {
+        _requestHandlers: new Map([['tools/list', async () => odd]]),
+        setRequestHandler: (_schema: unknown, handler: (request: unknown, extra: unknown) => Promise<unknown>) => {
+          installed = handler
+        },
+      },
+    } as unknown as McpServer
+    const { logger } = capturingLogger()
+    expect(hideFromListing(fake, ['agentchat_list_inbox'], logger)).toBe(true)
+    expect(await installed!({ method: 'tools/list' }, {})).toBe(odd)
+  })
+
+  it('reading the hook never throws, whatever the SDK keeps there', () => {
+    const shapes: unknown[] = [undefined, null, {}, new Map(), new Map([['tools/list', 'not a function']])]
+    for (const shape of shapes) {
+      const server = { server: { _requestHandlers: shape } } as unknown as McpServer
+      expect(storedListHandler(server)).toBeNull()
+    }
+    const throwing = {
+      server: Object.defineProperty({}, '_requestHandlers', {
+        get() {
+          throw new Error('private field moved')
+        },
+      }),
+    } as unknown as McpServer
+    expect(storedListHandler(throwing)).toBeNull()
+  })
+
+  it('without the hook the server still starts: aliases listed and callable, one warning per logger', async () => {
+    const { impl } = fetchStub(() =>
+      json(200, [{ id: 'conv_1', type: 'direct', participants: [{ handle: 'bob', display_name: null }], unread_count: 1 }]),
+    )
+    const { logger, lines } = capturingLogger()
+    const ctx = makeRealCtx(impl)
+    ctx.logger = logger
+    const visibility = { registered: true, webhookTools: false }
+
+    const server = bareServer()
+    moveHandlersOutOfAMap(server)
+    const listed = registerAllTools(server, ctx, visibility)
+    // A second server on the same logger (a hosted endpoint builds one per
+    // request) adds no second line.
+    const again = bareServer()
+    moveHandlersOutOfAMap(again)
+    registerAllTools(again, ctx, visibility)
+
+    expect(lines()).toHaveLength(1)
+    expect(lines()[0]).toMatchObject({ level: 40, msg: UNHIDDEN_ALIASES_WARNING, aliases: [...RETIRED_TOOL_NAMES] })
+
+    const { client, close } = await connectServer(server)
+    try {
+      const names = (await client.listTools()).tools.map((tool) => tool.name)
+      expect(names).toEqual([...listed, ...RETIRED_TOOL_NAMES])
+      const result = await client.callTool({ name: 'agentchat_list_inbox', arguments: {} })
+      expect(result.isError).toBeFalsy()
+      expect(texts(result as { content: unknown[] }).at(-1)).toContain('call agentchat_list_conversations instead')
+    } finally {
+      await close()
+      await again.close()
     }
   })
 })

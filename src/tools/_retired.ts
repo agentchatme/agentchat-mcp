@@ -4,6 +4,7 @@ import {
   type CallToolResult,
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js'
+import type { Logger } from 'pino'
 import { z } from 'zod'
 import * as listConversations from './list-conversations.js'
 import * as respondToInvite from './respond-to-invite.js'
@@ -27,10 +28,16 @@ import type { ToolRegistration } from './_types.js'
 // after the fact. hideFromListing() wraps the SDK's own tools/list handler
 // (replacing a handler is documented behavior) and drops the alias names
 // from its result, so the schema conversion stays the SDK's. Reading the
-// stored handler back is the one private touch, guarded by a loud error;
-// the SDK is bundled into the published artifact, so the version tested is
-// the version shipped, and tests/tools/retired-aliases.test.ts covers both
-// halves (callable, unlisted).
+// stored handler back is the one private touch: the protocol layer's
+// `_requestHandlers` map. Three things keep it safe:
+//   * package.json pins @modelcontextprotocol/sdk to one exact version (it
+//     is a dependency, installed next to this package, not bundled), so the
+//     version tested is the version an install gets;
+//   * tests/tools/retired-aliases.test.ts fails if that version keeps the
+//     handler anywhere else, and checks the pin is exact;
+//   * if an install still ends up on an SDK without it (an embedder's
+//     override), nothing breaks: the server starts as usual, the aliases
+//     stay callable and are simply listed too, and one warning is logged.
 
 export interface RetiredAlias {
   /** The retired name. */
@@ -118,22 +125,54 @@ export const RETIRED_TOOL_NAMES: readonly string[] = RETIRED_ALIASES.map((alias)
 type StoredHandler = (request: unknown, extra: unknown) => Promise<unknown>
 
 /**
+ * The MCP SDK's own tools/list handler, read from where SDK 1.x keeps it
+ * (the protocol layer's `_requestHandlers` map), or null when this SDK keeps
+ * it anywhere else. Never throws.
+ */
+export function storedListHandler(server: McpServer): StoredHandler | null {
+  try {
+    const handlers = (server.server as unknown as { _requestHandlers?: unknown })._requestHandlers
+    if (!(handlers instanceof Map)) return null
+    const stored: unknown = handlers.get('tools/list')
+    return typeof stored === 'function' ? (stored as StoredHandler) : null
+  } catch {
+    return null
+  }
+}
+
+/** The warning for an SDK without the hook, logged once per logger (see hideFromListing). */
+export const UNHIDDEN_ALIASES_WARNING =
+  'retired tool aliases stay listed: this MCP SDK keeps no tools/list handler where src/tools/_retired.ts reads it; they still work'
+
+const warnedLoggers = new WeakSet<Logger>()
+
+/**
  * Drop `names` from every tools/list answer while leaving them callable.
  * Call AFTER the tools are registered: the SDK installs its tools/list
  * handler on the first registration and refuses to be pre-empted.
+ *
+ * Returns true when the listing is filtered. On an MCP SDK that keeps its
+ * handler elsewhere nothing is changed — the server starts as usual and the
+ * names stay listed and callable — and `logger` gets one warning: once per
+ * logger, so a hosted endpoint that builds a server per request logs it
+ * once, not per request.
  */
-export function hideFromListing(server: McpServer, names: readonly string[]): void {
+export function hideFromListing(server: McpServer, names: readonly string[], logger: Logger): boolean {
   const hidden = new Set(names)
-  const stored = (
-    server.server as unknown as { _requestHandlers?: Map<string, StoredHandler> }
-  )._requestHandlers?.get('tools/list')
-  if (typeof stored !== 'function') {
-    throw new Error(
-      'hideFromListing: the bundled MCP SDK no longer keeps its tools/list handler where this build expects it, so the retired aliases cannot be hidden. Update src/tools/_retired.ts for this SDK version.',
-    )
+  const stored = storedListHandler(server)
+  if (stored === null) {
+    if (!warnedLoggers.has(logger)) {
+      warnedLoggers.add(logger)
+      logger.warn({ aliases: [...names] }, UNHIDDEN_ALIASES_WARNING)
+    }
+    return false
   }
   server.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
     const result = (await stored(request, extra)) as ListToolsResult
+    // An answer of another shape (an SDK that changed it) goes out as the SDK
+    // made it: the aliases may show, tools/list never breaks.
+    if (typeof result !== 'object' || result === null || !Array.isArray(result.tools)) return result
     return { ...result, tools: result.tools.filter((tool) => !hidden.has(tool.name)) }
   })
+  return true
 }
