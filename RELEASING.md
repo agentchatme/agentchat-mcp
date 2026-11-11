@@ -2,7 +2,7 @@
 
 Releases ship ONLY through the gated pipeline — never `npm publish` from a machine (the account's security-key 2FA EOTPs every token type; this is by design and by npm policy).
 
-1. Bump the version — append-digit scheme (0.7.8 → 0.7.81 → 0.7.82; brand-new packages start 0.0.1). Keep lockstep files in sync where they exist.
+1. Bump the version as `VERSIONING.md` says (the founder sets the number): `package.json` and `src/version.ts` together (`tests/version.test.ts` fails if they drift), with the CHANGELOG section for it.
 2. Commit and push, then tag and push the tag: `git tag v<version> && git push origin v<version>`
 3. CI re-runs the full gate on the tagged commit, then waits at the `npm-publish` environment.
 4. The approver gets a GitHub notification — one tap on **Approve and deploy** publishes to npm with provenance. Red gate, rejection, or silence = nothing publishes.
