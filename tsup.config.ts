@@ -21,8 +21,11 @@ const shared = {
   // avoids accidentally shipping source paths from the maintainer's box.
   sourcemap: false,
   shims: false,
-  // bundle dependencies, but NOT peerDependencies. We have no peerDeps
-  // currently; if we add the OpenAI SDK or similar later, configure here.
+  // Nothing is bundled: tsup leaves every `dependencies` entry external, so
+  // dist imports them by name and npm installs them next to this package at
+  // the versions package.json allows (@modelcontextprotocol/sdk is pinned to
+  // one exact version for that reason — see src/tools/_retired.ts). This
+  // list adds nothing to that.
   external: [],
   outExtension: ({ format }: { format: string }) => ({
     js: format === 'cjs' ? '.cjs' : '.js',

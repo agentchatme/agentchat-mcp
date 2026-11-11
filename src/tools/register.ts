@@ -1,7 +1,8 @@
+import { AgentChatClient } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { restTransport, rethrowWithGuidance } from './_rest.js'
+import { rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_register'
@@ -57,17 +58,14 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
-        const http = restTransport(ctx.rest, { withAuth: false })
+        // The SDK's static registration call: no API key on the wire (it
+        // works with no identity at all) and one attempt only — a retried
+        // POST could email a second code or double-create the pending row.
+        // The session's fetch carries the product identity.
+        const { apiBase, fetchImpl } = ctx.rest
         let data: unknown
         try {
-          // retry:'never' mirrors the SDK's own registration call — an
-          // auto-retried POST here could email a second code or double-create
-          // the pending row.
-          const res = await http.request<unknown>('POST', '/v1/register', {
-            body: { email, handle },
-            retry: 'never',
-          })
-          data = res.data
+          data = await AgentChatClient.register({ email, handle, baseUrl: apiBase, fetch: fetchImpl })
         } catch (err) {
           rethrowWithGuidance(err, {
             HANDLE_TAKEN:

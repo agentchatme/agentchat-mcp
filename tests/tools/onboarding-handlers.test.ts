@@ -13,8 +13,8 @@ import type { ToolContext } from '../../src/tools/_types.js'
 
 // ─── Onboarding + webhook handler call-shape tests ─────────────────────────
 //
-// Same discipline as handlers.test.ts, but these tools speak to the API
-// through the SDK's HttpTransport with an injected fetch — so the stubs sit
+// Same discipline as handlers.test.ts, but these tools call SDK methods
+// over an injected fetch (the session's `rest` view) — so the stubs sit
 // at the network boundary and the tests exercise the REAL error-mapping
 // pipeline (status → typed error → mapped tool message).
 
@@ -227,14 +227,15 @@ describe('agentchat_set_webhook handler', () => {
   })
 
   it('PUTs the webhook with Bearer auth and passes the state through', async () => {
-    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
+    // The server's answer: `{ wake_webhook: <subscription> }`.
+    const { impl, calls } = fetchStub(() => json(200, { wake_webhook: { state: 'active' } }))
     const handler = setWebhook.createHandler(makeCtx(impl))
     const result = await handler({
       url: 'https://hooks.example/wake',
       secret: 'shhh',
     })
     expect(result.isError).toBeFalsy()
-    expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, state: 'active' })
+    expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, wake_webhook: { state: 'active' } })
     expect(calls[0]!.method).toBe('PUT')
     expect(calls[0]!.url).toBe('https://api.agentchat.test/v1/agents/me/wake-webhook')
     expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
@@ -280,7 +281,7 @@ describe('agentchat_set_webhook handler', () => {
 
   it('rewake: sent only when chosen — true and false travel as given, omitted means the server default', async () => {
     for (const rewake of [true, false] as const) {
-      const { impl, calls } = fetchStub(() => json(200, { state: 'active', rewake }))
+      const { impl, calls } = fetchStub(() => json(200, { wake_webhook: { state: 'active', rewake } }))
       const result = await setWebhook.createHandler(makeCtx(impl))({
         url: 'https://hooks.example/wake',
         secret: 'shhh-0123456789abcdef',
@@ -295,12 +296,34 @@ describe('agentchat_set_webhook handler', () => {
       })
       // The server's record (rewake included) passes through, with no note.
       const payload = JSON.parse(firstText(result)) as Record<string, unknown>
-      expect(payload).toMatchObject({ ok: true, rewake })
+      expect(payload).toMatchObject({ ok: true, wake_webhook: { rewake } })
       expect(payload).not.toHaveProperty('rewake_note')
     }
-    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
+    const { impl, calls } = fetchStub(() => json(200, { wake_webhook: { state: 'active' } }))
     await setWebhook.createHandler(makeCtx(impl))({ url: 'https://hooks.example/wake', secret: 'shhh-0123456789abcdef' })
     expect(calls[0]!.body).not.toHaveProperty('rewake')
+  })
+
+  it('shows the subscription the server answers under wake_webhook; top-level keys outside it are not passed through (0.5.2)', async () => {
+    // No server sends a flat record (PUT answers { wake_webhook } only); before
+    // 0.5.2 such keys were spread into the result, now only the envelope is.
+    // The wake secret is built at run time: no credential-shaped literal.
+    const wakeSecret = ['shhh', 'x'.repeat(16)].join('-')
+    const { impl } = fetchStub(() => json(200, { state: 'active', rewake: true, wake_webhook: { state: 'active', rewake: true } }))
+    const payload = JSON.parse(
+      firstText(await setWebhook.createHandler(makeCtx(impl))({ url: 'https://hooks.example/wake', secret: wakeSecret, rewake: true })),
+    ) as Record<string, unknown>
+    expect(payload).toEqual({
+      ok: true,
+      wake_webhook: { state: 'active', rewake: true },
+      next: 'Call agentchat_test_webhook now to prove a wake reaches you.',
+    })
+    // A flat record alone carries no subscription: rewake counts as not echoed.
+    const flat = fetchStub(() => json(200, { state: 'active', rewake: true }))
+    const flatPayload = JSON.parse(
+      firstText(await setWebhook.createHandler(makeCtx(flat.impl))({ url: 'https://hooks.example/wake', secret: wakeSecret, rewake: true })),
+    ) as Record<string, unknown>
+    expect(flatPayload).toEqual({ ok: true, rewake_note: setWebhook.REWAKE_IGNORED_NOTE, next: 'Call agentchat_test_webhook now to prove a wake reaches you.' })
   })
 
   it('rewake in the input schema: a plain optional boolean; blanks mean unset, "true"/"false" mean the booleans, false is never blank', () => {

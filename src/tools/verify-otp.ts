@@ -1,7 +1,8 @@
+import { AgentChatClient } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { restTransport, rethrowWithGuidance } from './_rest.js'
+import { isUnreadAnswer, rethrowWithGuidance, watchAnswers } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 
 export const NAME = 'agentchat_verify_otp'
@@ -49,25 +50,34 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async () => {
-        const http = restTransport(ctx.rest, { withAuth: false })
+        // The SDK's static verify call: no API key on the wire and one
+        // attempt only — codes are single-use, so a retried POST could burn
+        // the attempt. The session's fetch carries the product identity.
+        const watch = watchAnswers(ctx.rest.fetchImpl)
         let data: unknown
         try {
-          // retry:'never' mirrors the SDK's own verify call — codes are
-          // single-use, so an auto-retried POST could burn the attempt.
-          const res = await http.request<unknown>('POST', '/v1/register/verify', {
-            body: { pending_id, code },
-            retry: 'never',
+          const minted = await AgentChatClient.verify(pending_id, code, {
+            baseUrl: ctx.rest.apiBase,
+            fetch: watch.fetch,
           })
-          data = res.data
+          // The two fields this tool shows; the SDK's ready client for the
+          // new key is not kept (the key is handed to the caller instead).
+          data = { api_key: minted.apiKey, agent: minted.agent }
         } catch (err) {
-          rethrowWithGuidance(err, {
-            INVALID_CODE:
-              'Re-check the 6 digits from the NEWEST verification email; codes are single-use.',
-            CODE_EXPIRED:
-              'The code expired. Call agentchat_register again to get a fresh one.',
-            PENDING_NOT_FOUND:
-              'No pending registration matches this pending_id (it may have expired or already completed). Call agentchat_register again.',
-          })
+          // A 2xx whose body the SDK could not read (empty or null): the
+          // server reported success without a key — the case the "no
+          // api_key" error below is for.
+          if (!isUnreadAnswer(err, watch.answeredEmpty())) {
+            rethrowWithGuidance(err, {
+              INVALID_CODE:
+                'Re-check the 6 digits from the NEWEST verification email; codes are single-use.',
+              CODE_EXPIRED:
+                'The code expired. Call agentchat_register again to get a fresh one.',
+              PENDING_NOT_FOUND:
+                'No pending registration matches this pending_id (it may have expired or already completed). Call agentchat_register again.',
+            })
+          }
+          data = null
         }
         const parsed = ResponseSchema.safeParse(data)
         if (!parsed.success) {

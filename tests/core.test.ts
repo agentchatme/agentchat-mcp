@@ -381,7 +381,7 @@ describe('buildMcpServer — authenticated session', () => {
   })
 
   it('sets the wake webhook over PUT with Bearer auth and passes the state through', async () => {
-    const { impl, calls } = fetchStub(() => json(200, { state: 'active' }))
+    const { impl, calls } = fetchStub(() => json(200, { wake_webhook: { state: 'active' } }))
     vi.stubGlobal('fetch', impl)
     const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: KEY })
     const { client, close } = await connect(server)
@@ -391,7 +391,7 @@ describe('buildMcpServer — authenticated session', () => {
         arguments: { url: 'https://hooks.example/wake', secret: 'shhh-long-secret' },
       })
       expect(result.isError).toBeFalsy()
-      expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, state: 'active' })
+      expect(JSON.parse(firstText(result))).toMatchObject({ ok: true, wake_webhook: { state: 'active' } })
       expect(calls).toHaveLength(1)
       expect(calls[0]!.method).toBe('PUT')
       expect(calls[0]!.url).toBe('https://x.example/v1/agents/me/wake-webhook')

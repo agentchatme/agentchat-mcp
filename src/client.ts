@@ -135,7 +135,7 @@ export class IdentityProvider implements IdentitySource {
   }
 
   /**
-   * Raw REST view of the CURRENT identity, resolved freshly like the client:
+   * The CURRENT identity as plain values, resolved freshly like the client:
    * the identity's api_base (or the configured default) plus its key, or a
    * key-less view of the default base when no identity exists yet — that's
    * what lets agentchat_register run before any sign-in.

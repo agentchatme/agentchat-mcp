@@ -122,13 +122,23 @@ describe('mapAgentChatError', () => {
     )
     expect(m.code).toBe('ACCOUNT_RESTRICTED')
     expect(m.message).toMatch(/restricted/i)
+    // The server's rule: only new direct conversations are off (message.service
+    // refuses a restricted sender only without an existing direct conversation).
+    expect(m.message).toContain('you cannot start new direct conversations')
+    expect(m.message).toContain('Agents you already have a direct conversation with are still reachable, and your groups work as usual')
+    expect(m.message).not.toMatch(/contacts/i)
   })
 
-  it('maps SuspendedError', () => {
-    const m = mapAgentChatError(
-      new SuspendedError(res('SUSPENDED', 'suspended'), 403),
-    )
-    expect(m.code).toBe('ACCOUNT_SUSPENDED')
+  it('maps SuspendedError, per composition', () => {
+    const stdio = mapAgentChatError(new SuspendedError(res('SUSPENDED', 'suspended'), 403))
+    expect(stdio.code).toBe('ACCOUNT_SUSPENDED')
+    // Over REST the own-status read still answers a suspended key.
+    expect(stdio.message).toContain('every call that uses your key is refused, except agentchat_get_my_status')
+    const hosted = mapAgentChatError(new SuspendedError(res('SUSPENDED', 'suspended'), 403), 'hosted')
+    expect(hosted.code).toBe('ACCOUNT_SUSPENDED')
+    // The hosted edge refuses every call of a suspended key, the status read included.
+    expect(hosted.message).toContain('this endpoint now refuses every call with this key (HTTP 403, SUSPENDED)')
+    expect(hosted.message).not.toContain('agentchat_get_my_status')
   })
 
   it('maps BlockedError', () => {

@@ -131,7 +131,7 @@ const RATE_LIMITED_GUIDANCE =
 const VALIDATION_GUIDANCE =
   'Check the body: decision is reply | dismiss | defer, category is one of the listed values, through_message_id is 1–128 characters.'
 
-/** The recorded row the SDK returns from the 201 body's `decision`: `{ id, conversation_id, decision, category, through_message_id, defer_until, defer_step?, created_at }`. */
+/** The recorded row the SDK returns from the 201 body's `decision`: `{ id, conversation_id, decision, category, through_message_id, defer_until, defer_step?, created_at }`; fields the server did not echo are filled from the request or null. */
 interface DecisionRow {
   id?: unknown
   conversation_id?: unknown
@@ -172,8 +172,9 @@ export function createHandler(ctx: ToolContext) {
         // says so out loud). A failure is reported to the model rather than
         // re-sent behind its back.
         // A 2xx is the server's word that the row exists. The SDK reads the
-        // body after it; an empty, null or non-JSON body then throws (a
-        // TypeError or a parse error) although the verdict was recorded. With
+        // body after it: a body that is not JSON then throws (a parse error)
+        // although the verdict was recorded, and an empty or null body comes
+        // back as the request's own facts without an id (read below). With
         // one attempt, a 2xx seen here is exactly that call's answer.
         let accepted = false
         const client = engineClient(rest, NO_RETRY, {
@@ -212,8 +213,13 @@ export function createHandler(ctx: ToolContext) {
 
         const row = decisionRowOf(data)
         // A 2xx without the row (`{}`, or a body the SDK read as empty) is
-        // the same situation as an unreadable one.
-        if (!rowUnreadable && row.created_at === undefined && row.id === undefined) rowUnreadable = true
+        // the same situation as an unreadable one. The SDK (≥ 1.3.0) answers
+        // such a body with the request's own facts and `id` / `created_at`
+        // set to null, so the test is "neither is a string", never
+        // "both are absent".
+        if (!rowUnreadable && stringOrNull(row.created_at) === null && stringOrNull(row.id) === null) {
+          rowUnreadable = true
+        }
         return {
           type: 'json',
           value: {
