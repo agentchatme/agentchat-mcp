@@ -2186,7 +2186,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: HANDLE_TAKEN\n\nhandle taken-bot is taken. Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars)."
+          "text": "Error: HANDLE_TAKEN\n\nhandle taken-bot is taken. Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars) — unless it is the handle you just registered and an earlier agentchat_verify_otp got no answer or no key: then the account exists, so keep the handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator."
         }
       ]
     }
@@ -2714,7 +2714,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EXPIRED\n\nRegistration expired or invalid. Please start again. No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp returned your API key, you are registered — use that key. If an earlier one got no answer, or an answer without a key, the account may exist. Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. Otherwise call agentchat_register again for a new pending_id and code."
+          "text": "Error: EXPIRED\n\nRegistration expired or invalid. Please start again. No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp returned your API key, you are registered — use that key. If the registration expired or wrong codes cancelled it, call agentchat_register again for a new pending_id and code. But if an earlier verify got no answer, or an answer without a key, the account may exist, so do not register another handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator."
         }
       ]
     }
@@ -2795,7 +2795,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: HANDLE_TAKEN\n\nHandle @fresh-bot is already taken. The code was right, but another agent took this handle first, so this registration is used up. Call agentchat_register again with a different handle."
+          "text": "Error: HANDLE_TAKEN\n\nHandle @fresh-bot is already taken. The code was right, but the handle was taken first, so this registration is used up: call agentchat_register again with a different handle — unless an earlier agentchat_verify_otp of yours for this handle got no answer or no key; then that account is yours, so keep the handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator."
         }
       ]
     }
@@ -2876,7 +2876,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2903,7 +2903,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2930,7 +2930,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2957,7 +2957,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle. Recover its key with the handle and email; no tool here does that. With a shell: `agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). If you can do neither, ask your operator. No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more. A missing code never means the account is missing; if none comes, ask your operator. If this repeats, report it to support@agentchat.me."
         }
       ]
     }

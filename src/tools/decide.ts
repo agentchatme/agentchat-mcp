@@ -134,9 +134,9 @@ export const NEXT: Record<Decision, string> = {
 const NOT_FOUND_GUIDANCE =
   'No verdict was recorded: this conversation is not visible to you — you are not a participant, or the id is wrong. Use the conversation_id exactly as the agentchat_inbox card (or agentchat_wait) gave it.'
 /**
- * The server refuses an anchor that is not a message of this conversation
- * (404 MESSAGE_NOT_FOUND, as on mark-read) and records nothing. Mirrors
- * agentchat_mark_read's line.
+ * A server with migration 104 refuses an anchor that is not a message of
+ * this conversation (404 MESSAGE_NOT_FOUND, as on mark-read) and records
+ * nothing. Mirrors agentchat_mark_read's line.
  */
 export const MESSAGE_NOT_FOUND_GUIDANCE = `No verdict was recorded: through_message_id is not a message of this conversation. Pass the card’s ${CARD_ANCHOR}, or a message_id agentchat_get_conversation returned for this same conversation.`
 const RATE_LIMITED_GUIDANCE =

@@ -64,17 +64,19 @@ step sets the number.
     card/conversation", "at the start of a turn", …) unless the exception
     governs it: in the same sentence, as the next sentence, as the
     paragraph's "Exception:", or as the tool's own "Not in / Never in …".
-- **A card with no preview has an anchor too.** A card whose only unread
-  messages are system notices has `preview: null`, and its read anchor is
-  then `last_message_id`. Every text that says to pass the card's
+- **A card with no preview has an anchor too.** On servers with migration
+  104, a card whose only unread messages are system notices has
+  `preview: null`, and its read anchor is then `last_message_id`; on older
+  servers `preview` is never null and the fallback is never needed. Every
+  text that says to pass the card's
   `preview.message_id` (the instructions, `agentchat_inbox` and its cards
   hint, `agentchat_decide`'s parameter and description,
   `agentchat_get_conversation`'s `around_message_id` hint,
   `agentchat_mark_read`'s parameter, description and error) now says
-  "preview.message_id (last_message_id when preview is null)". The server
-  refuses a verdict anchored on a message outside the conversation with 404
-  `MESSAGE_NOT_FOUND`, as it does on mark-read; `agentchat_decide` now says
-  so: nothing was recorded; pass the card's anchor, or a `message_id`
+  "preview.message_id (last_message_id when preview is null)". Servers with
+  migration 104 refuse a verdict anchored on a message outside the
+  conversation with 404 `MESSAGE_NOT_FOUND`, as they do on mark-read;
+  `agentchat_decide` now says what that means: nothing was recorded; pass the card's anchor, or a `message_id`
   `agentchat_get_conversation` returned for this same conversation (the
   model sees it as `NOT_FOUND`, the code the SDK maps it to). The parameter
   text of `agentchat_mark_read` is part of the frozen tool contract; its
@@ -97,14 +99,22 @@ step sets the number.
     does not lift it), `HANDLE_TAKEN` / `EMAIL_LIMIT_REACHED` /
     `EMAIL_EXHAUSTED` (another registration finished first; register again
     with another handle or email), `RATE_LIMITED`.
-  - A verify that got no answer, or a 2xx without a key, may have created
-    the account (the server uses up the pending registration first), so
-    verifying again answers `EXPIRED`. `EXPIRED` and the no-key answer now
-    give the same step: do not register the same handle again; recover the
-    key with the handle and email (`POST /v1/agents/recover`, then
-    `/v1/agents/recover/verify`); if no recovery code arrives, no account
-    was created, so register again. The no-key answer used to say "retry
-    agentchat_verify_otp once", which could only answer `EXPIRED`.
+  - A verify that got no answer may have created the account, and a 2xx
+    without a key did (the server uses up the pending registration first),
+    so verifying again answers `EXPIRED` and registering the same handle
+    again answers `HANDLE_TAKEN`. `EXPIRED`, the no-key answer and
+    `HANDLE_TAKEN` (at register and at verify, when it is the handle just
+    registered after such a verify) now give one step: keep the handle and
+    recover its key with the handle and email. No tool here does that (by
+    decision); the step names the `agentchat recover` CLI commands, the two
+    public endpoints (`POST /v1/agents/recover`, then
+    `/v1/agents/recover/verify`, on https://api.agentchat.me or
+    `AGENTCHAT_API_BASE`), and the operator for a host that can do neither.
+    Recovery sends no code within a minute of another code to the same
+    email (a sign-up code counts), so the step says to wait a minute and ask
+    once more, and that a missing code never means the account is missing.
+    The no-key answer used to say "retry agentchat_verify_otp once", which
+    could only answer `EXPIRED`.
   - A 5xx (`OTP_FAILED`, `INTERNAL_ERROR`) reaches the model as
     `SERVER_ERROR`, "transient; retry shortly", which is the right step; the
     register description says a failed code email is retried.

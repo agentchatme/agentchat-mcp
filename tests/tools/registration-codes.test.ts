@@ -8,6 +8,7 @@ import { buildMcpServer } from '../../src/lib.js'
 import { Semaphore } from '../../src/semaphore.js'
 import * as registerAccount from '../../src/tools/register.js'
 import * as verifyOtp from '../../src/tools/verify-otp.js'
+import { RECOVER_THE_KEY } from '../../src/tools/_texts.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
 // ─── Sign-up errors: only codes the server sends, each with its next step ──
@@ -69,8 +70,10 @@ const VERIFY_CODES: Record<string, ServerCode> = {
 const NOT_CODES: ReadonlySet<string> = new Set([
   'API', // "API key"
   'POST', // the recovery request's HTTP method
+  'HTTP',
   'MCP', // "MCP server", "MCP client"
-  'AGENTCHAT_API_KEY', // the stdio server's environment variable
+  'AGENTCHAT_API_KEY', // the stdio server's environment variables
+  'AGENTCHAT_API_BASE',
   'WITHOUT',
   'EXACTLY',
   'ONCE',
@@ -208,7 +211,7 @@ describe('the sign-up tools name only codes the server sends', () => {
 const REGISTER_NEXT: Record<string, RegExp> = {
   VALIDATION_ERROR: /Check the arguments: `email` is one email address, `handle` 3-30 lowercase letters/,
   INVALID_HANDLE: /reserved or not a valid handle\. Pick a different handle and call agentchat_register again/,
-  HANDLE_TAKEN: /Pick a different handle and call agentchat_register again/,
+  HANDLE_TAKEN: /Pick a different handle and call agentchat_register again .*— unless it is the handle you just registered and an earlier agentchat_verify_otp got no answer or no key: then the account exists, so keep the handle\. Recover its key/,
   EMAIL_LIMIT_REACHED: /already backs as many live agents as it may\. Register with a different email address .*or delete one of the agents this email backs/,
   EMAIL_EXHAUSTED: /used all of its registrations \(deleted agents count too\).*Register with a different email address/,
   OTP_COOLDOWN: /A code was emailed to this address moments ago\. If you have the pending_id from that call, use that code with agentchat_verify_otp; otherwise wait the retry time, then call agentchat_register again/,
@@ -220,11 +223,11 @@ const REGISTER_NEXT: Record<string, RegExp> = {
 
 const VERIFY_NEXT: Record<string, RegExp> = {
   VALIDATION_ERROR: /Check the arguments: `pending_id` exactly as agentchat_register returned it, `code` the 6 digits from the email/,
-  EXPIRED: /No pending registration has this pending_id any more.*If an earlier agentchat_verify_otp returned your API key, you are registered — use that key\. If an earlier one got no answer, or an answer without a key, the account may exist\. Do not register the same handle again; recover its key with the handle and email \(POST \/v1\/agents\/recover .*\)\. If no recovery code arrives, no account was created: call agentchat_register again\. Otherwise call agentchat_register again/,
+  EXPIRED: /No pending registration has this pending_id any more.*If an earlier agentchat_verify_otp returned your API key, you are registered — use that key\. If the registration expired or wrong codes cancelled it, call agentchat_register again for a new pending_id and code\. But if an earlier verify got no answer, or an answer without a key, the account may exist, so do not register another handle\. Recover its key/,
   OTP_ATTEMPTS_EXHAUSTED: /Too many wrong codes were tried, so this registration is cancelled\. Call agentchat_register again/,
   OTP_EMAIL_LOCKED: /Too many codes were tried for this email.*Wait the retry time before calling agentchat_verify_otp again; registering again does not lift the wait/,
   INVALID_CODE: /Re-check the 6 digits from the NEWEST verification email and try again.*OTP_ATTEMPTS_EXHAUSTED/,
-  HANDLE_TAKEN: /The code was right, but another agent took this handle first.*Call agentchat_register again with a different handle/,
+  HANDLE_TAKEN: /The code was right, but the handle was taken first, so this registration is used up: call agentchat_register again with a different handle — unless an earlier agentchat_verify_otp of yours for this handle got no answer or no key; then that account is yours, so keep the handle\. Recover its key/,
   EMAIL_LIMIT_REACHED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
   EMAIL_EXHAUSTED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
   RATE_LIMITED: /^Rate limit exceeded\. Too many requests\. Try again in 600 seconds\. Too many verification requests came from this network address .*Wait before calling agentchat_verify_otp again/m,
@@ -261,18 +264,39 @@ describe('each server answer reaches the model with its code and the right next 
 })
 
 describe('an earlier verify that may have created the account', () => {
-  it('EXPIRED and a 2xx without a key give the same step: recover by handle and email, never register the same handle or verify again', async () => {
+  it('EXPIRED, a 2xx without a key and HANDLE_TAKEN on the handle you just registered all give the recovery step; none says to verify again', async () => {
     const expired = await verifyText(() => serverAnswer('EXPIRED', VERIFY_CODES['EXPIRED']!))
     const noKey = await verifyText(() => json(201, { agent: { handle: 'fresh-bot' } }))
-    for (const text of [expired, noKey]) {
-      expect(text).toContain(verifyOtp.RECOVER_THE_KEY)
-      expect(text).not.toMatch(/retry agentchat_verify_otp/i)
+    const takenAtRegister = await registerText(() => serverAnswer('HANDLE_TAKEN', REGISTER_CODES['HANDLE_TAKEN']!))
+    const takenAtVerify = await verifyText(() => serverAnswer('HANDLE_TAKEN', VERIFY_CODES['HANDLE_TAKEN']!))
+    for (const [name, text] of [['EXPIRED', expired], ['no key', noKey], ['register HANDLE_TAKEN', takenAtRegister], ['verify HANDLE_TAKEN', takenAtVerify]] as const) {
+      expect(text, name).toContain(RECOVER_THE_KEY)
+      expect(text, name).not.toMatch(/retry agentchat_verify_otp/i)
     }
-    expect(verifyOtp.RECOVER_THE_KEY).toMatch(/^Do not register the same handle again; recover its key with the handle and email/)
-    expect(verifyOtp.DESCRIPTION).toContain('recover the key with handle and email; do not register the same handle again')
+    // The server said success: the account exists, under a handle the agent keeps.
+    expect(noKey).toContain('the account exists with a key you do not hold')
+    expect(noKey).toContain('Do not register another handle.')
+    expect(verifyOtp.DESCRIPTION).toContain('the account may exist: recover its key with the handle and email, and do not register another handle')
+    expect(registerAccount.DESCRIPTION).toContain('unless HANDLE_TAKEN names the handle you just registered after a verify that got no answer: then recover its key')
     for (const word of capitalizedWords(noKey)) {
       if (NOT_CODES.has(word) || word === 'INTERNAL_ERROR') continue
       expect(Object.keys(VERIFY_CODES), `no-key text names ${word}`).toContain(word)
     }
+  })
+
+  it('the recovery step says where it runs, and never reads a missing code as a missing account', () => {
+    // No tool in this package recovers a key (by decision): the step names the
+    // agentchat CLI, the two public endpoints, and the operator for a host
+    // that can do neither.
+    expect(RECOVER_THE_KEY).toMatch(/^Recover its key with the handle and email; no tool here does that\./)
+    expect(RECOVER_THE_KEY).toContain('`agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`')
+    expect(RECOVER_THE_KEY).toContain('POST /v1/agents/recover {"email","handle"}, then POST /v1/agents/recover/verify {"pending_id","code"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set)')
+    expect(RECOVER_THE_KEY).toContain('If you can do neither, ask your operator.')
+    // Recovery answers the same and sends nothing within a minute of another
+    // code to the same email (a sign-up code counts), past the hourly cap, or
+    // when the send fails: a missing code proves nothing.
+    expect(RECOVER_THE_KEY).toContain('No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more.')
+    expect(RECOVER_THE_KEY).toContain('A missing code never means the account is missing; if none comes, ask your operator.')
+    expect(RECOVER_THE_KEY).not.toMatch(/no account was created|register again/i)
   })
 })

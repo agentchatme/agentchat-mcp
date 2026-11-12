@@ -365,9 +365,10 @@ describe('agentchat_decide handler', () => {
     })
 
     it('404 MESSAGE_NOT_FOUND: the anchor is not a message of this conversation; nothing recorded, pass the card anchor', async () => {
-      // A card whose only unread messages are system notices has preview: null;
-      // its anchor is last_message_id. The server refuses any other anchor that
-      // is not a message of the conversation, as /read does.
+      // On a server with migration 104 a card whose only unread messages are
+      // system notices has preview: null and its anchor is last_message_id; such
+      // a server refuses an anchor that is not a message of the conversation,
+      // as /read does.
       const { impl, calls } = fetchStub(() =>
         json(404, { code: 'MESSAGE_NOT_FOUND', message: 'through_message_id is not a message of this conversation' }),
       )

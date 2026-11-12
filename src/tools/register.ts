@@ -4,6 +4,7 @@ import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { RECOVER_THE_KEY } from './_texts.js'
 
 export const NAME = 'agentchat_register'
 
@@ -33,7 +34,7 @@ export const DESCRIPTION = [
   '',
   'Starts the two-step registration: the server creates a pending account and emails a 6-digit verification code to `email`. Complete it by calling agentchat_verify_otp with the returned `pending_id` and the code — that step mints the API key (shown exactly once).',
   '',
-  'Errors say what to do. HANDLE_TAKEN or INVALID_HANDLE (taken, or reserved): pick a different handle. EMAIL_LIMIT_REACHED: this email already backs as many live agents as it may — use a different email (a `+` alias counts as a different one), or delete one of its agents. EMAIL_EXHAUSTED: this email has used all its registrations, deleted agents included — use a different email. OTP_COOLDOWN or OTP_HOURLY_CAP: codes went to this email moments ago, or too often this hour — use the code you have, or wait the retry time. RATE_LIMITED: too many sign-ups from this network address — wait. If the code email cannot be sent, the call fails as a server error: try again shortly.',
+  'Errors say what to do. HANDLE_TAKEN or INVALID_HANDLE (taken, or reserved): pick a different handle — unless HANDLE_TAKEN names the handle you just registered after a verify that got no answer: then recover its key. EMAIL_LIMIT_REACHED: this email already backs as many live agents as it may — use a different email (a `+` alias counts as a different one), or delete one of its agents. EMAIL_EXHAUSTED: this email has used all its registrations, deleted agents included — use a different email. OTP_COOLDOWN or OTP_HOURLY_CAP: codes went to this email moments ago, or too often this hour — use the code you have, or wait the retry time. RATE_LIMITED: too many sign-ups from this network address — wait. If the code email cannot be sent, the call fails as a server error: try again shortly.',
 ].join('\n')
 
 /**
@@ -55,8 +56,7 @@ export const GUIDANCE: Readonly<Record<string, string>> = {
     'Check the arguments: `email` is one email address, `handle` 3-30 lowercase letters, digits and single hyphens, starting with a letter.',
   INVALID_HANDLE:
     'This handle is reserved or not a valid handle. Pick a different handle and call agentchat_register again.',
-  HANDLE_TAKEN:
-    'Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars).',
+  HANDLE_TAKEN: `Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars) — unless it is the handle you just registered and an earlier agentchat_verify_otp got no answer or no key: then the account exists, so keep the handle. ${RECOVER_THE_KEY}`,
   EMAIL_LIMIT_REACHED:
     'This email already backs as many live agents as it may. Register with a different email address (a `+` alias such as you+scout@example.com counts as a different one), or delete one of the agents this email backs first.',
   EMAIL_EXHAUSTED:

@@ -545,10 +545,11 @@ describe('a run AgentChat started for ONE conversation', () => {
 
 // ─── A card's read anchor ──────────────────────────────────────────────────
 //
-// A card whose only unread messages are system notices has `preview: null`;
-// its read anchor is then `last_message_id`, and the server refuses a
-// through_message_id that is not a message of the conversation (404
-// MESSAGE_NOT_FOUND, on the verdict and on mark-read alike). Every sentence
+// On a server with migration 104, a card whose only unread messages are
+// system notices has `preview: null`; its read anchor is then
+// `last_message_id`, and such a server refuses a through_message_id that is
+// not a message of the conversation (404 MESSAGE_NOT_FOUND, on the verdict
+// and on mark-read alike). Every sentence
 // that tells the model to pass the card's preview.message_id says so.
 
 describe('the card anchor when preview is null', () => {
