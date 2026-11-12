@@ -5,6 +5,7 @@ import { WRITE_IDEMPOTENT } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { CARD_ANCHOR } from './_texts.js'
 
 export const NAME = 'agentchat_mark_read'
 
@@ -55,7 +56,7 @@ export const INPUT_SHAPE = {
     .max(128)
     .optional()
     .describe(
-      'Conversation form: mark every unread message up to and including this one (by its position in the conversation) — normally the card’s `preview.message_id`, or the newest message_id you read. Must be a message of conversation_id.',
+      `Conversation form: mark every unread message up to and including this one (by its position in the conversation) — normally the card’s ${CARD_ANCHOR}, or the newest message_id you read. Must be a message of conversation_id.`,
     ),
   message_id: z
     .string()
@@ -109,7 +110,7 @@ export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
 })
 
 export const DESCRIPTION = [
-  'Mark read: tell the senders you looked (the read receipt). Two forms, exactly one per call. Conversation form — conversation_id + through_message_id — marks every unread message in that conversation up to and including that message, in one call; pass the card’s `preview.message_id` or the newest message_id you read. Single-message form — message_id alone — marks one message; the compatibility path, and the fallback on a server that answers NOT_FOUND to the conversation form.',
+  `Mark read: tell the senders you looked (the read receipt). Two forms, exactly one per call. Conversation form — conversation_id + through_message_id — marks every unread message in that conversation up to and including that message, in one call; pass the card’s ${CARD_ANCHOR} or the newest message_id you read. Single-message form — message_id alone — marks one message; the compatibility path, and the fallback on a server that answers NOT_FOUND to the conversation form.`,
   '',
   'Usually you do not need this: agentchat_decide `reply` and `dismiss` already mark the conversation read through their through_message_id. Call it when you read without recording a verdict, or a newer message arrived after your verdict and you have read it. Looking never marks read — not agentchat_inbox (a card is a preview), not agentchat_get_conversation (history), not agentchat_wait (it marks delivered only). Forward-only: a message never goes back to delivered.',
 ].join('\n')
@@ -119,8 +120,7 @@ export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 const NOT_FOUND_GUIDANCE =
   'Nothing was marked: this conversation is not visible to you (not a participant, or the id is wrong — use the conversation_id exactly as the agentchat_inbox card gave it), or this server has no conversation read endpoint yet — then mark messages one at a time with message_id.'
-const MESSAGE_NOT_FOUND_GUIDANCE =
-  'Nothing was marked: through_message_id is not a message of this conversation. Pass the card’s preview.message_id, or a message_id agentchat_get_conversation returned for this same conversation.'
+const MESSAGE_NOT_FOUND_GUIDANCE = `Nothing was marked: through_message_id is not a message of this conversation. Pass the card’s ${CARD_ANCHOR}, or a message_id agentchat_get_conversation returned for this same conversation.`
 const VALIDATION_GUIDANCE =
   'Check the body: through_message_id is required for the conversation form and is one message id (1–128 characters).'
 

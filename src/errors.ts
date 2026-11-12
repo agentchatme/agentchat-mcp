@@ -31,16 +31,37 @@ import type { ServerMode } from './instructions.js'
 // dismiss endpoint is not "the resource does not exist".
 const TOOL_GUIDANCE = Symbol.for('@agentchatme/mcp.toolGuidance')
 const TOOL_GUIDANCE_REPLACES = Symbol.for('@agentchatme/mcp.toolGuidanceReplaces')
-type Guided = { [TOOL_GUIDANCE]?: string; [TOOL_GUIDANCE_REPLACES]?: boolean }
+const WIRE_MESSAGE = Symbol.for('@agentchatme/mcp.wireMessage')
+type Guided = { [TOOL_GUIDANCE]?: string; [TOOL_GUIDANCE_REPLACES]?: boolean; [WIRE_MESSAGE]?: string }
 
-/** Record the endpoint-specific guidance a tool attached to a server error. */
+/**
+ * Record the endpoint-specific guidance a tool attached to a server error,
+ * and (`wireMessage`) the server's own message from before the guidance was
+ * appended to it.
+ */
 export function attachToolGuidance(
   err: object,
   guidance: string,
-  options: { replace?: boolean } = {},
+  options: { replace?: boolean; wireMessage?: string } = {},
 ): void {
   ;(err as Guided)[TOOL_GUIDANCE] = guidance
   if (options.replace) (err as Guided)[TOOL_GUIDANCE_REPLACES] = true
+  if (options.wireMessage !== undefined) (err as Guided)[WIRE_MESSAGE] = options.wireMessage
+}
+
+/** The server's own message: as it came, before any tool guidance was appended. */
+function wireMessageOf(err: AgentChatError): string {
+  return (err as Guided)[WIRE_MESSAGE] ?? err.message ?? ''
+}
+
+/**
+ * Sentences joined with a space, each but the last ending in a period if it
+ * did not end a sentence already ("Invalid or expired verification code" +
+ * guidance reads "…verification code. Re-check…"). Empty parts drop out.
+ */
+export function joinSentences(...parts: readonly string[]): string {
+  const kept = parts.map((part) => part.trim()).filter((part) => part.length > 0)
+  return kept.map((part, i) => (i < kept.length - 1 && !/[.!?]$/.test(part) ? `${part}.` : part)).join(' ')
 }
 
 /** The guidance a tool attached via attachToolGuidance, if any. */
@@ -174,6 +195,16 @@ export function mapAgentChatError(
     // (inbox polling, test-wake cap, …), else the platform-wide fallback. The
     // "Retry after" line itself is added by the handler boundary.
     const guidance = toolGuidanceOf(err) ?? RATE_LIMITED_FALLBACK_GUIDANCE
+    if (retryAfterSeconds === undefined) {
+      // No retry hint: the server's own message is then the only place the
+      // wait is stated (the per-address limit in front of sign-up answers
+      // "Too many requests. Try again in 3600 seconds." with no Retry-After),
+      // so it is kept, between the headline and the guidance.
+      return {
+        code: 'RATE_LIMITED',
+        message: joinSentences('Rate limit exceeded', wireMessageOf(err), guidance),
+      }
+    }
     return {
       code: 'RATE_LIMITED',
       message: `Rate limit exceeded${

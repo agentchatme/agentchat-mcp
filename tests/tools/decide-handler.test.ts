@@ -158,9 +158,9 @@ describe('agentchat_decide input schema', () => {
       '`reply` and `dismiss` mark the conversation read through through_message_id',
     )
     expect(decide.DESCRIPTION).toContain('`defer` leaves everything unread')
-    expect(decide.DESCRIPTION).toContain('Always pass through_message_id: the card’s `preview.message_id`, or for `reply` the newest message you read')
+    expect(decide.DESCRIPTION).toContain('Always pass through_message_id: the card’s preview.message_id (last_message_id when preview is null), or for `reply` the newest message you read')
     expect(decide.INPUT_SHAPE.through_message_id.description).toContain('Always pass it')
-    expect(decide.INPUT_SHAPE.through_message_id.description).toContain('preview.message_id')
+    expect(decide.INPUT_SHAPE.through_message_id.description).toContain('the agentchat_inbox card’s preview.message_id (last_message_id when preview is null)')
     expect(decide.INPUT_SHAPE.decision.description).toContain('marks nothing read')
     // The anchor stays optional on the wire for older servers.
     expect(shape.safeParse({ conversation_id: 'conv_1', decision: 'dismiss' }).success).toBe(true)
@@ -215,7 +215,7 @@ describe('agentchat_decide handler', () => {
       next: decide.NEXT.reply,
     })
     expect(decide.NEXT.reply).toBe(
-      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run AgentChat started for ONE conversation, stop instead.',
+      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run whose prompt opens “AgentChat started this run for ONE conversation”, stop instead.',
     )
   })
 
@@ -235,7 +235,7 @@ describe('agentchat_decide handler', () => {
       category: 'closing',
       through_message_id: null,
       defer_until: null,
-      next: 'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in a run AgentChat started for ONE conversation, stop instead.',
+      next: 'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in a run whose prompt opens “AgentChat started this run for ONE conversation”, stop instead.',
     })
   })
 
@@ -361,6 +361,29 @@ describe('agentchat_decide handler', () => {
       expect(text).toContain('Error: NOT_FOUND')
       expect(text).toContain('No verdict was recorded')
       expect(text).toContain('not a participant')
+      expect(calls).toHaveLength(1)
+    })
+
+    it('404 MESSAGE_NOT_FOUND: the anchor is not a message of this conversation; nothing recorded, pass the card anchor', async () => {
+      // A card whose only unread messages are system notices has preview: null;
+      // its anchor is last_message_id. The server refuses any other anchor that
+      // is not a message of the conversation, as /read does.
+      const { impl, calls } = fetchStub(() =>
+        json(404, { code: 'MESSAGE_NOT_FOUND', message: 'through_message_id is not a message of this conversation' }),
+      )
+      const result = await decide.createHandler(makeCtx(impl))({
+        conversation_id: 'conv_1',
+        decision: 'dismiss',
+        through_message_id: 'msg_elsewhere',
+      })
+      expect(result.isError).toBe(true)
+      const text = firstText(result)
+      expect(text).toContain('Error: NOT_FOUND')
+      expect(text).toContain(
+        'No verdict was recorded: through_message_id is not a message of this conversation. Pass the card’s preview.message_id (last_message_id when preview is null), or a message_id agentchat_get_conversation returned for this same conversation.',
+      )
+      // Not the not-a-participant advice: the conversation is fine, the anchor is not.
+      expect(text).not.toContain('not a participant')
       expect(calls).toHaveLength(1)
     })
 

@@ -77,7 +77,7 @@
             "tray_extra": {
               "added": "later"
             },
-            "next": "Decide per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: dismiss/defer right away for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); for the rest, agentchat_get_conversation to read, agentchat_send_message to answer, then record reply — never before the send. Then agentchat_inbox again if a conversation is live. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss)."
+            "next": "Decide per card with agentchat_decide, passing the card’s preview.message_id (last_message_id when preview is null) as through_message_id: dismiss/defer right away for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); for the rest, agentchat_get_conversation to read, agentchat_send_message to answer, then record reply — never before the send. Then agentchat_inbox again if a conversation is live. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss)."
           }
         }
       ]
@@ -247,7 +247,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: VALIDATION_ERROR\n\nbad limit Check the arguments: timeout_seconds is an integer 0–50, limit an integer 1–50."
+          "text": "Error: VALIDATION_ERROR\n\nbad limit. Check the arguments: timeout_seconds is an integer 0–50, limit an integer 1–50."
         }
       ]
     }
@@ -1041,7 +1041,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INVITE_NOT_FOUND\n\nno such invite No pending invite with this id is addressed to you — it was answered already, withdrawn, or its group was deleted. agentchat_list_group_invites shows what is still waiting."
+          "text": "Error: INVITE_NOT_FOUND\n\nno such invite. No pending invite with this id is addressed to you — it was answered already, withdrawn, or its group was deleted. agentchat_list_group_invites shows what is still waiting."
         }
       ]
     }
@@ -1380,7 +1380,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INVALID_WAKE_WEBHOOK_URL\n\nbad url for openclaw Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host."
+          "text": "Error: INVALID_WAKE_WEBHOOK_URL\n\nbad url for openclaw. Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host."
         }
       ]
     }
@@ -1408,7 +1408,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: WAKE_WEBHOOK_URL_UNRESOLVED\n\nno dns DNS did not answer for that host just now; check the hostname and try again."
+          "text": "Error: WAKE_WEBHOOK_URL_UNRESOLVED\n\nno dns. DNS did not answer for that host just now; check the hostname and try again."
         }
       ]
     }
@@ -1748,7 +1748,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: WAKE_WEBHOOK_NOT_CONFIGURED\n\nnone registered Register your wake webhook first with agentchat_set_webhook (url, secret, dialect), then test again."
+          "text": "Error: WAKE_WEBHOOK_NOT_CONFIGURED\n\nnone registered. Register your wake webhook first with agentchat_set_webhook (url, secret, dialect), then test again."
         }
       ]
     }
@@ -2186,7 +2186,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: HANDLE_TAKEN\n\nhandle taken-bot is taken Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars)."
+          "text": "Error: HANDLE_TAKEN\n\nhandle taken-bot is taken. Pick a different handle and call agentchat_register again (lowercase letters, digits, single hyphens; 3-30 chars)."
         }
       ]
     }
@@ -2213,7 +2213,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INVALID_HANDLE\n\nHandle is invalid or reserved This handle is reserved or not a valid handle. Pick a different handle and call agentchat_register again."
+          "text": "Error: INVALID_HANDLE\n\nHandle is invalid or reserved. This handle is reserved or not a valid handle. Pick a different handle and call agentchat_register again."
         }
       ]
     }
@@ -2240,7 +2240,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached This email already backs as many live agents as it may. Register with a different email address (a `+` alias such as you+scout@example.com counts as a different one), or delete one of the agents this email backs first."
+          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached. This email already backs as many live agents as it may. Register with a different email address (a `+` alias such as you+scout@example.com counts as a different one), or delete one of the agents this email backs first."
         }
       ]
     }
@@ -2267,7 +2267,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EMAIL_EXHAUSTED\n\nlimit reached This email has used all of its registrations (deleted agents count too) and cannot register another agent. Register with a different email address (a `+` alias counts as a different one)."
+          "text": "Error: EMAIL_EXHAUSTED\n\nlimit reached. This email has used all of its registrations (deleted agents count too) and cannot register another agent. Register with a different email address (a `+` alias counts as a different one)."
         }
       ]
     }
@@ -2321,7 +2321,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: RATE_LIMITED\n\nRate limit exceeded. Too many sign-up requests came from this network address (the cap counts requests per address, not per agent). Wait before calling agentchat_register again; calling at once does not help."
+          "text": "Error: RATE_LIMITED\n\nRate limit exceeded. Too many requests. Try again in 3600 seconds. Too many sign-up requests came from this network address (the cap counts requests per address, not per agent). Wait before calling agentchat_register again; calling at once does not help."
         }
       ]
     }
@@ -2687,7 +2687,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INVALID_CODE\n\nwrong code Re-check the 6 digits from the NEWEST verification email and try again; codes are single-use. Too many wrong codes cancel this registration (OTP_ATTEMPTS_EXHAUSTED), and then agentchat_register must be called again."
+          "text": "Error: INVALID_CODE\n\nwrong code. Re-check the 6 digits from the NEWEST verification email and try again; codes are single-use. Too many wrong codes cancel this registration (OTP_ATTEMPTS_EXHAUSTED), and then agentchat_register must be called again."
         }
       ]
     }
@@ -2714,7 +2714,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EXPIRED\n\nRegistration expired or invalid. Please start again. No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp already returned your API key, you are registered — use that key. Otherwise call agentchat_register again for a new pending_id and code."
+          "text": "Error: EXPIRED\n\nRegistration expired or invalid. Please start again. No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp returned your API key, you are registered — use that key. If an earlier one got no answer, or an answer without a key, the account may exist. Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. Otherwise call agentchat_register again for a new pending_id and code."
         }
       ]
     }
@@ -2795,7 +2795,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: HANDLE_TAKEN\n\nHandle @fresh-bot is already taken The code was right, but another agent took this handle first, so this registration is used up. Call agentchat_register again with a different handle."
+          "text": "Error: HANDLE_TAKEN\n\nHandle @fresh-bot is already taken. The code was right, but another agent took this handle first, so this registration is used up. Call agentchat_register again with a different handle."
         }
       ]
     }
@@ -2822,7 +2822,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached The code was right, but another registration with this email finished first and the email now backs as many live agents as it may; this registration is used up. Call agentchat_register again with a different email address (a `+` alias counts as a different one)."
+          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached. The code was right, but another registration with this email finished first and the email now backs as many live agents as it may; this registration is used up. Call agentchat_register again with a different email address (a `+` alias counts as a different one)."
         }
       ]
     }
@@ -2876,7 +2876,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key — the account state is unknown. Do NOT re-register yet; retry agentchat_verify_otp once, and if it fails report this to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2903,7 +2903,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key — the account state is unknown. Do NOT re-register yet; retry agentchat_verify_otp once, and if it fails report this to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2930,7 +2930,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key — the account state is unknown. Do NOT re-register yet; retry agentchat_verify_otp once, and if it fails report this to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
         }
       ]
     }
@@ -2957,7 +2957,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key — the account state is unknown. Do NOT re-register yet; retry agentchat_verify_otp once, and if it fails report this to support@agentchat.me."
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success but returned no api_key, so the account may exist with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register the same handle again; recover its key with the handle and email (POST /v1/agents/recover on the AgentChat API with {\"email\",\"handle\"}, then POST /v1/agents/recover/verify with the pending_id it returns and the emailed code). If no recovery code arrives, no account was created: call agentchat_register again. If this repeats, report it to support@agentchat.me."
         }
       ]
     }

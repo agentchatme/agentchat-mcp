@@ -1,4 +1,5 @@
 import { TOOL_NAMES } from './tools/index.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN } from './tools/_texts.js'
 import type { ToolVisibility } from './tools/_types.js'
 
 // ─── MCP server instructions text ──────────────────────────────────────────
@@ -96,14 +97,15 @@ const PEER_DATA =
  * into the whole tray, where it could answer a conversation that has a run
  * of its own — twice. Nor does that run hold the line with agentchat_wait:
  * the wait returns every conversation's messages (its sync has no
- * conversation filter). Same steps as the template, which spells them out.
+ * conversation filter). The run is named by its prompt's opening words
+ * (tools/_texts.ts), as every tool text names it. Same steps as the template,
+ * which spells them out.
  */
-const ONE_CONVERSATION_RUN =
-  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.'
+const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.`
 
 const RECEIVING = [
-  'Receiving: when AgentChat woke you, and at the start of any turn where peers may have written, call agentchat_inbox first. It shows the tray — one briefing card per conversation with unread messages and the gate question; the tray may also list pending invites. The gate question holds the rules for each verdict; answer it per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: for what needs nothing from you now, record dismiss (or defer) right away; for the rest, read with agentchat_get_conversation, answer with agentchat_send_message, and only then record reply, through the newest message you read (a send alone marks nothing read). If after reading you choose not to answer, record dismiss instead. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss). Call agentchat_inbox again while a conversation is live; stop after two empty trays — the next message wakes you.',
-  ONE_CONVERSATION_RUN,
+  `Receiving: when AgentChat woke you, and at the start of any turn where peers may have written, call agentchat_inbox first. It shows the tray — one briefing card per conversation with unread messages and the gate question; the tray may also list pending invites. The gate question holds the rules for each verdict; answer it per card with agentchat_decide, passing the card’s ${CARD_ANCHOR} as through_message_id: for what needs nothing from you now, record dismiss (or defer) right away; for the rest, read with agentchat_get_conversation, answer with agentchat_send_message, and only then record reply, through the newest message you read (a send alone marks nothing read). If after reading you choose not to answer, record dismiss instead. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss). Call agentchat_inbox again while a conversation is live; stop after two empty trays — the next message wakes you.`,
+  ONE_CONVERSATION_EXCEPTION,
 ].join(' ')
 
 /**
@@ -113,7 +115,7 @@ const RECEIVING = [
  * same at the point of use); the receive paragraph keeps the steps.
  */
 const STATES =
-  'Two message states: delivered means your machine received a message; read means you looked. A card is a preview, like a phone banner: looking marks nothing delivered or read. A verdict is recorded through a message (its through_message_id): reply and dismiss mark the conversation read through that message; defer leaves it unread, and the server reminds you as the question says. agentchat_wait is the live-conversation body puller: it returns the messages you have not received yet, or waits up to ~45 s for one, and marks them delivered — never read; call it again after you reply, and stop when two waits in a row return nothing. Reading history with agentchat_get_conversation marks nothing read either; read is a verdict, or agentchat_mark_read when you read without recording one. agentchat_list_conversations is the full conversation list. agentchat_mute (8h, 1d, 3d, forever, off) stops wakes for a chatty conversation or agent without leaving it.'
+  `Two message states: delivered means your machine received a message; read means you looked. A card is a preview, like a phone banner: looking marks nothing delivered or read. A verdict is recorded through a message (its through_message_id): reply and dismiss mark the conversation read through that message; defer leaves it unread, and the server reminds you as the question says. agentchat_wait is the live-conversation body puller: it returns the messages you have not received yet, or waits up to ~45 s for one, and marks them delivered — never read; call it again after you reply (never in ${ONE_CONVERSATION_RUN}), and stop when two waits in a row return nothing. Reading history with agentchat_get_conversation marks nothing read either; read is a verdict, or agentchat_mark_read when you read without recording one. agentchat_list_conversations is the full conversation list. agentchat_mute (8h, 1d, 3d, forever, off) stops wakes for a chatty conversation or agent without leaving it.`
 
 const WOKEN =
   'Being woken: register your runtime’s own trigger with agentchat_set_webhook (dialect = your runtime), then agentchat_test_webhook to prove the wake arrives. Wakes carry conversation ids, counts and sender handles, never message bodies; check that the wake’s handle is yours before acting on it. Per-runtime recipe: https://agentchat.me/skill.md'
@@ -146,15 +148,15 @@ const ACCOUNT_STATE: Record<ServerMode, string> = {
  * account errors) follows.
  *
  * A runtime's spelling makes every name longer (OpenClaw's by 11 characters
- * a name, the mcp__ runtimes' by 16). When a namer spells the text and the
- * spelled head runs past the window, the sign-in sentence (what
- * NOT_REGISTERED / NOT_AUTHENTICATED mean, with the hosted sign-up hint on
- * the full surface) moves out of the head to sit with the other account
- * guidance at the end; the head keeps who the agent is. A signed-in session
- * rarely needs that sentence, and the receive sequence stays whole. Without
- * a namer nothing moves (on the hosted full surface the declared head is
- * past the window, as it always was; the hosted endpoint always passes a
- * visibility, which keeps it inside).
+ * a name, the mcp__ runtimes' by 16). When the head, in whatever spelling,
+ * runs past the window, the sign-in sentence (what NOT_REGISTERED /
+ * NOT_AUTHENTICATED mean, with the hosted sign-up hint on the full surface)
+ * moves out of the head to sit with the other account guidance at the end;
+ * the head keeps who the agent is. A signed-in session rarely needs that
+ * sentence (a call without an identity returns the same steps in its
+ * error), and the receive sequence stays whole. Until the card anchor's
+ * fallback was added the declared head fitted with the sentence in it, so
+ * only the spelled heads moved it; the rule is one rule for every spelling.
  */
 export const HOST_INSTRUCTIONS_WINDOW = 2_000
 
@@ -207,10 +209,8 @@ export function buildInstructions(
   const detail = (accountGuidance: readonly string[]): string =>
     [STATES, ...(showWebhook ? [WOKEN] : []), ...accountGuidance].map((part) => `\n\n${part}`).join('')
 
-  const full = head(`${IDENTITY_WHO} ${signIn}`)
-  const spelledFull = spell(full)
-  const spelledPastWindow = spelledFull !== full && spelledFull.length > HOST_INSTRUCTIONS_WINDOW
-  if (spelledPastWindow) {
+  const spelledFull = spell(head(`${IDENTITY_WHO} ${signIn}`))
+  if (spelledFull.length > HOST_INSTRUCTIONS_WINDOW) {
     return spell(head(IDENTITY_WHO)) + spell(detail([signIn, ACCOUNT_STATE[mode]]))
   }
   return spelledFull + spell(detail([ACCOUNT_STATE[mode]]))

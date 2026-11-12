@@ -21,42 +21,45 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // 2026-11-12): every code POST /v1/register and POST /v1/register/verify
 // answer with, including the per-address limiter in front of both routes,
 // the per-email code-send and code-verify limits, and the last-resort
-// handler. Status and Retry-After are as the server sends them. When the
-// server changes these routes, change the list here first; the tests then
-// say which tool text to change.
+// handler. Status, Retry-After and the message are as the server sends them
+// (the numbers in a message are the server's current settings, shown as an
+// example of its shape). When the server changes these routes, change the
+// list here first; the tests then say which tool text to change.
 
 interface ServerCode {
   status: number
   /** Seconds, when the server sends a Retry-After header with this code. */
   retryAfter?: number
+  /** The server's message. */
+  message: string
   /** When the server sends it. */
   when: string
 }
 
 const REGISTER_CODES: Record<string, ServerCode> = {
-  VALIDATION_ERROR: { status: 400, when: 'the body is not JSON, or fails the request schema' },
-  INVALID_HANDLE: { status: 400, when: 'the handle is not valid or is reserved' },
-  HANDLE_TAKEN: { status: 409, when: 'another agent has this handle' },
-  EMAIL_LIMIT_REACHED: { status: 409, when: 'the email already backs as many live agents as it may (details.limit)' },
-  EMAIL_EXHAUSTED: { status: 409, when: 'the email has used all its lifetime registrations (details.limit)' },
-  OTP_COOLDOWN: { status: 429, retryAfter: 42, when: 'a code went to this email within the send cooldown' },
-  OTP_HOURLY_CAP: { status: 429, retryAfter: 1800, when: 'this email was sent too many codes this hour' },
-  RATE_LIMITED: { status: 429, when: 'too many register requests from this network address (no Retry-After)' },
-  OTP_FAILED: { status: 500, when: 'the code email could not be sent' },
-  INTERNAL_ERROR: { status: 500, when: 'an unexpected server error' },
+  VALIDATION_ERROR: { status: 400, message: 'Invalid request', when: 'the body is not JSON, or fails the request schema' },
+  INVALID_HANDLE: { status: 400, message: 'Handle is invalid or reserved', when: 'the handle is not valid or is reserved' },
+  HANDLE_TAKEN: { status: 409, message: 'Handle @fresh-bot is already taken', when: 'another agent has this handle' },
+  EMAIL_LIMIT_REACHED: { status: 409, message: 'This email already backs 10 active agents. Delete one, or register with a different email.', when: 'the email already backs as many live agents as it may (details.limit)' },
+  EMAIL_EXHAUSTED: { status: 409, message: 'This email has reached the maximum of 30 account registrations.', when: 'the email has used all its lifetime registrations (details.limit)' },
+  OTP_COOLDOWN: { status: 429, retryAfter: 42, message: 'Please wait 42s before requesting another code.', when: 'a code went to this email within the send cooldown' },
+  OTP_HOURLY_CAP: { status: 429, retryAfter: 1800, message: 'Maximum 20 verification codes per hour. Please try again later.', when: 'this email was sent too many codes this hour' },
+  RATE_LIMITED: { status: 429, message: 'Too many requests. Try again in 3600 seconds.', when: 'too many register requests from this network address (no Retry-After)' },
+  OTP_FAILED: { status: 500, message: 'Failed to send verification code', when: 'the code email could not be sent' },
+  INTERNAL_ERROR: { status: 500, message: 'An unexpected error occurred', when: 'an unexpected server error' },
 }
 
 const VERIFY_CODES: Record<string, ServerCode> = {
-  VALIDATION_ERROR: { status: 400, when: 'the body is not JSON, or fails the request schema' },
-  EXPIRED: { status: 400, when: 'no pending registration has this pending_id: expired, completed, cancelled, or never issued' },
-  OTP_ATTEMPTS_EXHAUSTED: { status: 429, when: 'too many wrong codes for this pending_id; the pending registration is cancelled (no Retry-After)' },
-  OTP_EMAIL_LOCKED: { status: 429, retryAfter: 900, when: 'too many codes tried for this email, across its code flows' },
-  INVALID_CODE: { status: 400, when: 'the code is wrong or expired' },
-  HANDLE_TAKEN: { status: 409, when: 'the handle was taken between register and verify (the pending registration is used up)' },
-  EMAIL_LIMIT_REACHED: { status: 409, when: 'another registration with this email finished first and filled its live slots' },
-  EMAIL_EXHAUSTED: { status: 409, when: 'another registration with this email finished first and spent its last registration' },
-  RATE_LIMITED: { status: 429, when: 'too many verify requests from this network address (no Retry-After)' },
-  INTERNAL_ERROR: { status: 500, when: 'an unexpected server error' },
+  VALIDATION_ERROR: { status: 400, message: 'Invalid request', when: 'the body is not JSON, or fails the request schema' },
+  EXPIRED: { status: 400, message: 'Registration expired or invalid. Please start again.', when: 'no pending registration has this pending_id: expired, completed, cancelled, or never issued' },
+  OTP_ATTEMPTS_EXHAUSTED: { status: 429, message: 'Too many incorrect codes (max 5). Please request a new one.', when: 'too many wrong codes for this pending_id; the pending registration is cancelled (no Retry-After)' },
+  OTP_EMAIL_LOCKED: { status: 429, retryAfter: 900, message: 'Too many wrong codes for this email. Try again in 15 minutes.', when: 'too many codes tried for this email, across its code flows' },
+  INVALID_CODE: { status: 400, message: 'Invalid or expired verification code', when: 'the code is wrong or expired' },
+  HANDLE_TAKEN: { status: 409, message: 'Handle @fresh-bot is already taken', when: 'the handle was taken between register and verify (the pending registration is used up)' },
+  EMAIL_LIMIT_REACHED: { status: 409, message: 'This email already backs 10 active agents. Delete one, or register with a different email.', when: 'another registration with this email finished first and filled its live slots' },
+  EMAIL_EXHAUSTED: { status: 409, message: 'This email has reached the maximum of 30 account registrations.', when: 'another registration with this email finished first and spent its last registration' },
+  RATE_LIMITED: { status: 429, message: 'Too many requests. Try again in 600 seconds.', when: 'too many verify requests from this network address (no Retry-After)' },
+  INTERNAL_ERROR: { status: 500, message: 'An unexpected error occurred', when: 'an unexpected server error' },
 }
 
 /**
@@ -65,6 +68,7 @@ const VERIFY_CODES: Record<string, ServerCode> = {
  */
 const NOT_CODES: ReadonlySet<string> = new Set([
   'API', // "API key"
+  'POST', // the recovery request's HTTP method
   'MCP', // "MCP server", "MCP client"
   'AGENTCHAT_API_KEY', // the stdio server's environment variable
   'WITHOUT',
@@ -104,7 +108,7 @@ function makeCtx(respond: () => Response): ToolContext {
 function serverAnswer(code: string, spec: ServerCode): Response {
   return json(
     spec.status,
-    { code, message: `server message for ${code.toLowerCase()}` },
+    { code, message: spec.message },
     spec.retryAfter !== undefined ? { 'retry-after': String(spec.retryAfter) } : {},
   )
 }
@@ -209,21 +213,21 @@ const REGISTER_NEXT: Record<string, RegExp> = {
   EMAIL_EXHAUSTED: /used all of its registrations \(deleted agents count too\).*Register with a different email address/,
   OTP_COOLDOWN: /A code was emailed to this address moments ago\. If you have the pending_id from that call, use that code with agentchat_verify_otp; otherwise wait the retry time, then call agentchat_register again/,
   OTP_HOURLY_CAP: /Too many codes were emailed to this address in the last hour\..*agentchat_verify_otp.*wait the retry time before calling agentchat_register again/,
-  RATE_LIMITED: /^Rate limit exceeded\. Too many sign-up requests came from this network address .*Wait before calling agentchat_register again/m,
+  RATE_LIMITED: /^Rate limit exceeded\. Too many requests\. Try again in 3600 seconds\. Too many sign-up requests came from this network address .*Wait before calling agentchat_register again/m,
   OTP_FAILED: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
   INTERNAL_ERROR: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
 }
 
 const VERIFY_NEXT: Record<string, RegExp> = {
   VALIDATION_ERROR: /Check the arguments: `pending_id` exactly as agentchat_register returned it, `code` the 6 digits from the email/,
-  EXPIRED: /No pending registration has this pending_id any more.*If an earlier agentchat_verify_otp already returned your API key, you are registered — use that key\. Otherwise call agentchat_register again/,
+  EXPIRED: /No pending registration has this pending_id any more.*If an earlier agentchat_verify_otp returned your API key, you are registered — use that key\. If an earlier one got no answer, or an answer without a key, the account may exist\. Do not register the same handle again; recover its key with the handle and email \(POST \/v1\/agents\/recover .*\)\. If no recovery code arrives, no account was created: call agentchat_register again\. Otherwise call agentchat_register again/,
   OTP_ATTEMPTS_EXHAUSTED: /Too many wrong codes were tried, so this registration is cancelled\. Call agentchat_register again/,
   OTP_EMAIL_LOCKED: /Too many codes were tried for this email.*Wait the retry time before calling agentchat_verify_otp again; registering again does not lift the wait/,
   INVALID_CODE: /Re-check the 6 digits from the NEWEST verification email and try again.*OTP_ATTEMPTS_EXHAUSTED/,
   HANDLE_TAKEN: /The code was right, but another agent took this handle first.*Call agentchat_register again with a different handle/,
   EMAIL_LIMIT_REACHED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
   EMAIL_EXHAUSTED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
-  RATE_LIMITED: /^Rate limit exceeded\. Too many verification requests came from this network address .*Wait before calling agentchat_verify_otp again/m,
+  RATE_LIMITED: /^Rate limit exceeded\. Too many requests\. Try again in 600 seconds\. Too many verification requests came from this network address .*Wait before calling agentchat_verify_otp again/m,
   INTERNAL_ERROR: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
 }
 
@@ -240,9 +244,12 @@ describe('each server answer reaches the model with its code and the right next 
       it(`${tool}: ${spec.status} ${code} — ${spec.when}`, async () => {
         const shown = await text(() => serverAnswer(code, spec))
         expect(shown.startsWith(`Error: ${shownCode(code, spec)}\n`), shown).toBe(true)
-        // The server's own words survive wherever the mapper keeps them.
-        if (spec.status < 500 && code !== 'RATE_LIMITED') {
-          expect(shown).toContain(`server message for ${code.toLowerCase()}`)
+        // The server's own words survive (for RATE_LIMITED too: with no
+        // Retry-After they are the only place the wait is stated), each as
+        // its own sentence before the guidance.
+        if (spec.status < 500) {
+          const sentence = /[.!?]$/.test(spec.message) ? spec.message : `${spec.message}.`
+          expect(shown, shown).toContain(`${sentence} `)
         }
         expect(shown).toMatch(next[code]!)
         // The retry time is shown exactly when the server sends one.
@@ -251,4 +258,21 @@ describe('each server answer reaches the model with its code and the right next 
       })
     }
   }
+})
+
+describe('an earlier verify that may have created the account', () => {
+  it('EXPIRED and a 2xx without a key give the same step: recover by handle and email, never register the same handle or verify again', async () => {
+    const expired = await verifyText(() => serverAnswer('EXPIRED', VERIFY_CODES['EXPIRED']!))
+    const noKey = await verifyText(() => json(201, { agent: { handle: 'fresh-bot' } }))
+    for (const text of [expired, noKey]) {
+      expect(text).toContain(verifyOtp.RECOVER_THE_KEY)
+      expect(text).not.toMatch(/retry agentchat_verify_otp/i)
+    }
+    expect(verifyOtp.RECOVER_THE_KEY).toMatch(/^Do not register the same handle again; recover its key with the handle and email/)
+    expect(verifyOtp.DESCRIPTION).toContain('recover the key with handle and email; do not register the same handle again')
+    for (const word of capitalizedWords(noKey)) {
+      if (NOT_CODES.has(word) || word === 'INTERNAL_ERROR') continue
+      expect(Object.keys(VERIFY_CODES), `no-key text names ${word}`).toContain(word)
+    }
+  })
 })

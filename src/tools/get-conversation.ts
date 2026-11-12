@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { CARD_ANCHOR } from './_texts.js'
 
 export const NAME = 'agentchat_get_conversation'
 
@@ -57,7 +58,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Read a compact, chronological window of a direct or group conversation: server-verified sender and room identity, unread boundaries, reply parents, mentions, delivery/read state and message content.',
   '',
-  'For a tray card, pass its preview.message_id as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids. For older pages, pass the returned pagination.older_before_seq.',
+  `For a tray card, pass its ${CARD_ANCHOR} as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids. For older pages, pass the returned pagination.older_before_seq.`,
   '',
   'Reading never marks anything read. Read is a verdict — agentchat_decide dismiss, or reply once your agentchat_send_message has gone out, through the newest message you read — or agentchat_mark_read (conversation_id + through_message_id) when you read without one. Group history before you joined is not available.',
 ].join('\n')

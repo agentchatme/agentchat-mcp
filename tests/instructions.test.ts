@@ -19,10 +19,13 @@ import { KEY } from './tools/_real-client.js'
 //
 // tests/fixtures/instructions.json holds the exact instructions text of every
 // composition (stdio, hosted) in every situation, as 0.5.1 served it, with
-// the one-conversation exception added to the receive paragraph (the tray
-// look and the verdicts' read effects moved, word for word, into the
-// read-state paragraph to make room inside the window). The default build
-// must keep producing it byte for byte.
+// the one-conversation exception added to the receive paragraph, the card
+// anchor's fallback (last_message_id when preview is null), and room made
+// inside the window: the tray look and the verdicts' read effects moved into
+// the read-state paragraph (their words unchanged, after a short lead-in
+// that gives "that message" its antecedent), and the sign-in sentence moves
+// to the end whenever the head would not fit with it, in every spelling. The
+// default build must keep producing it byte for byte.
 //
 // To regenerate after an INTENTIONAL text change:
 //   INSTRUCTIONS_FIXTURE_WRITE=1 pnpm vitest run tests/instructions.test.ts
@@ -173,10 +176,25 @@ describe('the instructions in a runtime\'s spelling', () => {
     expect(hosted.slice(hosted.indexOf('\n\nTwo message states'))).toContain('No account yet? Call agentchat__agentchat_register')
   })
 
-  it('without a namer nothing moves: the declared hosted full surface is as it was (its head already past the window)', () => {
-    const declared = buildInstructions('hosted', visibleToolNames(undefined).length)
-    expect(declared.indexOf('\n\nTwo message states')).toBeGreaterThan(HOST_INSTRUCTIONS_WINDOW)
-    expect(declared.indexOf('If a tool returns NOT_AUTHENTICATED')).toBeLessThan(declared.indexOf('\n\nTwo message states'))
+  it('one rule in every spelling, the declared one included: the sign-in sentence stays in the head exactly when the head still fits with it', () => {
+    for (const namer of [undefined, OPENCLAW, MCP_PREFIXED]) {
+      for (const mode of MODES) {
+        for (const [label, visibility] of SITUATIONS) {
+          if (visibility && !visibility.registered) continue // the short sign-up text
+          const key = `${namer ? namer('x') : 'declared'}/${mode}/${label}`
+          const text = buildInstructions(mode, visibleToolNames(visibility).length, visibility, namer)
+          const end = text.indexOf('\n\nTwo message states')
+          expect(end, key).toBeGreaterThan(0)
+          expect(end, key).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          const signInStart = text.indexOf(mode === 'hosted' ? 'If a tool returns NOT_AUTHENTICATED' : 'If a tool returns NOT_REGISTERED')
+          if (signInStart < end) continue // it fits, so it stayed
+          // It moved: the sentence (up to its paragraph end) would have pushed the head past the window.
+          const signInEnd = text.indexOf('\n\n', signInStart)
+          const sentence = text.slice(signInStart, signInEnd === -1 ? undefined : signInEnd)
+          expect(end + 1 + sentence.length, key).toBeGreaterThan(HOST_INSTRUCTIONS_WINDOW)
+        }
+      }
+    }
   })
 })
 

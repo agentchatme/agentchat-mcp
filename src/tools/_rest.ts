@@ -1,6 +1,6 @@
 import { AgentChatClient, AgentChatError, type RequestHooks, type RetryPolicy } from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
-import { attachToolGuidance } from '../errors.js'
+import { attachToolGuidance, joinSentences } from '../errors.js'
 import type { ToolContext } from './_types.js'
 
 // ─── Every server call goes through the SDK ────────────────────────────────
@@ -154,7 +154,10 @@ export function isUnreadAnswer(err: unknown, answeredEmpty: boolean): boolean {
 
 /**
  * Append actionable guidance to a server error for the codes a tool knows
- * how to advise on, preserving the server's code and message. Always throws.
+ * how to advise on, preserving the server's code and message (as its own
+ * sentence: a period is added where the server's message has none). The
+ * server's message is also recorded as it came, for the codes whose message
+ * the mapper rebuilds. Always throws.
  *
  * Matching is by the SERVER's error code, not the SDK class: the SDK's
  * createAgentChatError falls back to a status-based class for codes it does
@@ -180,8 +183,8 @@ export function rethrowWithGuidance(
   if (err instanceof AgentChatError) {
     const extra = guidance[err.code]
     if (extra) {
-      err.message = `${err.message} ${extra}`
-      attachToolGuidance(err, extra)
+      attachToolGuidance(err, extra, { wireMessage: err.message })
+      err.message = joinSentences(err.message, extra)
     }
   }
   throw err

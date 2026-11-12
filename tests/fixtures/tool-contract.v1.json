@@ -209,7 +209,7 @@
         "minLength": 1
       },
       "through_message_id": {
-        "description": "Conversation form: mark every unread message up to and including this one (by its position in the conversation) — normally the card’s `preview.message_id`, or the newest message_id you read. Must be a message of conversation_id.",
+        "description": "Conversation form: mark every unread message up to and including this one (by its position in the conversation) — normally the card’s preview.message_id (last_message_id when preview is null), or the newest message_id you read. Must be a message of conversation_id.",
         "type": "string",
         "minLength": 1,
         "maxLength": 128

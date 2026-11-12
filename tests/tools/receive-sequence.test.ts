@@ -8,6 +8,8 @@ import {
   type ToolNamer,
 } from '../../src/instructions.js'
 import * as decide from '../../src/tools/decide.js'
+import * as inbox from '../../src/tools/inbox.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN, REPLY_TURN_OPENING } from '../../src/tools/_texts.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
 import * as testWebhook from '../../src/tools/test-webhook.js'
 import { buildMcpServer } from '../../src/lib.js'
@@ -326,34 +328,112 @@ describe('one receive sequence across every text', () => {
 // where it could answer a conversation that has a run of its own, twice.
 // The same holds for agentchat_wait: it returns every conversation's
 // messages (the sync it pulls has no conversation filter), so that run never
-// holds the line with it; and for a verdict's "next card". Every text such a
-// run can read that points back to the tray, the wait or a next card carries
-// the exception: in that run, stop once the conversation's verdict is in.
+// holds the line with it; and for a verdict's "next card". Every sentence
+// such a run can read that points back to the tray, the wait or a next card
+// carries the exception — in that run, stop once the conversation's verdict
+// is in — naming the run by its prompt's opening words: a run a wake started
+// was started by AgentChat too, and may name a single conversation, but its
+// prompt opens differently, and it keeps its receive loop.
 
-/** The first words of the served reply_turn_template, the run's own prompt. */
-const REPLY_TURN_OPENING = 'AgentChat started this run for ONE conversation'
+const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.`
 
-const ONE_CONVERSATION_EXCEPTION =
-  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.'
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
-/** How every text names that run (a model matches it to the run's prompt). */
-const ONE_CONVERSATION_RUN = /AgentChat started (it )?for ONE conversation/
+/** The exception, in any text: the run named by its prompt's opening words. */
+const NAMES_THE_RUN = new RegExp(escapeRegExp(ONE_CONVERSATION_RUN))
+
+/** A tool name in any runtime's spelling (`agentchat_inbox`, `agentchat__agentchat_inbox`, `mcp__agentchat__agentchat_inbox`). */
+const spelled = (tool: string) => `(?:[a-z]+__)*${tool}`
 
 /** A pointer back to the tray, the wait or another card. */
-const PULLS_BACK =
-  /call agentchat_inbox|agentchat_inbox (first|again|instead)|look at the tray|next card|call agentchat_wait|agentchat_wait (again|to keep)|hold the line|at the start of (any|a) turn/i
+const PULLS_BACK = new RegExp(
+  [
+    `call ${spelled('agentchat_inbox')}`,
+    `${spelled('agentchat_inbox')} (?:first|again|instead)`,
+    `call ${spelled('agentchat_wait')}`,
+    `${spelled('agentchat_wait')} (?:again|to keep)`,
+    'call (?:it )?again',
+    'hold the line',
+    // "look again later" is what a defer means (the server reminds you), not a look now.
+    'look (?:again(?! later)|at the tray)',
+    '(?:back|return|go) to the tray',
+    'next (?:card|conversation)',
+    'at the start of (?:any|a) turn',
+  ].join('|'),
+  'i',
+)
 
-/** Every tool a gate-call host's session lists (a socket integration), with its description and parameter text. */
-async function socketIntegrationTexts(): Promise<Array<[string, string]>> {
-  const visibility = { registered: true, webhookTools: false }
-  const server = buildMcpServer({ apiBase: 'https://sequence.invalid', apiKey: KEY, selfHandle: 'me', visibility })
+/** Sentences of one paragraph (a period inside "e.g." does not end one). */
+function sentencesOf(paragraph: string): string[] {
+  const parts = paragraph.split(/(?<=[.!?])\s+/)
+  const sentences: string[] = []
+  for (const part of parts) {
+    const last = sentences.at(-1)
+    if (last !== undefined && /\b(?:e\.g|i\.e)\.$/.test(last)) sentences[sentences.length - 1] = `${last} ${part}`
+    else sentences.push(part)
+  }
+  return sentences
+}
+
+/**
+ * The sentences of `text` that point back to the tray, the wait or a next
+ * card and are not governed by the exception. A pointer is governed when its
+ * own sentence names the run; when the next sentence of its paragraph is the
+ * exception (it opens "Not", "Never", "Except" or "In" and names the run);
+ * when its paragraph carries an "Exception: …" sentence naming the run (the
+ * instructions' receive paragraph); or, inside a tool's own description or
+ * parameter text, when it points only at that tool and the description's
+ * first paragraph says the run never calls it ("Not in …" / "Never in …").
+ */
+function ungovernedPointers(text: string, own?: { tool: string; description: string }): string[] {
+  const excludesOwnTool =
+    own !== undefined &&
+    sentencesOf(own.description.split(/\n\s*\n/)[0]!).some((sentence) => /^(?:Not|Never) in /.test(sentence) && NAMES_THE_RUN.test(sentence))
+  const found: string[] = []
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    const sentences = sentencesOf(paragraph)
+    const paragraphException = sentences.some((sentence) => sentence.startsWith('Exception:') && NAMES_THE_RUN.test(sentence))
+    sentences.forEach((sentence, index) => {
+      if (!PULLS_BACK.test(sentence) || NAMES_THE_RUN.test(sentence) || paragraphException) return
+      const next = sentences[index + 1]
+      if (next !== undefined && /^(?:Not|Never|Except|In) /.test(next) && NAMES_THE_RUN.test(next)) return
+      if (excludesOwnTool) {
+        const tools = sentence.match(/\b(?:[a-z]+__)*agentchat_[a-z_]+/g) ?? []
+        if (tools.every((tool) => tool.endsWith(own!.tool))) return
+      }
+      found.push(sentence)
+    })
+  }
+  return found
+}
+
+/** Parameter descriptions of one tool's JSON Schema. */
+function parameterTexts(inputSchema: unknown): string[] {
+  const properties = (inputSchema as { properties?: Record<string, { description?: unknown }> }).properties ?? {}
+  return Object.values(properties).flatMap((property) => (typeof property.description === 'string' ? [property.description] : []))
+}
+
+interface ListedTool {
+  name: string
+  description: string
+  parameters: string[]
+}
+
+async function listedTools(visibility?: { registered: true; webhookTools: boolean }): Promise<ListedTool[]> {
+  const server = buildMcpServer({
+    apiBase: 'https://sequence.invalid',
+    apiKey: visibility ? KEY : null,
+    ...(visibility ? { selfHandle: 'me', visibility } : {}),
+  })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'receive-sequence', version: '0.0.0' })
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
   try {
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name)).toEqual(visibleToolNames(visibility))
-    return tools.map((tool) => [tool.name, `${tool.description ?? ''}\n${JSON.stringify(tool.inputSchema)}`])
+    if (visibility) expect(tools.map((tool) => tool.name)).toEqual(visibleToolNames(visibility))
+    return tools.map((tool) => ({ name: tool.name, description: tool.description ?? '', parameters: parameterTexts(tool.inputSchema) }))
   } finally {
     await client.close()
     await server.close()
@@ -372,6 +452,11 @@ describe('a run AgentChat started for ONE conversation', () => {
     ['socket integration', { registered: true, webhookTools: false }],
   ]
 
+  it('every text names the run by the opening of its own prompt, the served reply_turn_template', () => {
+    expect(REPLY_TURN_OPENING).toBe('AgentChat started this run for ONE conversation')
+    expect(ONE_CONVERSATION_RUN).toBe('a run whose prompt opens “AgentChat started this run for ONE conversation”')
+  })
+
   it('the instructions carry the exception in the receive paragraph, after the inbox-first rule and inside the window, in every composition and spelling', () => {
     for (const [spelling, namer] of NAMERS) {
       const spell = (phrase: string) => (namer ? spellToolNames(phrase, namer) : phrase)
@@ -382,23 +467,14 @@ describe('a run AgentChat started for ONE conversation', () => {
           const text = buildInstructions(mode, count, visibility, namer)
           const receiving = text.split('\n\n').find((part) => part.startsWith('Receiving:'))
           expect(receiving, label).toBeDefined()
-          // One sentence, whole, in the receive paragraph, after the rule it qualifies.
-          expect(receiving!, label).toContain(spell(ONE_CONVERSATION_EXCEPTION))
+          // One sentence, whole, closing the receive paragraph, after the rule it qualifies.
+          expect(receiving!.endsWith(spell(ONE_CONVERSATION_EXCEPTION)), label).toBe(true)
           expect(receiving!.indexOf(spell(ONE_CONVERSATION_EXCEPTION)), label).toBeGreaterThan(
             receiving!.indexOf(spell('call agentchat_inbox first')),
           )
-          expect(receiving!.endsWith(spell(ONE_CONVERSATION_EXCEPTION)), label).toBe(true)
-          // It names the run the way the run's own prompt opens, so the model
-          // can match one to the other.
-          const [opener, scope] = REPLY_TURN_OPENING.split(' this run ')
-          expect(receiving!, label).toContain(`says ${opener} it ${scope}`)
-          // OpenClaw shows its model only the window: the exception is inside it
-          // wherever the receive sequence is (the hosted declared full surface
-          // is the one head past the window, as before; see instructions.test.ts).
+          // OpenClaw shows its model only the window: the exception ends inside it everywhere.
           const end = text.indexOf(spell(ONE_CONVERSATION_EXCEPTION)) + spell(ONE_CONVERSATION_EXCEPTION).length
-          if (!(spelling === 'declared' && mode === 'hosted' && visibility === undefined)) {
-            expect(end, `${label}: exception ends at ${end}`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
-          }
+          expect(end, `${label}: exception ends at ${end}`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
         }
       }
     }
@@ -406,18 +482,15 @@ describe('a run AgentChat started for ONE conversation', () => {
 
   it('agentchat_inbox says it is not called in that run, right after its call-this-first line', async () => {
     const descriptions = await listDescriptions()
-    const inbox = descriptions.get('agentchat_inbox')!
-    const firstParagraph = inbox.split('\n\n')[0]!
-    const [rule, exception] = firstParagraph.split(/(?<=written\.) /)
-    expect(rule).toBe('Call this FIRST when woken by AgentChat and at the start of any turn where peers may have written.')
-    expect(exception).toMatch(
-      /^Not when the run’s own prompt says AgentChat started it for ONE conversation: handle only that one and leave the rest of the tray alone\. This shows your inbox tray:/,
-    )
+    const firstParagraph = descriptions.get('agentchat_inbox')!.split('\n\n')[0]!
+    expect(firstParagraph.startsWith(
+      `Call this FIRST when woken by AgentChat and at the start of any turn where peers may have written. Not in ${ONE_CONVERSATION_RUN}: handle only that one and leave the rest of the tray alone. This shows the tray:`,
+    ), firstParagraph).toBe(true)
   })
 
   it('agentchat_decide: after reply or dismiss, that run stops (no wait, no next card, no tray)', () => {
     // agentchat_wait cannot be held to one conversation, so the hint is "stop".
-    const stop = '; in a run AgentChat started for ONE conversation, stop instead.'
+    const stop = `; in ${ONE_CONVERSATION_RUN}, stop instead.`
     expect(decide.NEXT.reply.endsWith(`Then agentchat_wait to keep the exchange live${stop}`), decide.NEXT.reply).toBe(true)
     expect(decide.NEXT.dismiss.endsWith(`Next card, or agentchat_inbox again if you expect more${stop}`), decide.NEXT.dismiss).toBe(true)
     // defer points nowhere: "Nothing else to do now."
@@ -428,29 +501,82 @@ describe('a run AgentChat started for ONE conversation', () => {
     const descriptions = await listDescriptions()
     const firstParagraph = descriptions.get('agentchat_wait')!.split('\n\n')[0]!
     expect(firstParagraph).toContain(
-      'When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. Never in a run AgentChat started for ONE conversation: this returns every conversation’s messages, and that run handles only its own.',
+      `When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. Never in ${ONE_CONVERSATION_RUN}: this returns every conversation’s messages, and that run handles only its own.`,
     )
   })
 
-  it('no text such a run can read points it back to the tray, the wait or a next card without the exception', async () => {
-    const texts: Array<[string, string]> = [
-      // What a gate-call host's model sees: every listed tool…
-      ...(await socketIntegrationTexts()),
-      // …the results of the tools that run calls (agentchat_get_conversation
-      // and agentchat_send_message carry no next-step hint)…
-      ...Object.entries(decide.NEXT).map(([verdict, next]) => [`agentchat_decide next (${verdict})`, next] as [string, string]),
-      // …and the server instructions, whole, in every spelling.
-      ...NAMERS.map(([spelling, namer]) => [
-        `instructions/hosted/${spelling}`,
-        buildInstructions('hosted', 28, { registered: true, webhookTools: false }, namer),
-      ] as [string, string]),
-      ['instructions/stdio', buildInstructions('stdio', TOOL_COUNT)],
-    ]
-    const pulling = texts.filter(([, text]) => PULLS_BACK.test(text))
-    // The guard guards something: the receive texts all point somewhere.
-    expect(pulling.map(([name]) => name)).toEqual(
-      expect.arrayContaining(['agentchat_inbox', 'agentchat_wait', 'agentchat_send_message', 'agentchat_list_conversations', 'agentchat_decide next (reply)', 'agentchat_decide next (dismiss)']),
-    )
-    for (const [name, text] of pulling) expect(text, name).toMatch(ONE_CONVERSATION_RUN)
+  it('no sentence such a run can read points it back to the tray, the wait or a next card without the exception', async () => {
+    const ungoverned: string[] = []
+    // What a gate-call host's model sees: every listed tool, its description and parameters…
+    for (const tool of await listedTools({ registered: true, webhookTools: false })) {
+      const own = { tool: tool.name, description: tool.description }
+      for (const text of [tool.description, ...tool.parameters]) {
+        ungoverned.push(...ungovernedPointers(text, own).map((sentence) => `${tool.name}: ${sentence}`))
+      }
+    }
+    // …the results of the tools that run calls (agentchat_get_conversation and
+    // agentchat_send_message carry no next-step hint)…
+    for (const [verdict, next] of Object.entries(decide.NEXT)) {
+      ungoverned.push(...ungovernedPointers(next).map((sentence) => `agentchat_decide next (${verdict}): ${sentence}`))
+    }
+    // …and the server instructions, whole, in every spelling.
+    for (const [spelling, namer] of NAMERS) {
+      for (const mode of ['stdio', 'hosted'] as const) {
+        const text = buildInstructions(mode, 28, { registered: true, webhookTools: false }, namer)
+        ungoverned.push(...ungovernedPointers(text).map((sentence) => `instructions/${mode}/${spelling}: ${sentence}`))
+      }
+    }
+    expect(ungoverned).toEqual([])
+  })
+
+  it('the guard catches a pointer the exception does not govern', () => {
+    // The shapes an edit could add (a second pointer in the send text, in the
+    // read-state paragraph, in a verdict hint): each one is caught.
+    const send = 'Send is instant. Then call agentchat_wait again to hold the line.'
+    const states = `Two message states: delivered means received. agentchat_wait is the puller: call it again after you reply (never in ${ONE_CONVERSATION_RUN}). After every reply, call agentchat_wait again.`
+    const hint = `${decide.NEXT.dismiss} Then return to the tray and take the next conversation.`
+    expect(ungovernedPointers(send)).toEqual(['Then call agentchat_wait again to hold the line.'])
+    expect(ungovernedPointers(states)).toEqual(['After every reply, call agentchat_wait again.'])
+    expect(ungovernedPointers(hint)).toEqual(['Then return to the tray and take the next conversation.'])
+    // The spelled names are caught too.
+    expect(ungovernedPointers('Next, call mcp__agentchat__agentchat_inbox again.')).toHaveLength(1)
+  })
+})
+
+// ─── A card's read anchor ──────────────────────────────────────────────────
+//
+// A card whose only unread messages are system notices has `preview: null`;
+// its read anchor is then `last_message_id`, and the server refuses a
+// through_message_id that is not a message of the conversation (404
+// MESSAGE_NOT_FOUND, on the verdict and on mark-read alike). Every sentence
+// that tells the model to pass the card's preview.message_id says so.
+
+describe('the card anchor when preview is null', () => {
+  it('every sentence that names preview.message_id names last_message_id for a null preview', async () => {
+    const texts: Array<[string, string]> = []
+    for (const tool of await listedTools()) {
+      texts.push([tool.name, tool.description], ...tool.parameters.map((text) => [`${tool.name} parameter`, text] as [string, string]))
+    }
+    texts.push(...Object.entries(inbox.NEXT).map(([outcome, next]) => [`agentchat_inbox next (${outcome})`, next] as [string, string]))
+    texts.push(...Object.entries(decide.NEXT).map(([verdict, next]) => [`agentchat_decide next (${verdict})`, next] as [string, string]))
+    for (const mode of ['stdio', 'hosted'] as const) {
+      texts.push([`instructions/${mode}`, buildInstructions(mode, TOOL_COUNT)])
+      texts.push([`instructions/${mode}/socket`, buildInstructions(mode, 28, { registered: true, webhookTools: false })])
+    }
+    const missing: string[] = []
+    let named = 0
+    for (const [name, text] of texts) {
+      for (const paragraph of text.split(/\n\s*\n/)) {
+        for (const sentence of sentencesOf(paragraph)) {
+          if (!sentence.includes('preview.message_id')) continue
+          named += 1
+          if (!sentence.includes(CARD_ANCHOR)) missing.push(`${name}: ${sentence}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
+    // instructions ×4, agentchat_inbox, its cards hint, agentchat_decide ×2,
+    // agentchat_get_conversation, agentchat_mark_read ×2 at least.
+    expect(named).toBeGreaterThanOrEqual(11)
   })
 })
