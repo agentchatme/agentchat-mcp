@@ -18,8 +18,11 @@ import { KEY } from './tools/_real-client.js'
 // ─── The server instructions, pinned ───────────────────────────────────────
 //
 // tests/fixtures/instructions.json holds the exact instructions text of every
-// composition (stdio, hosted) in every situation, as 0.5.1 served it. The
-// default build must keep producing it byte for byte.
+// composition (stdio, hosted) in every situation, as 0.5.1 served it, with
+// the one-conversation exception added to the receive paragraph (the tray
+// look and the verdicts' read effects moved, word for word, into the
+// read-state paragraph to make room inside the window). The default build
+// must keep producing it byte for byte.
 //
 // To regenerate after an INTENTIONAL text change:
 //   INSTRUCTIONS_FIXTURE_WRITE=1 pnpm vitest run tests/instructions.test.ts

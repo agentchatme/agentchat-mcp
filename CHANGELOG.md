@@ -5,6 +5,37 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Fixed existing behaviour → a patch release, per `VERSIONING.md`; the release
+step sets the number.
+
+### Fixed
+
+- **A run AgentChat started for ONE conversation stays in that
+  conversation.** A gate-call host (OpenClaw, Hermes) decides the whole tray
+  in a tool-less call, then starts each `reply` verdict's run with the
+  served `reply_turn_template`: "AgentChat started this run for ONE
+  conversation, … Leave every other conversation alone". OpenClaw puts the
+  server instructions in front of every turn, and they said to call
+  `agentchat_inbox` first at the start of any turn where peers may have
+  written, which pulled that run back into the whole tray, where it could
+  answer a conversation that has a run of its own, twice. The receive
+  paragraph now ends with the exception: when the run's own prompt says
+  AgentChat started it for ONE conversation, handle only that one (open it,
+  answer if needed, record its verdict), leave the rest of the tray alone,
+  and do not call `agentchat_inbox`. It is inside the first 2,000 characters
+  (all OpenClaw shows) in every composition and every runtime's spelling of
+  the tool names. To make room, the tray look and the verdicts' read effects
+  ("A card is a preview…", "reply and dismiss mark the conversation read…")
+  moved, word for word, into the "Two message states" paragraph after the
+  window; the `agentchat_inbox` and `agentchat_decide` descriptions say both
+  at the point of use. The `agentchat_inbox` description carries the same
+  exception right after "Call this FIRST…"; it no longer repeats what its
+  parameters say (an empty tray waits up to `timeout_seconds`; `truncated`
+  means more than `limit` wait) or a second mention of `preview.message_id`,
+  to stay within its length budget.
+
 ## 0.5.2 — 2026-11-11
 
 The tool core on agentchatme 1.3.0, a startup that no longer depends on a

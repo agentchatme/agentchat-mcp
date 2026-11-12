@@ -310,3 +310,90 @@ describe('one receive sequence across every text', () => {
     after(descriptions.get('agentchat_get_conversation')!, 'or reply once your agentchat_send_message has gone out', 'through the newest message you read')
   })
 })
+
+// ─── A run AgentChat started for ONE conversation ──────────────────────────
+//
+// A gate-call host (OpenClaw, Hermes; contract v1 §4) has already decided
+// every card in a tool-less call, and starts each `reply` verdict's run with
+// the served `reply_turn_template` (GET /v1/texts): "AgentChat started this
+// run for ONE conversation, <conversation_id> … Leave every other
+// conversation alone, even if your tray shows more waiting". Hosts such as
+// OpenClaw put the server instructions in front of every turn, that one
+// included, so an unqualified "at the start of any turn … call
+// agentchat_inbox first" pulled the run back into triaging the whole tray —
+// where it could answer a conversation that has a run of its own, twice.
+// Every text that sends a turn to the tray carries the exception.
+
+/** The first words of the served reply_turn_template, the run's own prompt. */
+const REPLY_TURN_OPENING = 'AgentChat started this run for ONE conversation'
+
+const ONE_CONVERSATION_EXCEPTION =
+  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and leave the rest of the tray alone. Do not call agentchat_inbox then.'
+
+describe('a run AgentChat started for ONE conversation', () => {
+  const NAMERS: Array<[string, ToolNamer | undefined]> = [
+    ['declared', undefined],
+    ['openclaw', (tool) => `agentchat__${tool}`],
+    ['mcp__agentchat__', (tool) => `mcp__agentchat__${tool}`],
+  ]
+  const SIGNED_IN: Array<[string, { registered: true; webhookTools: boolean } | undefined]> = [
+    ['full surface', undefined],
+    ['webhook tools', { registered: true, webhookTools: true }],
+    ['socket integration', { registered: true, webhookTools: false }],
+  ]
+
+  it('the instructions carry the exception in the receive paragraph, after the inbox-first rule and inside the window, in every composition and spelling', () => {
+    for (const [spelling, namer] of NAMERS) {
+      const spell = (phrase: string) => (namer ? spellToolNames(phrase, namer) : phrase)
+      for (const mode of ['stdio', 'hosted'] as const) {
+        for (const [situation, visibility] of SIGNED_IN) {
+          const label = `${spelling}/${mode}/${situation}`
+          const count = visibility === undefined ? TOOL_COUNT : visibility.webhookTools ? 31 : 28
+          const text = buildInstructions(mode, count, visibility, namer)
+          const receiving = text.split('\n\n').find((part) => part.startsWith('Receiving:'))
+          expect(receiving, label).toBeDefined()
+          // One sentence, whole, in the receive paragraph, after the rule it qualifies.
+          expect(receiving!, label).toContain(spell(ONE_CONVERSATION_EXCEPTION))
+          expect(receiving!.indexOf(spell(ONE_CONVERSATION_EXCEPTION)), label).toBeGreaterThan(
+            receiving!.indexOf(spell('call agentchat_inbox first')),
+          )
+          expect(receiving!.endsWith(spell(ONE_CONVERSATION_EXCEPTION)), label).toBe(true)
+          // It names the run the way the run's own prompt opens, so the model
+          // can match one to the other.
+          const [opener, scope] = REPLY_TURN_OPENING.split(' this run ')
+          expect(receiving!, label).toContain(`says ${opener} it ${scope}`)
+          // OpenClaw shows its model only the window: the exception is inside it
+          // wherever the receive sequence is (the hosted declared full surface
+          // is the one head past the window, as before; see instructions.test.ts).
+          const end = text.indexOf(spell(ONE_CONVERSATION_EXCEPTION)) + spell(ONE_CONVERSATION_EXCEPTION).length
+          if (!(spelling === 'declared' && mode === 'hosted' && visibility === undefined)) {
+            expect(end, `${label}: exception ends at ${end}`).toBeLessThanOrEqual(HOST_INSTRUCTIONS_WINDOW)
+          }
+        }
+      }
+    }
+  })
+
+  it('agentchat_inbox says it is not called in that run, right after its call-this-first line', async () => {
+    const descriptions = await listDescriptions()
+    const inbox = descriptions.get('agentchat_inbox')!
+    const firstParagraph = inbox.split('\n\n')[0]!
+    const [rule, exception] = firstParagraph.split(/(?<=written\.) /)
+    expect(rule).toBe('Call this FIRST when woken by AgentChat and at the start of any turn where peers may have written.')
+    expect(exception).toMatch(
+      /^Not when the run’s own prompt says AgentChat started it for ONE conversation: handle only that one and leave the rest of the tray alone\. This shows your inbox tray:/,
+    )
+  })
+
+  it('no text pairs "at the start of any turn … agentchat_inbox" without the exception', async () => {
+    const descriptions = await listDescriptions()
+    const texts: Array<[string, string]> = [
+      ...[...descriptions.entries()],
+      ...(['stdio', 'hosted'] as const).map((mode) => [`instructions/${mode}`, buildInstructions(mode, TOOL_COUNT)] as [string, string]),
+    ]
+    for (const [name, text] of texts) {
+      if (!/at the start of any turn/i.test(text)) continue
+      expect(text, name).toMatch(/AgentChat started it for ONE conversation/)
+    }
+  })
+})
