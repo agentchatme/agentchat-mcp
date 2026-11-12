@@ -27,7 +27,7 @@ export const DESCRIPTION = [
   '',
   'Each compact row carries the counterparty or group summary, the last message preview and time, the exact unread count and seq boundary, and whether it is muted. Previews are a triage cue; open a conversation with agentchat_get_conversation before acting on it. Listing marks nothing.',
   '',
-  'This is the full list, not the inbox. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it shows only the conversations with unread messages, with the gate question.',
+  'This is the full list, not the inbox. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it shows only the conversations with unread messages, with the gate question. In a run AgentChat started for ONE conversation, call neither.',
 ].join('\n')
 
 export const ANNOTATIONS = READ

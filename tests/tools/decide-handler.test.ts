@@ -215,7 +215,7 @@ describe('agentchat_decide handler', () => {
       next: decide.NEXT.reply,
     })
     expect(decide.NEXT.reply).toBe(
-      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live.',
+      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run AgentChat started for ONE conversation, stop instead.',
     )
   })
 
@@ -235,7 +235,7 @@ describe('agentchat_decide handler', () => {
       category: 'closing',
       through_message_id: null,
       defer_until: null,
-      next: 'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
+      next: 'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in a run AgentChat started for ONE conversation, stop instead.',
     })
   })
 

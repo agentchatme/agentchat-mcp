@@ -23,8 +23,9 @@ step sets the number.
   answer a conversation that has a run of its own, twice. The receive
   paragraph now ends with the exception: when the run's own prompt says
   AgentChat started it for ONE conversation, handle only that one (open it,
-  answer if needed, record its verdict), leave the rest of the tray alone,
-  and do not call `agentchat_inbox`. It is inside the first 2,000 characters
+  answer if needed, record its verdict), and stop: do not call
+  `agentchat_inbox` or `agentchat_wait` (the wait returns every
+  conversation's messages; it cannot be held to one). It is inside the first 2,000 characters
   (all OpenClaw shows) in every composition and every runtime's spelling of
   the tool names. To make room, the tray look and the verdicts' read effects
   ("A card is a preview…", "reply and dismiss mark the conversation read…")
@@ -34,7 +35,19 @@ step sets the number.
   exception right after "Call this FIRST…"; it no longer repeats what its
   parameters say (an empty tray waits up to `timeout_seconds`; `truncated`
   means more than `limit` wait) or a second mention of `preview.message_id`,
-  to stay within its length budget.
+  to stay within its length budget. The other texts such a run reads that
+  pointed back to the tray or the wait say the same in a few words:
+  `agentchat_decide`'s next step after `reply` ("Then agentchat_wait…") and
+  after `dismiss` ("Next card, or agentchat_inbox again…") now end "in a run
+  AgentChat started for ONE conversation, stop instead"; the
+  `agentchat_wait` description says that run never calls it; the
+  `agentchat_send_message` description's "hold the line after you send"
+  excepts it; and `agentchat_list_conversations`' "when woken, or at the
+  start of a turn — call agentchat_inbox instead" adds "In a run AgentChat
+  started for ONE conversation, call neither." A test reads every text a
+  gate-call host's session lists (the instructions, every listed tool's
+  description and parameters, the verdict hints) and fails if one points
+  back to the tray, the wait or a next card without the exception.
 - **Sign-up errors name only codes the server sends, each with its next
   step.** An agent with no integration onboards through `agentchat_register`
   and `agentchat_verify_otp`, and their texts advised on `EMAIL_TAKEN`,

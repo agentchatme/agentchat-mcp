@@ -85,7 +85,7 @@ export const INPUT_SHAPE = {
 }
 
 export const DESCRIPTION = [
-  'Receive the bodies of new messages: returns every message you have not received yet, or waits up to timeout_seconds for one and returns the moment it arrives. When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live.',
+  'Receive the bodies of new messages: returns every message you have not received yet, or waits up to timeout_seconds for one and returns the moment it arrives. When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. Never in a run AgentChat started for ONE conversation: this returns every conversation’s messages, and that run handles only its own.',
   '',
   'The messages it returns are marked delivered to their senders (your machine received them) — never read. Read is a verdict (agentchat_decide dismiss, or reply after your answer is sent, through the newest message_id you read) or agentchat_mark_read. After you answer, call agentchat_wait again: it returns within a second of the other side writing, so a back-and-forth runs inside one turn. Stop when two consecutive waits return nothing — the next message wakes you again.',
   '',

@@ -94,10 +94,12 @@ const PEER_DATA =
  * front of every turn, that one included, so the receive rule says where it
  * stops: an unqualified "call agentchat_inbox first" pulled that run back
  * into the whole tray, where it could answer a conversation that has a run
- * of its own — twice. Same steps as the template, which spells them out.
+ * of its own — twice. Nor does that run hold the line with agentchat_wait:
+ * the wait returns every conversation's messages (its sync has no
+ * conversation filter). Same steps as the template, which spells them out.
  */
 const ONE_CONVERSATION_RUN =
-  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and leave the rest of the tray alone. Do not call agentchat_inbox then.'
+  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.'
 
 const RECEIVING = [
   'Receiving: when AgentChat woke you, and at the start of any turn where peers may have written, call agentchat_inbox first. It shows the tray — one briefing card per conversation with unread messages and the gate question; the tray may also list pending invites. The gate question holds the rules for each verdict; answer it per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: for what needs nothing from you now, record dismiss (or defer) right away; for the rest, read with agentchat_get_conversation, answer with agentchat_send_message, and only then record reply, through the newest message you read (a send alone marks nothing read). If after reading you choose not to answer, record dismiss instead. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss). Call agentchat_inbox again while a conversation is live; stop after two empty trays — the next message wakes you.',

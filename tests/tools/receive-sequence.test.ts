@@ -7,10 +7,12 @@ import {
   spellToolNames,
   type ToolNamer,
 } from '../../src/instructions.js'
+import * as decide from '../../src/tools/decide.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
 import * as testWebhook from '../../src/tools/test-webhook.js'
 import { buildMcpServer } from '../../src/lib.js'
-import { TOOL_COUNT } from '../../src/tools/index.js'
+import { TOOL_COUNT, visibleToolNames } from '../../src/tools/index.js'
+import { KEY } from './_real-client.js'
 
 // ─── One receive sequence, no contradictions ───────────────────────────────
 //
@@ -322,13 +324,41 @@ describe('one receive sequence across every text', () => {
 // included, so an unqualified "at the start of any turn … call
 // agentchat_inbox first" pulled the run back into triaging the whole tray —
 // where it could answer a conversation that has a run of its own, twice.
-// Every text that sends a turn to the tray carries the exception.
+// The same holds for agentchat_wait: it returns every conversation's
+// messages (the sync it pulls has no conversation filter), so that run never
+// holds the line with it; and for a verdict's "next card". Every text such a
+// run can read that points back to the tray, the wait or a next card carries
+// the exception: in that run, stop once the conversation's verdict is in.
 
 /** The first words of the served reply_turn_template, the run's own prompt. */
 const REPLY_TURN_OPENING = 'AgentChat started this run for ONE conversation'
 
 const ONE_CONVERSATION_EXCEPTION =
-  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and leave the rest of the tray alone. Do not call agentchat_inbox then.'
+  'Exception: when the run’s own prompt says AgentChat started it for ONE conversation, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.'
+
+/** How every text names that run (a model matches it to the run's prompt). */
+const ONE_CONVERSATION_RUN = /AgentChat started (it )?for ONE conversation/
+
+/** A pointer back to the tray, the wait or another card. */
+const PULLS_BACK =
+  /call agentchat_inbox|agentchat_inbox (first|again|instead)|look at the tray|next card|call agentchat_wait|agentchat_wait (again|to keep)|hold the line|at the start of (any|a) turn/i
+
+/** Every tool a gate-call host's session lists (a socket integration), with its description and parameter text. */
+async function socketIntegrationTexts(): Promise<Array<[string, string]>> {
+  const visibility = { registered: true, webhookTools: false }
+  const server = buildMcpServer({ apiBase: 'https://sequence.invalid', apiKey: KEY, selfHandle: 'me', visibility })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'receive-sequence', version: '0.0.0' })
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+  try {
+    const { tools } = await client.listTools()
+    expect(tools.map((tool) => tool.name)).toEqual(visibleToolNames(visibility))
+    return tools.map((tool) => [tool.name, `${tool.description ?? ''}\n${JSON.stringify(tool.inputSchema)}`])
+  } finally {
+    await client.close()
+    await server.close()
+  }
+}
 
 describe('a run AgentChat started for ONE conversation', () => {
   const NAMERS: Array<[string, ToolNamer | undefined]> = [
@@ -385,15 +415,42 @@ describe('a run AgentChat started for ONE conversation', () => {
     )
   })
 
-  it('no text pairs "at the start of any turn … agentchat_inbox" without the exception', async () => {
+  it('agentchat_decide: after reply or dismiss, that run stops (no wait, no next card, no tray)', () => {
+    // agentchat_wait cannot be held to one conversation, so the hint is "stop".
+    const stop = '; in a run AgentChat started for ONE conversation, stop instead.'
+    expect(decide.NEXT.reply.endsWith(`Then agentchat_wait to keep the exchange live${stop}`), decide.NEXT.reply).toBe(true)
+    expect(decide.NEXT.dismiss.endsWith(`Next card, or agentchat_inbox again if you expect more${stop}`), decide.NEXT.dismiss).toBe(true)
+    // defer points nowhere: "Nothing else to do now."
+    expect(decide.NEXT.defer).not.toMatch(PULLS_BACK)
+  })
+
+  it('agentchat_wait says that run never calls it, right after its look-at-the-tray line', async () => {
     const descriptions = await listDescriptions()
+    const firstParagraph = descriptions.get('agentchat_wait')!.split('\n\n')[0]!
+    expect(firstParagraph).toContain(
+      'When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. Never in a run AgentChat started for ONE conversation: this returns every conversation’s messages, and that run handles only its own.',
+    )
+  })
+
+  it('no text such a run can read points it back to the tray, the wait or a next card without the exception', async () => {
     const texts: Array<[string, string]> = [
-      ...[...descriptions.entries()],
-      ...(['stdio', 'hosted'] as const).map((mode) => [`instructions/${mode}`, buildInstructions(mode, TOOL_COUNT)] as [string, string]),
+      // What a gate-call host's model sees: every listed tool…
+      ...(await socketIntegrationTexts()),
+      // …the results of the tools that run calls (agentchat_get_conversation
+      // and agentchat_send_message carry no next-step hint)…
+      ...Object.entries(decide.NEXT).map(([verdict, next]) => [`agentchat_decide next (${verdict})`, next] as [string, string]),
+      // …and the server instructions, whole, in every spelling.
+      ...NAMERS.map(([spelling, namer]) => [
+        `instructions/hosted/${spelling}`,
+        buildInstructions('hosted', 28, { registered: true, webhookTools: false }, namer),
+      ] as [string, string]),
+      ['instructions/stdio', buildInstructions('stdio', TOOL_COUNT)],
     ]
-    for (const [name, text] of texts) {
-      if (!/at the start of any turn/i.test(text)) continue
-      expect(text, name).toMatch(/AgentChat started it for ONE conversation/)
-    }
+    const pulling = texts.filter(([, text]) => PULLS_BACK.test(text))
+    // The guard guards something: the receive texts all point somewhere.
+    expect(pulling.map(([name]) => name)).toEqual(
+      expect.arrayContaining(['agentchat_inbox', 'agentchat_wait', 'agentchat_send_message', 'agentchat_list_conversations', 'agentchat_decide next (reply)', 'agentchat_decide next (dismiss)']),
+    )
+    for (const [name, text] of pulling) expect(text, name).toMatch(ONE_CONVERSATION_RUN)
   })
 })

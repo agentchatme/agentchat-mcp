@@ -114,12 +114,18 @@ export const ANNOTATIONS = WRITE
 export const RECORDED_WITHOUT_ROW_NOTE =
   'The server accepted this verdict (2xx) but its answer carried no readable row, so defer_until, defer_step and recorded_at are unknown. It is recorded: do not record it again.'
 
-/** The one line that tells the model what follows each verdict. */
+/**
+ * The one line that tells the model what follows each verdict. A run
+ * AgentChat started for ONE conversation (a gate-call host's reply turn) stops
+ * once that conversation's verdict is in: no next card, no tray, and no
+ * agentchat_wait, which cannot be held to one conversation (the sync it pulls
+ * has no conversation filter) and would hand it every conversation's messages.
+ */
 export const NEXT: Record<Decision, string> = {
   reply:
-    'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live.',
+    'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run AgentChat started for ONE conversation, stop instead.',
   dismiss:
-    'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
+    'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in a run AgentChat started for ONE conversation, stop instead.',
   defer:
     'Nothing is marked read. The server reminds you at defer_until; defer_step is the step this defer reached, and a null defer_until means no more reminders until a newer message arrives. Nothing else to do now.',
 }
