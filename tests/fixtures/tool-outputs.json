@@ -2191,7 +2191,7 @@
       ]
     }
   },
-  "register: 409 EMAIL_TAKEN": {
+  "register: 400 INVALID_HANDLE": {
     "calls": [
       {
         "method": "POST",
@@ -2213,7 +2213,34 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EMAIL_TAKEN\n\nemail in use This email already owns an AgentChat account — reuse its existing API key (or recover the account) instead of registering again."
+          "text": "Error: INVALID_HANDLE\n\nHandle is invalid or reserved This handle is reserved or not a valid handle. Pick a different handle and call agentchat_register again."
+        }
+      ]
+    }
+  },
+  "register: 409 EMAIL_LIMIT_REACHED": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register",
+        "query": [],
+        "body": {
+          "email": "owner@example.com",
+          "handle": "fresh-bot"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached This email already backs as many live agents as it may. Register with a different email address (a `+` alias such as you+scout@example.com counts as a different one), or delete one of the agents this email backs first."
         }
       ]
     }
@@ -2240,7 +2267,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: EMAIL_EXHAUSTED\n\nlimit reached This email has reached its AgentChat account limit and cannot register more agents. Use a different email address."
+          "text": "Error: EMAIL_EXHAUSTED\n\nlimit reached This email has used all of its registrations (deleted agents count too) and cannot register another agent. Register with a different email address (a `+` alias counts as a different one)."
         }
       ]
     }
@@ -2267,7 +2294,115 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: RATE_LIMITED\n\nRate limit exceeded; retry after 120 seconds. Per-agent rate limits are shared across all your tool calls (sends are capped at 60 messages/second); honor the retry hint before calling again.\n\nRetry after: 120 seconds."
+          "text": "Error: RATE_LIMITED\n\nRate limit exceeded; retry after 120 seconds. Too many sign-up requests came from this network address (the cap counts requests per address, not per agent). Wait before calling agentchat_register again; calling at once does not help.\n\nRetry after: 120 seconds."
+        }
+      ]
+    }
+  },
+  "register: 429 RATE_LIMITED without Retry-After (the per-address limit)": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register",
+        "query": [],
+        "body": {
+          "email": "owner@example.com",
+          "handle": "fresh-bot"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: RATE_LIMITED\n\nRate limit exceeded. Too many sign-up requests came from this network address (the cap counts requests per address, not per agent). Wait before calling agentchat_register again; calling at once does not help."
+        }
+      ]
+    }
+  },
+  "register: 429 OTP_COOLDOWN": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register",
+        "query": [],
+        "body": {
+          "email": "owner@example.com",
+          "handle": "fresh-bot"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: OTP_COOLDOWN\n\nPlease wait 42s before requesting another code. A code was emailed to this address moments ago. If you have the pending_id from that call, use that code with agentchat_verify_otp; otherwise wait the retry time, then call agentchat_register again.\n\nRetry after: 42 seconds."
+        }
+      ]
+    }
+  },
+  "register: 429 OTP_HOURLY_CAP": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register",
+        "query": [],
+        "body": {
+          "email": "owner@example.com",
+          "handle": "fresh-bot"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: OTP_HOURLY_CAP\n\nMaximum 20 verification codes per hour. Please try again later. Too many codes were emailed to this address in the last hour. If you have a pending_id from a recent call, use the newest code with agentchat_verify_otp; otherwise wait the retry time before calling agentchat_register again.\n\nRetry after: 1800 seconds."
+        }
+      ]
+    }
+  },
+  "register: 500 OTP_FAILED": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register",
+        "query": [],
+        "body": {
+          "email": "owner@example.com",
+          "handle": "fresh-bot"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: SERVER_ERROR\n\nAgentChat reported a server-side error. This is transient; retry shortly."
         }
       ]
     }
@@ -2552,39 +2687,12 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INVALID_CODE\n\nwrong code Re-check the 6 digits from the NEWEST verification email; codes are single-use."
+          "text": "Error: INVALID_CODE\n\nwrong code Re-check the 6 digits from the NEWEST verification email and try again; codes are single-use. Too many wrong codes cancel this registration (OTP_ATTEMPTS_EXHAUSTED), and then agentchat_register must be called again."
         }
       ]
     }
   },
-  "verify: 400 CODE_EXPIRED": {
-    "calls": [
-      {
-        "method": "POST",
-        "path": "/v1/register/verify",
-        "query": [],
-        "body": {
-          "pending_id": "pend_1",
-          "code": "123456"
-        },
-        "auth": "none",
-        "client": "mcp",
-        "client_version_is_package": true,
-        "idempotency_key": false,
-        "content_type": "application/json"
-      }
-    ],
-    "result": {
-      "isError": true,
-      "content": [
-        {
-          "type": "text",
-          "text": "Error: CODE_EXPIRED\n\nexpired The code expired. Call agentchat_register again to get a fresh one."
-        }
-      ]
-    }
-  },
-  "verify: 404 PENDING_NOT_FOUND": {
+  "verify: 400 EXPIRED": {
     "calls": [
       {
         "method": "POST",
@@ -2606,7 +2714,115 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: PENDING_NOT_FOUND\n\nno such pending No pending registration matches this pending_id (it may have expired or already completed). Call agentchat_register again."
+          "text": "Error: EXPIRED\n\nRegistration expired or invalid. Please start again. No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp already returned your API key, you are registered — use that key. Otherwise call agentchat_register again for a new pending_id and code."
+        }
+      ]
+    }
+  },
+  "verify: 429 OTP_ATTEMPTS_EXHAUSTED": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: OTP_ATTEMPTS_EXHAUSTED\n\nToo many incorrect codes (max 5). Please request a new one. Too many wrong codes were tried, so this registration is cancelled. Call agentchat_register again for a new pending_id and code."
+        }
+      ]
+    }
+  },
+  "verify: 429 OTP_EMAIL_LOCKED": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: OTP_EMAIL_LOCKED\n\nToo many wrong codes for this email. Try again in 15 minutes. Too many codes were tried for this email (every sign-up and recovery code for it counts). Wait the retry time before calling agentchat_verify_otp again; registering again does not lift the wait. If this pending_id has expired by then, call agentchat_register for a new one.\n\nRetry after: 900 seconds."
+        }
+      ]
+    }
+  },
+  "verify: 409 HANDLE_TAKEN (taken after the code was accepted)": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: HANDLE_TAKEN\n\nHandle @fresh-bot is already taken The code was right, but another agent took this handle first, so this registration is used up. Call agentchat_register again with a different handle."
+        }
+      ]
+    }
+  },
+  "verify: 409 EMAIL_LIMIT_REACHED (another registration finished first)": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: EMAIL_LIMIT_REACHED\n\nlimit reached The code was right, but another registration with this email finished first and the email now backs as many live agents as it may; this registration is used up. Call agentchat_register again with a different email address (a `+` alias counts as a different one)."
         }
       ]
     }

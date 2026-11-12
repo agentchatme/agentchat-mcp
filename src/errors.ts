@@ -159,7 +159,7 @@ export function mapAgentChatError(
     const retryAfterSeconds =
       err.retryAfterMs !== null ? Math.ceil(err.retryAfterMs / 1000) : undefined
     // A 429 whose body carries a code the SDK does not model (e.g.
-    // EMAIL_EXHAUSTED from the register flow) reaches this class via the
+    // OTP_COOLDOWN from the register flow) reaches this class via the
     // status fallback. The wire code + message — possibly with tool guidance
     // appended by rethrowWithGuidance — stay authoritative, and the retry
     // hint the subclass carries is preserved alongside them.
@@ -235,8 +235,8 @@ export function mapAgentChatError(
 
   if (err instanceof NotFoundError) {
     // Same wire-code-authoritative rule as the 429 branch: a 404 whose body
-    // code the SDK does not model (e.g. PENDING_NOT_FOUND from the verify
-    // flow) keeps its own code and message instead of the generic advice.
+    // code the SDK does not model keeps its own code and message instead of
+    // the generic advice.
     if (err.code && !SDK_NOT_FOUND_CODES.has(err.code)) {
       return { code: err.code, message: err.message }
     }

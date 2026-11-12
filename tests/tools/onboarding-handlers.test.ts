@@ -100,7 +100,7 @@ describe('agentchat_register handler', () => {
 
   it.each([
     ['HANDLE_TAKEN', 409, /different handle/],
-    ['EMAIL_TAKEN', 409, /existing API key/],
+    ['EMAIL_LIMIT_REACHED', 409, /different email address/],
     ['EMAIL_EXHAUSTED', 409, /different email/],
   ])('surfaces %s with the server message plus guidance', async (code, status, guidance) => {
     const { impl } = fetchStub(() => json(status, { code, message: `server says ${code}` }))
@@ -171,30 +171,32 @@ describe('agentchat_verify_otp handler', () => {
     expect(calls[0]!.body).toEqual({ pending_id: 'pend_9', code: '654321' })
   })
 
-  it('passes expiry errors through with re-register guidance', async () => {
+  it('passes EXPIRED (400: the pending registration is gone) through with re-register guidance', async () => {
     const { impl } = fetchStub(() =>
-      json(400, { code: 'CODE_EXPIRED', message: 'code expired' }),
+      json(400, { code: 'EXPIRED', message: 'Registration expired or invalid. Please start again.' }),
     )
     const handler = verifyOtp.createHandler(makeCtx(impl, null))
     const result = await handler({ pending_id: 'pend_9', code: '654321' })
     expect(result.isError).toBe(true)
-    expect(firstText(result)).toContain('CODE_EXPIRED')
-    expect(firstText(result)).toContain('agentchat_register')
+    expect(firstText(result)).toContain('Error: EXPIRED')
+    expect(firstText(result)).toContain('Registration expired or invalid. Please start again.')
+    expect(firstText(result)).toContain('call agentchat_register again')
   })
 
-  it('keeps code and guidance for PENDING_NOT_FOUND even when the server sends it as a 404', async () => {
-    // 404 mints a NotFoundError in the SDK; the guided wire code + message
-    // must still win over the generic not-found advice.
+  it('keeps code, guidance and the retry hint for OTP_EMAIL_LOCKED (a 429 the SDK does not model)', async () => {
+    // A 429 with a code the SDK does not know mints a RateLimitedError by
+    // status; the wire code, the guided message and Retry-After all survive.
     const { impl } = fetchStub(() =>
-      json(404, { code: 'PENDING_NOT_FOUND', message: 'no such pending registration' }),
+      json(429, { code: 'OTP_EMAIL_LOCKED', message: 'Too many wrong codes for this email. Try again in 15 minutes.' }, { 'retry-after': '900' }),
     )
     const handler = verifyOtp.createHandler(makeCtx(impl, null))
-    const result = await handler({ pending_id: 'pend_gone', code: '654321' })
+    const result = await handler({ pending_id: 'pend_9', code: '654321' })
     expect(result.isError).toBe(true)
     const text = firstText(result)
-    expect(text).toContain('PENDING_NOT_FOUND')
-    expect(text).toContain('no such pending registration')
-    expect(text).toContain('agentchat_register')
+    expect(text).toContain('Error: OTP_EMAIL_LOCKED')
+    expect(text).toContain('Too many wrong codes for this email. Try again in 15 minutes.')
+    expect(text).toContain('registering again does not lift the wait')
+    expect(text).toContain('Retry after: 900 seconds.')
   })
 
   it('fails with explicit do-not-re-register guidance when success carries no api_key', async () => {

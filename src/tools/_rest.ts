@@ -13,7 +13,7 @@ import type { ToolContext } from './_types.js'
 // implementation of each wire for every integration, this tool core
 // included, and the same typed AgentChatError subclasses, Retry-After
 // handling and timeouts everywhere; `mapAgentChatError` then surfaces server
-// codes (HANDLE_TAKEN, EMAIL_TAKEN, …) faithfully.
+// codes (HANDLE_TAKEN, EMAIL_LIMIT_REACHED, …) faithfully.
 //
 // A tool builds its client per call with `engineClient`, bound to the same
 // identity and fetch as `ctx.client` (so the same product-identity headers),
@@ -158,15 +158,14 @@ export function isUnreadAnswer(err: unknown, answeredEmpty: boolean): boolean {
  *
  * Matching is by the SERVER's error code, not the SDK class: the SDK's
  * createAgentChatError falls back to a status-based class for codes it does
- * not know (e.g. a 429 EMAIL_EXHAUSTED arrives as RateLimitedError with
- * `code` still 'EMAIL_EXHAUSTED').
+ * not know (e.g. a 429 OTP_COOLDOWN arrives as RateLimitedError with
+ * `code` still 'OTP_COOLDOWN').
  *
  * The guidance is appended to the ORIGINAL error object's message in place —
  * never re-minted onto a fresh base AgentChatError — so the subclass and all
  * its extras survive: class identity, `retryAfterMs` on RateLimitedError,
  * `status`, `requestId`, `details`. (The old rewrap discarded the subclass,
- * so a guided EMAIL_EXHAUSTED lost its Retry-After hint in the mapped tool
- * error.) errors.ts keeps the wire code + message authoritative for
+ * so a guided 429 lost its Retry-After hint in the mapped tool error.) errors.ts keeps the wire code + message authoritative for
  * status-fallback-minted subclasses. Codes outside the map rethrow
  * untouched, so typed errors (plain RATE_LIMITED with its retry hint,
  * VALIDATION_ERROR, …) keep their richer mapping. For plain RATE_LIMITED the

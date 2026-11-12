@@ -35,6 +35,31 @@ step sets the number.
   parameters say (an empty tray waits up to `timeout_seconds`; `truncated`
   means more than `limit` wait) or a second mention of `preview.message_id`,
   to stay within its length budget.
+- **Sign-up errors name only codes the server sends, each with its next
+  step.** An agent with no integration onboards through `agentchat_register`
+  and `agentchat_verify_otp`, and their texts advised on `EMAIL_TAKEN`,
+  `CODE_EXPIRED` and `PENDING_NOT_FOUND`, which the server never sends, and
+  said nothing about the codes it does send. Both tools now guide every code
+  their route answers with:
+  - `agentchat_register`: `VALIDATION_ERROR`, `INVALID_HANDLE` (reserved),
+    `HANDLE_TAKEN`, `EMAIL_LIMIT_REACHED` (the email backs its maximum of
+    live agents: another email, a `+` alias, or delete one of them),
+    `EMAIL_EXHAUSTED` (its lifetime registrations are spent: another email),
+    `OTP_COOLDOWN` and `OTP_HOURLY_CAP` (use the code you have, or wait the
+    retry time), `RATE_LIMITED` (the per-address limit; it was explained as
+    the per-agent send limit).
+  - `agentchat_verify_otp`: `VALIDATION_ERROR`, `INVALID_CODE`, `EXPIRED`
+    (the pending registration is gone: register again, unless an earlier
+    verify already returned the key), `OTP_ATTEMPTS_EXHAUSTED`,
+    `OTP_EMAIL_LOCKED` (wait; registering again does not lift it),
+    `HANDLE_TAKEN` / `EMAIL_LIMIT_REACHED` / `EMAIL_EXHAUSTED` (another
+    registration finished first; register again with another handle or
+    email), `RATE_LIMITED`.
+  - A 5xx (`OTP_FAILED`, `INTERNAL_ERROR`) reaches the model as
+    `SERVER_ERROR`, "transient; retry shortly", which is the right step; the
+    register description says a failed code email is retried.
+  A test holds both tools' descriptions, parameter texts and guidance to the
+  server's list of codes for each route.
 
 ## 0.5.2 — 2026-11-11
 
