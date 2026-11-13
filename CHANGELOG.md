@@ -5,10 +5,11 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 0.5.3 — 2026-11-12
 
-Fixed existing behaviour → a patch release, per `VERSIONING.md`; the release
-step sets the number.
+Patch release (fixed existing behaviour → patch +1, per `VERSIONING.md`): a
+one-conversation run stays on its conversation, a card with no preview has an
+anchor, and sign-up and rate-limit errors keep the server's words.
 
 ### Fixed
 
