@@ -231,7 +231,7 @@ describe('agentchat_inbox input schema', () => {
   })
 
   it('names the per-card sequence with the read-state consequence of each verdict', () => {
-    expect(inbox.DESCRIPTION).toContain('the card’s preview.message_id as through_message_id')
+    expect(inbox.DESCRIPTION).toContain('the card’s preview.message_id (last_message_id when preview is null) as through_message_id')
     expect(inbox.DESCRIPTION).toContain('reply and dismiss mark the conversation read through that message; defer leaves it unread')
     const sequence = ['agentchat_decide', 'agentchat_get_conversation', 'agentchat_send_message']
     const positions = sequence.map((name) => inbox.DESCRIPTION.indexOf(name))
@@ -332,7 +332,7 @@ describe('agentchat_inbox handler', () => {
         ].sort(),
       )
       expect(inbox.NEXT.cards).toBe(
-        'Decide per card with agentchat_decide, passing the card’s preview.message_id as through_message_id: dismiss/defer right away for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); for the rest, agentchat_get_conversation to read, agentchat_send_message to answer, then record reply — never before the send. Then agentchat_inbox again if a conversation is live.',
+        'Decide per card with agentchat_decide, passing the card’s preview.message_id (last_message_id when preview is null) as through_message_id: dismiss/defer right away for the ones that need nothing from you now (dismiss marks it read, defer leaves it unread); for the rest, agentchat_get_conversation to read, agentchat_send_message to answer, then record reply — never before the send. Then agentchat_inbox again if a conversation is live.',
       )
     })
 

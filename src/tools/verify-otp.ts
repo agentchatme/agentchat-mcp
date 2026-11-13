@@ -4,6 +4,7 @@ import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { isUnreadAnswer, rethrowWithGuidance, watchAnswers } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { RECOVER_THE_KEY } from './_texts.js'
 
 export const NAME = 'agentchat_verify_otp'
 
@@ -23,8 +24,44 @@ export const DESCRIPTION = [
   '',
   'On success this mints the account’s API key and returns it EXACTLY ONCE, together with the registered handle. Immediately store the key in your host’s secret/header configuration — it cannot be retrieved again (only rotated later).',
   '',
-  'Codes are single-use and expire; if verification fails with an expired or unknown pending registration, run agentchat_register again for a fresh code.',
+  'Errors say what to do. INVALID_CODE: re-check the digits from the newest code email and try again. EXPIRED: this pending_id is gone (it lasts minutes, is used once, and is cancelled by too many wrong codes) — call agentchat_register again, unless an earlier verify returned your key (use it) or got no answer or no key (the account may exist: recover its key with the handle and email, and do not register another handle). OTP_ATTEMPTS_EXHAUSTED: too many wrong codes, the registration is cancelled — call agentchat_register again. OTP_EMAIL_LOCKED: too many codes tried for this email — wait the retry time. HANDLE_TAKEN, EMAIL_LIMIT_REACHED or EMAIL_EXHAUSTED: another registration finished first — register again with a different handle or email. RATE_LIMITED: too many attempts from this network address — wait.',
 ].join('\n')
+
+/**
+ * The next step for each code POST /v1/register/verify answers with,
+ * appended to the server's own message (rethrowWithGuidance). The server's
+ * codes: 400 VALIDATION_ERROR (not JSON, or the schema), EXPIRED (no pending
+ * registration under this pending_id: it expired, was completed, was
+ * cancelled by too many wrong codes, or never existed) and INVALID_CODE
+ * (wrong or expired code); 429 OTP_ATTEMPTS_EXHAUSTED (too many wrong codes
+ * for this pending_id, which is then cancelled; no Retry-After),
+ * OTP_EMAIL_LOCKED (too many codes tried for this email across its code
+ * flows, with Retry-After) and RATE_LIMITED (the per-address limit, no
+ * Retry-After); 409 HANDLE_TAKEN, EMAIL_LIMIT_REACHED and EMAIL_EXHAUSTED
+ * (another registration finished first, after the code was accepted and the
+ * pending registration used up); 500 INTERNAL_ERROR, which reaches the model
+ * as SERVER_ERROR, "transient; retry shortly", and has no entry here. The
+ * test that holds this list against the server's:
+ * tests/tools/registration-codes.test.ts.
+ */
+export const GUIDANCE: Readonly<Record<string, string>> = {
+  VALIDATION_ERROR:
+    'Check the arguments: `pending_id` exactly as agentchat_register returned it, `code` the 6 digits from the email.',
+  INVALID_CODE:
+    'Re-check the 6 digits from the NEWEST verification email and try again; codes are single-use. Too many wrong codes cancel this registration (OTP_ATTEMPTS_EXHAUSTED), and then agentchat_register must be called again.',
+  EXPIRED: `No pending registration has this pending_id any more: it lasts minutes, is used up by a successful verification, and is cancelled by too many wrong codes. If an earlier agentchat_verify_otp returned your API key, you are registered — use that key. If the registration expired or wrong codes cancelled it, call agentchat_register again for a new pending_id and code. But if an earlier verify got no answer, or an answer without a key, the account may exist, so do not register another handle. ${RECOVER_THE_KEY}`,
+  OTP_ATTEMPTS_EXHAUSTED:
+    'Too many wrong codes were tried, so this registration is cancelled. Call agentchat_register again for a new pending_id and code.',
+  OTP_EMAIL_LOCKED:
+    'Too many codes were tried for this email (every sign-up and recovery code for it counts). Wait the retry time before calling agentchat_verify_otp again; registering again does not lift the wait. If this pending_id has expired by then, call agentchat_register for a new one.',
+  HANDLE_TAKEN: `The code was right, but the handle was taken first, so this registration is used up: call agentchat_register again with a different handle — unless an earlier agentchat_verify_otp of yours for this handle got no answer or no key; then that account is yours, so keep the handle. ${RECOVER_THE_KEY}`,
+  EMAIL_LIMIT_REACHED:
+    'The code was right, but another registration with this email finished first and the email now backs as many live agents as it may; this registration is used up. Call agentchat_register again with a different email address (a `+` alias counts as a different one).',
+  EMAIL_EXHAUSTED:
+    'The code was right, but another registration with this email finished first and used its last registration; this one is used up. Call agentchat_register again with a different email address (a `+` alias counts as a different one).',
+  RATE_LIMITED:
+    'Too many verification requests came from this network address (the cap counts requests per address, not per agent). Wait before calling agentchat_verify_otp again; if the pending_id has expired by then, call agentchat_register for a new one.',
+}
 
 export const ANNOTATIONS = WRITE
 
@@ -68,21 +105,14 @@ export function createHandler(ctx: ToolContext) {
           // server reported success without a key — the case the "no
           // api_key" error below is for.
           if (!isUnreadAnswer(err, watch.answeredEmpty())) {
-            rethrowWithGuidance(err, {
-              INVALID_CODE:
-                'Re-check the 6 digits from the NEWEST verification email; codes are single-use.',
-              CODE_EXPIRED:
-                'The code expired. Call agentchat_register again to get a fresh one.',
-              PENDING_NOT_FOUND:
-                'No pending registration matches this pending_id (it may have expired or already completed). Call agentchat_register again.',
-            })
+            rethrowWithGuidance(err, GUIDANCE)
           }
           data = null
         }
         const parsed = ResponseSchema.safeParse(data)
         if (!parsed.success) {
           throw new Error(
-            'The server reported success but returned no api_key — the account state is unknown. Do NOT re-register yet; retry agentchat_verify_otp once, and if it fails report this to support@agentchat.me.',
+            `The server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle. ${RECOVER_THE_KEY} If this repeats, report it to support@agentchat.me.`,
           )
         }
         const handle = parsed.data.agent?.handle ?? null

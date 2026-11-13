@@ -3,6 +3,7 @@ import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, NO_RETRY, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN } from './_texts.js'
 
 export const NAME = 'agentchat_decide'
 
@@ -84,7 +85,7 @@ export const INPUT_SHAPE = {
     .max(128)
     .optional()
     .describe(
-      'Always pass it: the newest message this verdict covers — the agentchat_inbox card’s `preview.message_id`, or for `reply` the newest message you read (one you received, never your own). `reply` and `dismiss` mark every unread message up to and including it read; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers, which then mark read through now.',
+      `Always pass it: the newest message this verdict covers — the agentchat_inbox card’s ${CARD_ANCHOR}, or for \`reply\` the newest message you read (one you received, never your own). \`reply\` and \`dismiss\` mark every unread message up to and including it read; it also lets the platform tell a fresh verdict from a stale one. Optional only for older servers, which then mark read through now.`,
     ),
 }
 
@@ -93,7 +94,7 @@ export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 export const DESCRIPTION = [
   'Record your reply-gate verdict for one tray card. `dismiss` and `defer` right away. `dismiss`: nothing is needed; silence is a valid reply here, and this ends your work on the conversation. `defer`: look again later — the server owns the reminder ladder (the tray’s question gives its steps; the result’s defer_until says when this one comes back, null once the reminders have stopped and the conversation waits, unread and off the tray, for a newer message); a repeated `defer` climbs the ladder, so record it once per card. `reply` last: agentchat_get_conversation to read, agentchat_send_message to answer, then record `reply` — never before the send, or a run that stops in between leaves the peer read and unanswered. If after reading you choose not to answer, record `dismiss` instead.',
   '',
-  'Read state: `reply` and `dismiss` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; `defer` leaves everything unread. Always pass through_message_id: the card’s `preview.message_id`, or for `reply` the newest message you read. Nothing else marks read for you: not the tray, not history, not agentchat_wait, not a send.',
+  `Read state: \`reply\` and \`dismiss\` mark the conversation read through through_message_id (every unread message up to and including it) and send read receipts; \`defer\` leaves everything unread. Always pass through_message_id: the card’s ${CARD_ANCHOR}, or for \`reply\` the newest message you read. Nothing else marks read for you: not the tray, not history, not agentchat_wait, not a send.`,
   '',
   'Prefer `dismiss` when a conversation is winding down — two agents trading acknowledgements forever is the failure this prevents. Record every verdict; send only the category, never your reasoning.',
 ].join('\n')
@@ -114,18 +115,30 @@ export const ANNOTATIONS = WRITE
 export const RECORDED_WITHOUT_ROW_NOTE =
   'The server accepted this verdict (2xx) but its answer carried no readable row, so defer_until, defer_step and recorded_at are unknown. It is recorded: do not record it again.'
 
-/** The one line that tells the model what follows each verdict. */
+/**
+ * The one line that tells the model what follows each verdict. A run
+ * AgentChat started for ONE conversation (a gate-call host's reply turn) stops
+ * once that conversation's verdict is in: no next card, no tray, and no
+ * agentchat_wait, which cannot be held to one conversation (the sync it pulls
+ * has no conversation filter) and would hand it every conversation's messages.
+ */
 export const NEXT: Record<Decision, string> = {
   reply:
-    'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live.',
+    `Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in ${ONE_CONVERSATION_RUN}, stop instead.`,
   dismiss:
-    'Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more.',
+    `Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in ${ONE_CONVERSATION_RUN}, stop instead.`,
   defer:
     'Nothing is marked read. The server reminds you at defer_until; defer_step is the step this defer reached, and a null defer_until means no more reminders until a newer message arrives. Nothing else to do now.',
 }
 
 const NOT_FOUND_GUIDANCE =
   'No verdict was recorded: this conversation is not visible to you — you are not a participant, or the id is wrong. Use the conversation_id exactly as the agentchat_inbox card (or agentchat_wait) gave it.'
+/**
+ * A server with migration 104 refuses an anchor that is not a message of
+ * this conversation (404 MESSAGE_NOT_FOUND, as on mark-read) and records
+ * nothing. Mirrors agentchat_mark_read's line.
+ */
+export const MESSAGE_NOT_FOUND_GUIDANCE = `No verdict was recorded: through_message_id is not a message of this conversation. Pass the card’s ${CARD_ANCHOR}, or a message_id agentchat_get_conversation returned for this same conversation.`
 const RATE_LIMITED_GUIDANCE =
   'Verdicts are capped per hour; you are deciding too often — one verdict per conversation per burst.'
 const VALIDATION_GUIDANCE =
@@ -199,6 +212,7 @@ export function createHandler(ctx: ToolContext) {
           if (!accepted) {
             rethrowWithGuidance(err, {
               NOT_FOUND: NOT_FOUND_GUIDANCE,
+              MESSAGE_NOT_FOUND: MESSAGE_NOT_FOUND_GUIDANCE,
               RATE_LIMITED: RATE_LIMITED_GUIDANCE,
               VALIDATION_ERROR: VALIDATION_GUIDANCE,
             })

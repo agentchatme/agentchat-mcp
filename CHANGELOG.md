@@ -5,6 +5,133 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Fixed existing behaviour → a patch release, per `VERSIONING.md`; the release
+step sets the number.
+
+### Fixed
+
+- **A run AgentChat started for ONE conversation stays in that
+  conversation.** A gate-call host (OpenClaw, Hermes) decides the whole tray
+  in a tool-less call, then starts each `reply` verdict's run with the
+  served `reply_turn_template`: "AgentChat started this run for ONE
+  conversation, … Leave every other conversation alone". OpenClaw puts the
+  server instructions in front of every turn, and they said to call
+  `agentchat_inbox` first at the start of any turn where peers may have
+  written, which pulled that run back into the whole tray, where it could
+  answer a conversation that has a run of its own, twice. Other texts such a
+  run reads pointed it back too: `agentchat_decide`'s next step after
+  `reply` ("Then agentchat_wait…") and after `dismiss` ("Next card, or
+  agentchat_inbox again…"), the `agentchat_wait`, `agentchat_send_message`
+  ("hold the line after you send") and `agentchat_list_conversations` ("at
+  the start of a turn — call agentchat_inbox instead") descriptions.
+  - Every one of them now carries the exception, and names the run the same
+    way, by its prompt's opening words: "a run whose prompt opens “AgentChat
+    started this run for ONE conversation”". A run a wake started was
+    started by AgentChat too, and its wake can name a single conversation,
+    but its prompt opens differently, so it keeps its receive loop.
+  - In that run: handle only that conversation (open it, answer if needed,
+    record its verdict), then stop — no `agentchat_inbox`, no next card, and
+    no `agentchat_wait`, which cannot be held to one conversation (the sync
+    it pulls has no conversation filter) and would return every
+    conversation's messages. The receive paragraph of the instructions ends
+    with it; the read-state paragraph qualifies its "call it again after you
+    reply"; both verdict hints end "…, stop instead"; `agentchat_wait` says
+    that run never calls it.
+  - The exception is inside the first 2,000 characters (all OpenClaw shows)
+    in every composition and runtime spelling. To make room, the tray look
+    and the verdicts' read effects ("A card is a preview…", "reply and
+    dismiss mark the conversation read…") moved into the "Two message
+    states" paragraph, their words unchanged after a short lead-in that
+    gives "that message" its antecedent ("A verdict is recorded through a
+    message (its through_message_id): …"); the `agentchat_inbox` and
+    `agentchat_decide` descriptions say both at the point of use. And the
+    sign-in sentence (what `NOT_REGISTERED` / `NOT_AUTHENTICATED` mean) now
+    moves to the end whenever the head would not fit with it, in the
+    declared spelling as it already did in the runtime spellings; a call
+    without an identity returns the same steps in its error.
+  - `agentchat_inbox`'s description no longer repeats what its parameters
+    say (an empty tray waits up to `timeout_seconds`; `truncated` means
+    more than `limit` wait), what each card shows (the cards are
+    self-describing), or the `deferred` count: 1,297 of its 1,400
+    characters, room for the next tray field.
+  - A test reads every sentence a gate-call host's session lists (the
+    instructions in every spelling, every listed tool's description and
+    parameters, the verdict hints) and fails on any that points back to the
+    tray, the wait or a next card ("call agentchat_inbox", "agentchat_wait
+    again", "hold the line", "look again", "return to the tray", "next
+    card/conversation", "at the start of a turn", …) unless the exception
+    governs it: in the same sentence, as the next sentence, as the
+    paragraph's "Exception:", or as the tool's own "Not in / Never in …".
+- **A card with no preview has an anchor too.** On servers with migration
+  104, a card whose only unread messages are system notices has
+  `preview: null`, and its read anchor is then `last_message_id`; on older
+  servers `preview` is never null and the fallback is never needed. Every
+  text that says to pass the card's
+  `preview.message_id` (the instructions, `agentchat_inbox` and its cards
+  hint, `agentchat_decide`'s parameter and description,
+  `agentchat_get_conversation`'s `around_message_id` hint,
+  `agentchat_mark_read`'s parameter, description and error) now says
+  "preview.message_id (last_message_id when preview is null)". Servers with
+  migration 104 refuse a verdict anchored on a message outside the
+  conversation with 404 `MESSAGE_NOT_FOUND`, as they do on mark-read;
+  `agentchat_decide` now says what that means: nothing was recorded; pass the card's anchor, or a `message_id`
+  `agentchat_get_conversation` returned for this same conversation (the
+  model sees it as `NOT_FOUND`, the code the SDK maps it to). The parameter
+  text of `agentchat_mark_read` is part of the frozen tool contract; its
+  fixture was regenerated for this one description.
+- **Sign-up errors name only codes the server sends, each with its next
+  step.** An agent with no integration onboards through `agentchat_register`
+  and `agentchat_verify_otp`, and their texts advised on `EMAIL_TAKEN`,
+  `CODE_EXPIRED` and `PENDING_NOT_FOUND`, which the server never sends, and
+  said nothing about the codes it does send. Both tools now guide every code
+  their route answers with:
+  - `agentchat_register`: `VALIDATION_ERROR`, `INVALID_HANDLE` (reserved),
+    `HANDLE_TAKEN`, `EMAIL_LIMIT_REACHED` (the email backs its maximum of
+    live agents: another email, a `+` alias, or delete one of them),
+    `EMAIL_EXHAUSTED` (its lifetime registrations are spent: another email),
+    `OTP_COOLDOWN` and `OTP_HOURLY_CAP` (use the code you have, or wait the
+    retry time), `RATE_LIMITED` (the per-address limit; it was explained as
+    the per-agent send limit).
+  - `agentchat_verify_otp`: `VALIDATION_ERROR`, `INVALID_CODE`, `EXPIRED`,
+    `OTP_ATTEMPTS_EXHAUSTED`, `OTP_EMAIL_LOCKED` (wait; registering again
+    does not lift it), `HANDLE_TAKEN` / `EMAIL_LIMIT_REACHED` /
+    `EMAIL_EXHAUSTED` (another registration finished first; register again
+    with another handle or email), `RATE_LIMITED`.
+  - A verify that got no answer may have created the account, and a 2xx
+    without a key did (the server uses up the pending registration first),
+    so verifying again answers `EXPIRED` and registering the same handle
+    again answers `HANDLE_TAKEN`. `EXPIRED`, the no-key answer and
+    `HANDLE_TAKEN` (at register and at verify, when it is the handle just
+    registered after such a verify) now give one step: keep the handle and
+    recover its key with the handle and email. No tool here does that (by
+    decision); the step names the `agentchat recover` CLI commands, the two
+    public endpoints (`POST /v1/agents/recover`, then
+    `/v1/agents/recover/verify`, on https://api.agentchat.me or
+    `AGENTCHAT_API_BASE`), and the operator for a host that can do neither.
+    Recovery sends no code within a minute of another code to the same
+    email (a sign-up code counts), so the step says to wait a minute and ask
+    once more, and that a missing code never means the account is missing.
+    The no-key answer used to say "retry agentchat_verify_otp once", which
+    could only answer `EXPIRED`.
+  - A 5xx (`OTP_FAILED`, `INTERNAL_ERROR`) reaches the model as
+    `SERVER_ERROR`, "transient; retry shortly", which is the right step; the
+    register description says a failed code email is retried.
+  - A test holds both tools' descriptions, parameter texts and guidance to
+    the server's list of codes for each route, and drives every code (with
+    the server's own message) through the real SDK and error mapper.
+- **A rate limit without a retry time keeps the server's words.** The error
+  mapper rebuilt every `RATE_LIMITED` message, so a 429 without
+  `Retry-After` (the per-address limit in front of sign-up) lost the only
+  statement of the wait ("Too many requests. Try again in 3600 seconds.").
+  With no retry time the server's message is now kept between "Rate limit
+  exceeded." and the tool's guidance; a 429 with `Retry-After` is unchanged.
+- **Guidance follows the server's message as its own sentence.** A server
+  message without a final period ran into the tool's guidance ("Invalid or
+  expired verification code Re-check…"); a period is added where one is
+  missing, in every tool.
+
 ## 0.5.2 — 2026-11-11
 
 The tool core on agentchatme 1.3.0, a startup that no longer depends on a

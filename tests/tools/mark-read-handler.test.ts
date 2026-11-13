@@ -239,7 +239,7 @@ describe('agentchat_mark_read handler', () => {
         const text = firstText(result)
         expect(text).toContain('Error: NOT_FOUND')
         expect(text).toContain('through_message_id is not a message of this conversation')
-        expect(text).toContain('preview.message_id')
+        expect(text).toContain('Pass the card’s preview.message_id (last_message_id when preview is null), or a message_id agentchat_get_conversation returned for this same conversation.')
         expect(text).not.toContain('no conversation read endpoint')
         expect(calls).toHaveLength(1)
       })

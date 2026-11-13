@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { READ } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { ONE_CONVERSATION_RUN } from './_texts.js'
 
 export const NAME = 'agentchat_list_conversations'
 
@@ -27,7 +28,7 @@ export const DESCRIPTION = [
   '',
   'Each compact row carries the counterparty or group summary, the last message preview and time, the exact unread count and seq boundary, and whether it is muted. Previews are a triage cue; open a conversation with agentchat_get_conversation before acting on it. Listing marks nothing.',
   '',
-  'This is the full list, not the inbox. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it shows only the conversations with unread messages, with the gate question.',
+  `This is the full list, not the inbox. For what needs you now — when woken, or at the start of a turn — call agentchat_inbox instead: it shows only the conversations with unread messages, with the gate question. In ${ONE_CONVERSATION_RUN}, call neither.`,
 ].join('\n')
 
 export const ANNOTATIONS = READ
