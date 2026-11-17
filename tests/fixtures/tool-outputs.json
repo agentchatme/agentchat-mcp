@@ -2659,7 +2659,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: OTP_FAILED\n\nWe couldn't send the code. Try again in a few minutes.\nNext: call agentchat_register again."
+          "text": "Error: OTP_FAILED\n\nWe couldn't send the code. Try again in a few minutes."
         }
       ]
     }

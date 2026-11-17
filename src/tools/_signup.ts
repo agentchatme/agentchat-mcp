@@ -35,8 +35,10 @@ export interface SignupFlow {
   param?: string
   /** Digits in the code, while one is pending. */
   code_length?: number
-  /** Seconds to wait before `next_step` (every 429). */
+  /** Seconds to wait before `next_step` (a 429). */
   retry_after_s?: number
+  /** Seconds until a new code may be requested for this email (0: now). */
+  resend_after_s?: number
   /** The email cap a 409 hit (EMAIL_LIMIT_REACHED, EMAIL_EXHAUSTED). */
   limit?: number
   /** The live handles on the email (HANDLE_REQUIRED, recovery only). */
@@ -62,6 +64,9 @@ const MANUAL_FOR_STEP: Readonly<Record<string, string>> = {
 
 /** The statuses that end a pending code: a new code is the way on. */
 const ENDED = new Set(['expired', 'max_attempts_reached'])
+
+/** The steps that take a code (contract v1 `verify_steps`). */
+const VERIFY_STEPS = new Set(['verify', 'recover_verify', 'rotate_key_verify'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -95,6 +100,8 @@ function readFlow(source: unknown): SignupFlow | null {
   if (codeLength !== undefined && codeLength > 0) flow.code_length = codeLength
   const retryAfter = seconds(source['retry_after_s'])
   if (retryAfter !== undefined) flow.retry_after_s = retryAfter
+  const resendAfter = seconds(source['resend_after_s'])
+  if (resendAfter !== undefined) flow.resend_after_s = resendAfter
   const limit = integer(source['limit'])
   if (limit !== undefined) flow.limit = limit
   const handles = source['handles']
@@ -131,16 +138,26 @@ export function flowOfError(err: unknown): SignupFlow | null {
 
 const declared: ToolNamer = (tool) => tool
 
+const waitFor = (secondsToWait: number | undefined): string =>
+  secondsToWait !== undefined && secondsToWait > 0 ? `wait ${secondsToWait} seconds, then ` : ''
+
 /**
  * What to do next for a flow, as one instruction: the call `next_step`
  * names, through this session's tool namer. A wait comes first when the
  * answer carries one; a step no tool here makes points to the manual; a
  * step this code does not know says to stop. Starts lowercase and ends with
  * a period (`nextLine` prefixes it with "Next: ").
+ *
+ * `calledStep` is the step the answer is to (`register` for
+ * agentchat_register, `verify` for agentchat_verify_otp). A start step that
+ * follows a code step, or a code that has ended, is a new code: it is only
+ * offered (the user decides; no code is sent unasked), after the wait the
+ * answer names, else after `resend_after_s`, the time until a new code may
+ * be requested (contract v1, the client action rule).
  */
-export function nextStep(flow: SignupFlow, nameTool: ToolNamer = declared): string {
+export function nextStep(flow: SignupFlow, nameTool: ToolNamer = declared, calledStep?: string): string {
   const step = flow.next_step
-  const wait = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? `wait ${flow.retry_after_s} seconds, then ` : ''
+  const wait = waitFor(flow.retry_after_s)
   if (step === 'done') return 'store the API key now; it is shown only once.'
   const tool = TOOL_FOR_STEP[step]
   if (tool === undefined) {
@@ -154,15 +171,17 @@ export function nextStep(flow: SignupFlow, nameTool: ToolNamer = declared): stri
     return `${wait}call ${call} with ${pending} and the ${flow.code_length ?? 6}-digit code.`
   }
   if (flow.param !== undefined) return `${wait}call ${call} again with a different \`${flow.param}\`.`
-  if (flow.status !== undefined && ENDED.has(flow.status)) {
-    return `if the user wants a new code, ${wait}call ${call} again with the same email and handle.`
+  const newCode = (flow.status !== undefined && ENDED.has(flow.status)) || (calledStep !== undefined && VERIFY_STEPS.has(calledStep))
+  if (newCode) {
+    const before = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? wait : waitFor(flow.resend_after_s)
+    return `if the user wants a new code, ${before}call ${call} again with the same email and handle.`
   }
   return `${wait}call ${call} again.`
 }
 
 /** The one `Next:` line for a flow (see `nextStep`). */
-export function nextLine(flow: SignupFlow, nameTool: ToolNamer = declared): string {
-  return `Next: ${nextStep(flow, nameTool)}`
+export function nextLine(flow: SignupFlow, nameTool: ToolNamer = declared, calledStep?: string): string {
+  return `Next: ${nextStep(flow, nameTool, calledStep)}`
 }
 
 /**
@@ -178,34 +197,46 @@ export function factLines(flow: SignupFlow): string[] {
   return lines
 }
 
+/** How a flow is rendered: the session's tool namer, the step answered, and whether it gets a Next line. */
+export interface RenderOptions {
+  nameTool?: ToolNamer
+  calledStep?: string
+  /** False for a server failure (5xx): its next step is to stop, so no Next line. */
+  next?: boolean
+}
+
 /**
  * The text for a flow: the server's message and the Next line, then the
  * facts after a blank line.
  */
-export function renderFlow(message: string, flow: SignupFlow, nameTool: ToolNamer = declared): string {
-  const head = [message.trim(), nextLine(flow, nameTool)].filter((line) => line.length > 0)
+export function renderFlow(message: string, flow: SignupFlow, options: RenderOptions = {}): string {
+  const next = options.next === false ? [] : [nextLine(flow, options.nameTool, options.calledStep)]
+  const head = [message.trim(), ...next].filter((line) => line.length > 0)
   const facts = factLines(flow)
   return facts.length > 0 ? `${head.join('\n')}\n\n${facts.join('\n')}` : head.join('\n')
 }
 
 /**
  * Rethrow a sign-up call's failure for the model. An error whose details
- * carry a flow object is rendered from it in full (the server's code and
- * message, the Next line, the facts, the retry time), whatever its HTTP
- * status. Anything else (an older server, a proxy's answer, a connection
- * failure) goes the old way: the per-code guidance `fallback` appended to
- * the server's message (rethrowWithGuidance), then the shared error mapper.
- * Always throws.
+ * carry a flow object is rendered from it in full: the server's code and
+ * message, the Next line, the facts, the retry time. A server failure (5xx)
+ * gets no Next line, only the server's words: the contract's action for it
+ * is to stop, and after a failed verify the account may exist, so no line
+ * may steer to a second registration. Anything else (an older server, a
+ * proxy's answer, a connection failure) goes the old way: the per-code
+ * guidance `fallback` appended to the server's message
+ * (rethrowWithGuidance), then the shared error mapper. Always throws.
  */
 export function rethrowSignupError(
   err: unknown,
   fallback: Record<string, string>,
-  nameTool: ToolNamer = declared,
+  options: { nameTool?: ToolNamer; calledStep: string },
 ): never {
   const flow = flowOfError(err)
   if (flow !== null && err instanceof AgentChatError) {
     const wait = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? flow.retry_after_s : undefined
-    throw new RenderedServerError(err.code || 'AGENTCHAT_ERROR', renderFlow(err.message ?? '', flow, nameTool), wait, err)
+    const text = renderFlow(err.message ?? '', flow, { ...options, next: !(err.status >= 500) })
+    throw new RenderedServerError(err.code || 'AGENTCHAT_ERROR', text, wait, err)
   }
   rethrowWithGuidance(err, fallback)
 }

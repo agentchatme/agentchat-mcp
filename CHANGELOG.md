@@ -25,6 +25,14 @@ The release step sets the number, per `VERSIONING.md`.
     session's `toolNamer` (hosted); a step no tool here makes (recovery, key
     rotation) points to its section of https://agentchat.me/skill.md; a step
     this version does not know says to stop.
+  - A start step answered to `agentchat_verify_otp`, or a code that ended
+    (`expired`, `max_attempts_reached`), means a new code: it is only
+    offered ("if the user wants a new code, …"), after the answer's retry
+    time, else after `resend_after_s`. No line sends a code nobody asked
+    for.
+  - A server failure (5xx) shows only the server's code and words, no
+    `Next:` line: its next step is to stop, and after a failed verify the
+    account may exist.
   - `agentchat_register` success keeps its JSON shape and keys (`ok`,
     `pending_id`, `message`, `next_step`): `message` is the server's,
     `next_step` stays the human-readable instruction, now built from the

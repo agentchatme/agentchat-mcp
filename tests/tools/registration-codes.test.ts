@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,8 +29,9 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // instruction built from the server's step.
 //
 // The cases are the contract's sign-up conformance cases
-// (tests/fixtures/signup-flow.cases.json, a byte-identical copy of
-// https://agentchat.me/contract/v1/conformance/signup-flow.cases.json): each
+// (tests/fixtures/contract/signup-flow.cases.json, a byte-identical copy of
+// https://agentchat.me/contract/v1/conformance/signup-flow.cases.json, held
+// to the contract manifest's sha256 beside it): each
 // request, the server's answer, and the flow, message and client action a
 // client derives. tests/fixtures/signup-flow.texts.json holds the exact text
 // the model reads for each. When the contract changes, copy its cases
@@ -68,7 +70,8 @@ interface Texts {
   rendered: Record<string, string>
 }
 
-const CONTRACT = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'signup-flow.cases.json'), 'utf8')) as Cases
+const CASES_PATH = path.join(FIXTURES, 'contract', 'signup-flow.cases.json')
+const CONTRACT = JSON.parse(fs.readFileSync(CASES_PATH, 'utf8')) as Cases
 const TEXTS_PATH = path.join(FIXTURES, 'signup-flow.texts.json')
 const TEXTS = JSON.parse(fs.readFileSync(TEXTS_PATH, 'utf8')) as Texts
 const CASES = CONTRACT.cases
@@ -80,6 +83,59 @@ const byName = (name: string): Case => {
   if (found === undefined) throw new Error(`no contract case ${name}`)
   return found
 }
+
+const VERIFY_STEPS = new Set(Object.values(CONTRACT.verify_steps))
+const START_STEPS = new Set(Object.values(CONTRACT.start_steps))
+const STEP_OF_KIND: Record<Kind, string> = {
+  register: 'register',
+  verify: 'verify',
+  recover: 'recover',
+  recover_verify: 'recover_verify',
+  rotate_key: 'rotate_key',
+  rotate_key_verify: 'rotate_key_verify',
+}
+
+/**
+ * The contract's client action for an answer, from the step that was
+ * called (contract v1 action rule, as amended: the called step decides
+ * whether a start step is a retry or a new code nobody asked for yet).
+ * First match wins.
+ */
+function actionOf(c: Case): Action {
+  const flow = flowOf(c.response.body)
+  if (flow === null) return 'legacy'
+  const step = flow.next_step
+  const called = STEP_OF_KIND[c.request.kind]
+  const retry = flow.retry_after_s
+  if (step === 'done') return 'done'
+  if (!START_STEPS.has(step) && !VERIFY_STEPS.has(step)) return 'stop'
+  if (c.response.status >= 500) return 'stop'
+  if (VERIFY_STEPS.has(step) && retry === undefined) return 'ask_code'
+  if (START_STEPS.has(step) && flow.param !== undefined) return 'ask_param'
+  const ended = flow.status === 'expired' || flow.status === 'max_attempts_reached'
+  if (START_STEPS.has(step) && (ended || VERIFY_STEPS.has(called)) && (retry === undefined || retry <= CONTRACT.wait_limit_s)) {
+    return 'offer_new_code'
+  }
+  if (c.response.status === 429 && retry !== undefined && retry <= CONTRACT.wait_limit_s && step === called) return 'wait_then_retry'
+  return 'stop'
+}
+
+/**
+ * Cases whose `expect.action` the contract copy still states by the rule
+ * before the amendment (no called step): a wait, then a start step after a
+ * code step, which would send a code nobody asked for. The contract is
+ * being re-cut; this list goes when the new copy lands. The last two are
+ * the amended rule as written (a start step answered to a code step, no
+ * input to change: a new code is offered), not yet confirmed by the
+ * contract.
+ */
+const ACTION_BEFORE_AMENDMENT: ReadonlySet<string> = new Set([
+  'verify-rate-limited-past-the-code',
+  'rotate-key-verify-email-locked-short',
+  'rotate-key-verify-rate-limited-no-code',
+  'verify-invalid-json',
+  'recover-verify-agent-not-found',
+])
 
 /** The flow fields these tools read beside the contract's flow: the existing details they render. */
 const DETAIL_FIELDS = ['limit', 'handles'] as const
@@ -150,6 +206,27 @@ async function textOf(c: Case, extra?: Partial<ToolContext>): Promise<string> {
 }
 
 /** The Next line of an error's text, or of a register success: "Next: " + its JSON `next_step`. */
+/** An answer of a call no tool here makes, rendered as a tool here renders one. */
+function renderAlone(c: Case): string {
+  return renderFlow(c.expect.message, flowOf(c.response.body)!, { calledStep: STEP_OF_KIND[c.request.kind], next: c.response.status < 500 })
+}
+
+/**
+ * A tool's text with what depends on the installed SDK taken out: verify
+ * success carries the server's `message` only when the SDK's verify result
+ * hands it over (agentchatme 1.3.x does not). Present, it must be the
+ * server's, right after `ok`.
+ */
+function sdkNeutral(text: string, serverMessage: string): string {
+  if (!text.startsWith('{')) return text
+  const payload = JSON.parse(text) as Record<string, unknown>
+  if (!('api_key' in payload) || !('message' in payload)) return text
+  expect(payload['message']).toBe(serverMessage)
+  expect(Object.keys(payload).slice(0, 2)).toEqual(['ok', 'message'])
+  const { message: _message, ...rest } = payload
+  return JSON.stringify(rest, null, 2)
+}
+
 function nextLineOf(text: string): string {
   if (text.startsWith('{')) {
     const payload = JSON.parse(text) as Record<string, unknown>
@@ -173,10 +250,26 @@ const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy'>, RegExp> = {
   wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register|verify_otp) /,
   // A long wait names it; a server failure names the step to repeat; a step
   // this version does not know says to stop.
-  stop: /^Next: ((wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message to the user and stop\.$)/,
+  // A long wait names it (a new code is still only offered); a step this
+  // version does not know says to stop. A server failure has no Next line.
+  stop: /^Next: ((if the user wants a new code, )?(wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message to the user and stop\.$)/,
 }
 
 describe('the contract’s sign-up cases', () => {
+  it('are a byte-identical copy of the contract’s, by the sha256 its manifest lists', () => {
+    const [line] = fs.readFileSync(path.join(FIXTURES, 'contract', 'signup-flow.cases.json.sha256'), 'utf8').trim().split('\n')
+    const [digest, name] = line!.split(/\s+/)
+    expect(name).toBe('signup-flow.cases.json')
+    expect(createHash('sha256').update(fs.readFileSync(CASES_PATH)).digest('hex')).toBe(digest)
+  })
+
+  it('state the action the amended rule gives, for the step that was called', () => {
+    for (const c of CASES) {
+      if (ACTION_BEFORE_AMENDMENT.has(c.name)) expect(actionOf(c), `${c.name}: drop it from ACTION_BEFORE_AMENDMENT`).not.toBe(c.expect.action)
+      else expect(actionOf(c), c.name).toBe(c.expect.action)
+    }
+  })
+
   it('are the contract version this code reads, with every action known and a text for every case', () => {
     expect(CONTRACT.version).toBe(1)
     expect(CONTRACT.wait_limit_s).toBe(60)
@@ -205,7 +298,7 @@ describe('the contract’s sign-up cases', () => {
     const tools: Record<string, string> = {}
     for (const c of TOOL_CASES) tools[c.name] = await textOf(c)
     const rendered: Record<string, string> = {}
-    for (const c of OTHER_CASES) rendered[c.name] = renderFlow(c.response.body['message'] as string, flowOf(c.response.body)!)
+    for (const c of OTHER_CASES) rendered[c.name] = renderAlone(c)
     fs.writeFileSync(TEXTS_PATH, `${JSON.stringify({ about: TEXTS.about, tools, rendered }, null, 2)}\n`)
     throw new Error(`texts rewritten at ${TEXTS_PATH}; review the diff, then re-run without SIGNUP_TEXTS_WRITE`)
   })
@@ -214,16 +307,23 @@ describe('the contract’s sign-up cases', () => {
 describe('each server answer reaches the model as the server said it', () => {
   for (const c of TOOL_CASES) {
     it(`${c.name}: the exact text`, async () => {
-      expect(await textOf(c)).toBe(TEXTS.tools[c.name])
+      expect(sdkNeutral(await textOf(c), c.expect.message)).toBe(sdkNeutral(TEXTS.tools[c.name]!, c.expect.message))
     })
   }
 
-  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.code !== null)) {
-    it(`${c.name}: the server’s code and message verbatim, a Next line for ${c.expect.action}, the facts present`, async () => {
+  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.code !== null && tc.response.status >= 500)) {
+    it(`${c.name}: a server failure shows the server’s code and words, and no Next line`, async () => {
       const shown = await textOf(c)
-      // The server's own code, whatever the HTTP status (a 5xx included).
+      expect(shown, shown).toBe(`Error: ${c.expect.code}\n\n${c.expect.message}`)
+    })
+  }
+
+  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.code !== null && tc.response.status < 500)) {
+    it(`${c.name}: the server’s code and message verbatim, a Next line for ${actionOf(c)}, the facts present`, async () => {
+      const shown = await textOf(c)
+      // The server's own code.
       expect(shown.startsWith(`Error: ${c.expect.code}\n\n${c.expect.message}\nNext: `), shown).toBe(true)
-      expect(nextLineOf(shown)).toMatch(ACTION_NEXT[c.expect.action as keyof typeof ACTION_NEXT])
+      expect(nextLineOf(shown)).toMatch(ACTION_NEXT[actionOf(c) as keyof typeof ACTION_NEXT])
       const flow = c.expect.flow!
       const details = flowSource(c.response.body)
       const retry = typeof flow['retry_after_s'] === 'number' ? flow['retry_after_s'] : 0
@@ -257,7 +357,7 @@ describe('each server answer reaches the model as the server said it', () => {
       // keys), except next_step, which is the instruction.
       for (const [key, value] of Object.entries(body)) if (key !== 'next_step') expect(payload[key], key).toEqual(value)
       expect(payload['next_step']).toBe(`${capitalized(nextStep(flowOf(body)!))}${AGENT_LINE}`)
-      expect(nextLineOf(JSON.stringify(payload))).toMatch(ACTION_NEXT[c.expect.action as keyof typeof ACTION_NEXT])
+      expect(nextLineOf(JSON.stringify(payload))).toMatch(ACTION_NEXT[actionOf(c) as keyof typeof ACTION_NEXT])
     })
   }
 
@@ -273,11 +373,16 @@ describe('each server answer reaches the model as the server said it', () => {
     expect(TEXTS.tools['verify-email-exhausted-race']).toBe(TEXTS.tools['register-email-exhausted'])
   })
 
-  it('a wait that outlasts the code points to a new code, never back to the code that will be gone', () => {
+  it('a wait that outlasts the code offers a new code, never points back to the code that will be gone', () => {
     // OTP_EMAIL_LOCKED always answers the start step; another verify-route
-    // 429 keeps the verify step only while the code outlives the wait.
-    expect(nextLineOf(TEXTS.tools['verify-email-locked']!)).toBe('Next: wait 840 seconds, then call agentchat_register again.')
-    expect(nextLineOf(TEXTS.tools['verify-rate-limited-past-the-code']!)).toBe('Next: wait 35 seconds, then call agentchat_register again.')
+    // 429 keeps the verify step only while the code outlives the wait. A
+    // start step after a code step is a new code: only offered.
+    expect(nextLineOf(TEXTS.tools['verify-email-locked']!)).toBe(
+      'Next: if the user wants a new code, wait 840 seconds, then call agentchat_register again with the same email and handle.',
+    )
+    expect(nextLineOf(TEXTS.tools['verify-rate-limited-past-the-code']!)).toBe(
+      'Next: if the user wants a new code, wait 35 seconds, then call agentchat_register again with the same email and handle.',
+    )
     expect(nextLineOf(TEXTS.tools['verify-rate-limited']!)).toBe(
       'Next: wait 35 seconds, then call agentchat_verify_otp with the same pending_id and the 6-digit code.',
     )
@@ -285,7 +390,7 @@ describe('each server answer reaches the model as the server said it', () => {
 
   it.each(OTHER_CASES.map((c) => [c.name, c] as const))('%s: a step no tool here makes points to the manual', (_name, c) => {
     const flow = flowOf(c.response.body)!
-    expect(renderFlow(c.expect.message, flow)).toBe(TEXTS.rendered[c.name])
+    expect(renderAlone(c)).toBe(TEXTS.rendered[c.name])
     if (c.expect.action === 'done') expect(nextLine(flow)).toBe('Next: store the API key now; it is shown only once.')
     else expect(nextLine(flow)).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
   })
@@ -343,8 +448,36 @@ describe('rendering rules', () => {
     expect(nextLine({ ...base, status: 'max_attempts_reached', retry_after_s: 30 })).toBe(
       'Next: if the user wants a new code, wait 30 seconds, then call agentchat_register again with the same email and handle.',
     )
+    // Without a retry time, the time until a new code may be requested.
+    expect(nextLine({ ...base, status: 'max_attempts_reached', resend_after_s: 25 })).toBe(
+      'Next: if the user wants a new code, wait 25 seconds, then call agentchat_register again with the same email and handle.',
+    )
+    expect(nextLine({ ...base, status: 'expired', resend_after_s: 0 })).toBe(
+      'Next: if the user wants a new code, call agentchat_register again with the same email and handle.',
+    )
     expect(nextLine({ next_step: 'recover', retry_after_s: 12 })).toMatch(/^Next: wait 12 seconds, then recover the key; no tool here does that/)
     expect(nextLine({ ...base, retry_after_s: 0 })).toBe('Next: call agentchat_register again.')
+  })
+
+  it('a start step answered to a code step is a new code, only offered; answered to the start step, a retry', () => {
+    const wait: SignupFlow = { next_step: 'register', retry_after_s: 35 }
+    expect(nextLine(wait, undefined, 'verify')).toBe(
+      'Next: if the user wants a new code, wait 35 seconds, then call agentchat_register again with the same email and handle.',
+    )
+    expect(nextLine(wait, undefined, 'register')).toBe('Next: wait 35 seconds, then call agentchat_register again.')
+    expect(nextLine({ next_step: 'register' }, undefined, 'verify')).toBe(
+      'Next: if the user wants a new code, call agentchat_register again with the same email and handle.',
+    )
+    // An input to change is asked for whatever was called.
+    expect(nextLine({ next_step: 'register', param: 'email' }, undefined, 'verify')).toBe(
+      'Next: call agentchat_register again with a different `email`.',
+    )
+  })
+
+  it('a server failure renders the server’s words and no Next line', () => {
+    expect(renderFlow('We couldn’t send the code. Try again in a few minutes.', { next_step: 'register' }, { next: false })).toBe(
+      'We couldn’t send the code. Try again in a few minutes.',
+    )
   })
 
   it('the code length comes from the flow, 6 when absent; an unknown pending id is "the same pending_id"', () => {
@@ -393,13 +526,17 @@ describe('verify success: the key, and the server’s words when the SDK hands t
     vi.restoreAllMocks()
   })
 
-  it('with agentchatme 1.3.x (key and agent only): the answer as before, key and handle from the server', async () => {
-    const payload = JSON.parse(await textOf(byName('verify-done'))) as Record<string, unknown>
+  it('with the installed SDK: key and handle from the server, and its message first when the SDK hands it over', async () => {
+    const done = byName('verify-done')
+    const payload = JSON.parse(await textOf(done)) as Record<string, unknown>
     expect(payload['ok']).toBe(true)
     expect(payload['api_key']).toBe('ac_example-not-a-real-key')
     // The handle the server returned, not the typed one.
     expect(payload['handle']).toBe('example-relay')
-    expect(payload['message']).toBeUndefined()
+    // agentchatme 1.3.x returns only the key and the agent; a later SDK
+    // returns the flow fields too.
+    if (payload['message'] !== undefined) expect(Object.keys(payload).slice(0, 2)).toEqual(['ok', 'message'])
+    expect([undefined, done.expect.message]).toContain(payload['message'])
     expect(String(payload['important'])).toContain('exactly once')
   })
 
@@ -482,8 +619,8 @@ describe('the sign-up tools name only codes the server sends', () => {
   })
 
   it('the descriptions defer to the server’s Next line, and keep only what the agent alone can know', () => {
-    expect(registerAccount.DESCRIPTION).toContain('Every answer gives the server’s message and the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it.')
-    expect(verifyOtp.DESCRIPTION).toContain('Every error gives the server’s message and the call to make next (its `Next:` line); follow it.')
+    expect(registerAccount.DESCRIPTION).toContain('Every answer gives the server’s message and, unless the server failed, the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it.')
+    expect(verifyOtp.DESCRIPTION).toContain('Every error gives the server’s message and, unless the server failed, the call to make next (its `Next:` line); follow it.')
     expect(registerAccount.DESCRIPTION).toContain(
       'if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key',
     )

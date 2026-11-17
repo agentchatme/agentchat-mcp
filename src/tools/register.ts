@@ -34,7 +34,7 @@ export const DESCRIPTION = [
   '',
   'Starts the two-step registration: the server creates a pending account and emails a 6-digit verification code to `email`. Complete it by calling agentchat_verify_otp with the returned `pending_id` and the code — that step mints the API key (shown exactly once).',
   '',
-  'Every answer gives the server’s message and the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
+  'Every answer gives the server’s message and, unless the server failed, the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
 
 /**
@@ -111,7 +111,7 @@ export function createHandler(ctx: ToolContext) {
         try {
           data = await AgentChatClient.register({ email, handle, baseUrl: apiBase, fetch: fetchImpl })
         } catch (err) {
-          rethrowSignupError(err, GUIDANCE, ctx.nameTool)
+          rethrowSignupError(err, GUIDANCE, { nameTool: ctx.nameTool, calledStep: 'register' })
         }
         const parsed = ResponseSchema.safeParse(data)
         if (!parsed.success) {
@@ -129,7 +129,7 @@ export function createHandler(ctx: ToolContext) {
         const flow = flowOf(parsed.data)
         const next =
           flow !== null
-            ? `${capitalized(nextStep(flow, ctx.nameTool))} If you can't read ${email} yourself, ask the user for the code.`
+            ? `${capitalized(nextStep(flow, ctx.nameTool, 'register'))} If you can't read ${email} yourself, ask the user for the code.`
             : `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`
         return {
           type: 'json',
