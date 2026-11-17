@@ -52,9 +52,10 @@ webhookTools: boolean }` picks the tools (and the matching server
 instructions) for the session; leave it out to list everything, which is
 what the stdio binary does: its identity can appear mid-session, so it never
 hides tools up front. `toolNamer?: (tool) => string` spells the tool names in
-the server instructions the way the session's runtime shows them to its model
-(for example `(tool) => 'agentchat__' + tool` for OpenClaw); leave it out for
-the declared names. tools/list is never renamed.
+the server instructions, and the tool a sign-up answer's `Next:` line names,
+the way the session's runtime shows them to its model (for example
+`(tool) => 'agentchat__' + tool` for OpenClaw); leave it out for the declared
+names. tools/list is never renamed.
 
 ## Installation
 
