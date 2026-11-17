@@ -12,7 +12,7 @@ import { buildMcpServer } from '../../src/lib.js'
 import { Semaphore } from '../../src/semaphore.js'
 import * as registerAccount from '../../src/tools/register.js'
 import * as verifyOtp from '../../src/tools/verify-otp.js'
-import { factLines, flowOf, nextLine, nextStep, renderFlow, type SignupFlow } from '../../src/tools/_signup.js'
+import { actionOf as actionOfFlow, factLines, flowOf, nextLine, nextStep, renderFlow, type SignupFlow } from '../../src/tools/_signup.js'
 import { RECOVER_THE_KEY } from '../../src/tools/_texts.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
@@ -84,8 +84,6 @@ const byName = (name: string): Case => {
   return found
 }
 
-const VERIFY_STEPS = new Set(Object.values(CONTRACT.verify_steps))
-const START_STEPS = new Set(Object.values(CONTRACT.start_steps))
 const STEP_OF_KIND: Record<Kind, string> = {
   register: 'register',
   verify: 'verify',
@@ -95,46 +93,22 @@ const STEP_OF_KIND: Record<Kind, string> = {
   rotate_key_verify: 'rotate_key_verify',
 }
 
-/**
- * The contract's client action for an answer, from the step that was
- * called (contract v1 action rule, as amended: the called step decides
- * whether a start step is a retry or a new code nobody asked for yet).
- * First match wins.
- */
+/** The contract's client action for a case, by the tools' own rule (`actionOf`), from the step that was called. */
 function actionOf(c: Case): Action {
   const flow = flowOf(c.response.body)
-  if (flow === null) return 'legacy'
-  const step = flow.next_step
-  const called = STEP_OF_KIND[c.request.kind]
-  const retry = flow.retry_after_s
-  if (step === 'done') return 'done'
-  if (!START_STEPS.has(step) && !VERIFY_STEPS.has(step)) return 'stop'
-  if (c.response.status >= 500) return 'stop'
-  if (VERIFY_STEPS.has(step) && retry === undefined) return 'ask_code'
-  if (START_STEPS.has(step) && flow.param !== undefined) return 'ask_param'
-  const ended = flow.status === 'expired' || flow.status === 'max_attempts_reached'
-  if (START_STEPS.has(step) && (ended || VERIFY_STEPS.has(called)) && (retry === undefined || retry <= CONTRACT.wait_limit_s)) {
-    return 'offer_new_code'
-  }
-  if (c.response.status === 429 && retry !== undefined && retry <= CONTRACT.wait_limit_s && step === called) return 'wait_then_retry'
-  return 'stop'
+  return flow === null ? 'legacy' : actionOfFlow(flow, c.response.status, STEP_OF_KIND[c.request.kind])
 }
 
 /**
  * Cases whose `expect.action` the contract copy still states by the rule
- * before the amendment (no called step): a wait, then a start step after a
- * code step, which would send a code nobody asked for. The contract is
- * being re-cut; this list goes when the new copy lands. The last two are
- * the amended rule as written (a start step answered to a code step, no
- * input to change: a new code is offered), not yet confirmed by the
- * contract.
+ * before it knew the called step (a wait, then a start step after a code
+ * step, which would send a code nobody asked for). The contract is being
+ * re-cut; this list goes when the new copy lands.
  */
 const ACTION_BEFORE_AMENDMENT: ReadonlySet<string> = new Set([
   'verify-rate-limited-past-the-code',
   'rotate-key-verify-email-locked-short',
   'rotate-key-verify-rate-limited-no-code',
-  'verify-invalid-json',
-  'recover-verify-agent-not-found',
 ])
 
 /** The flow fields these tools read beside the contract's flow: the existing details they render. */
@@ -208,7 +182,7 @@ async function textOf(c: Case, extra?: Partial<ToolContext>): Promise<string> {
 /** The Next line of an error's text, or of a register success: "Next: " + its JSON `next_step`. */
 /** An answer of a call no tool here makes, rendered as a tool here renders one. */
 function renderAlone(c: Case): string {
-  return renderFlow(c.expect.message, flowOf(c.response.body)!, { calledStep: STEP_OF_KIND[c.request.kind], next: c.response.status < 500 })
+  return renderFlow(c.expect.message, flowOf(c.response.body)!, { calledStep: STEP_OF_KIND[c.request.kind], httpStatus: c.response.status })
 }
 
 /**
@@ -247,12 +221,10 @@ const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy'>, RegExp> = {
   ask_code: /^Next: [Cc]all agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.( If you can't read \S+ yourself, ask the user for the code\.)?$/,
   ask_param: /^Next: call agentchat_register again with a different `(email|handle)`\.$/,
   offer_new_code: /^Next: if the user wants a new code, (wait \d+ seconds, then )?call agentchat_register again with the same email and handle\.$/,
-  wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register|verify_otp) /,
-  // A long wait names it; a server failure names the step to repeat; a step
-  // this version does not know says to stop.
-  // A long wait names it (a new code is still only offered); a step this
-  // version does not know says to stop. A server failure has no Next line.
-  stop: /^Next: ((if the user wants a new code, )?(wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message to the user and stop\.$)/,
+  wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register again\.|verify_otp with .+-digit code\.)$/,
+  // Says to stop, and after a long wait when the step can be taken again; a
+  // step this version does not know says to stop. A 5xx has no Next line.
+  stop: /^Next: (show the message to the user and stop(; after \d+ seconds, .+)?\.|this tool does not know the step `[a-z_]+`; show the message to the user and stop\.)$/,
 }
 
 describe('the contract’s sign-up cases', () => {
@@ -263,7 +235,10 @@ describe('the contract’s sign-up cases', () => {
     expect(createHash('sha256').update(fs.readFileSync(CASES_PATH)).digest('hex')).toBe(digest)
   })
 
-  it('state the action the amended rule gives, for the step that was called', () => {
+  it('state the action the tools’ rule gives, for the step that was called', () => {
+    expect(CONTRACT.wait_limit_s).toBe(60)
+    expect(new Set(Object.values(CONTRACT.verify_steps))).toEqual(new Set(['verify', 'recover_verify', 'rotate_key_verify']))
+    expect(new Set(Object.values(CONTRACT.start_steps))).toEqual(new Set(['register', 'recover', 'rotate_key']))
     for (const c of CASES) {
       if (ACTION_BEFORE_AMENDMENT.has(c.name)) expect(actionOf(c), `${c.name}: drop it from ACTION_BEFORE_AMENDMENT`).not.toBe(c.expect.action)
       else expect(actionOf(c), c.name).toBe(c.expect.action)
@@ -356,7 +331,7 @@ describe('each server answer reaches the model as the server said it', () => {
       // Every field the server sent is there as it came (new facts as new
       // keys), except next_step, which is the instruction.
       for (const [key, value] of Object.entries(body)) if (key !== 'next_step') expect(payload[key], key).toEqual(value)
-      expect(payload['next_step']).toBe(`${capitalized(nextStep(flowOf(body)!))}${AGENT_LINE}`)
+      expect(payload['next_step']).toBe(`${capitalized(nextStep(flowOf(body)!, { calledStep: 'register', httpStatus: 200 })!)}${AGENT_LINE}`)
       expect(nextLineOf(JSON.stringify(payload))).toMatch(ACTION_NEXT[actionOf(c) as keyof typeof ACTION_NEXT])
     })
   }
@@ -378,7 +353,7 @@ describe('each server answer reaches the model as the server said it', () => {
     // 429 keeps the verify step only while the code outlives the wait. A
     // start step after a code step is a new code: only offered.
     expect(nextLineOf(TEXTS.tools['verify-email-locked']!)).toBe(
-      'Next: if the user wants a new code, wait 840 seconds, then call agentchat_register again with the same email and handle.',
+      'Next: show the message to the user and stop; after 840 seconds, if the user wants a new code, call agentchat_register again with the same email and handle.',
     )
     expect(nextLineOf(TEXTS.tools['verify-rate-limited-past-the-code']!)).toBe(
       'Next: if the user wants a new code, wait 35 seconds, then call agentchat_register again with the same email and handle.',
@@ -391,8 +366,9 @@ describe('each server answer reaches the model as the server said it', () => {
   it.each(OTHER_CASES.map((c) => [c.name, c] as const))('%s: a step no tool here makes points to the manual', (_name, c) => {
     const flow = flowOf(c.response.body)!
     expect(renderAlone(c)).toBe(TEXTS.rendered[c.name])
-    if (c.expect.action === 'done') expect(nextLine(flow)).toBe('Next: store the API key now; it is shown only once.')
-    else expect(nextLine(flow)).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
+    const line = nextLine(flow, { calledStep: STEP_OF_KIND[c.request.kind], httpStatus: c.response.status })
+    if (c.expect.action === 'done') expect(line).toBe('Next: store the API key now; it is shown only once.')
+    else expect(line).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
   })
 })
 
@@ -456,26 +432,51 @@ describe('rendering rules', () => {
       'Next: if the user wants a new code, call agentchat_register again with the same email and handle.',
     )
     expect(nextLine({ next_step: 'recover', retry_after_s: 12 })).toMatch(/^Next: wait 12 seconds, then recover the key; no tool here does that/)
-    expect(nextLine({ ...base, retry_after_s: 0 })).toBe('Next: call agentchat_register again.')
+    expect(nextLine({ ...base, retry_after_s: 0 }, { calledStep: 'register', httpStatus: 429 })).toBe('Next: call agentchat_register again.')
   })
 
-  it('a start step answered to a code step is a new code, only offered; answered to the start step, a retry', () => {
+  it('a start step after a code step refused for now (429) is a new code, only offered; to the start step, a retry', () => {
     const wait: SignupFlow = { next_step: 'register', retry_after_s: 35 }
-    expect(nextLine(wait, undefined, 'verify')).toBe(
+    expect(nextLine(wait, { calledStep: 'verify', httpStatus: 429 })).toBe(
       'Next: if the user wants a new code, wait 35 seconds, then call agentchat_register again with the same email and handle.',
     )
-    expect(nextLine(wait, undefined, 'register')).toBe('Next: wait 35 seconds, then call agentchat_register again.')
-    expect(nextLine({ next_step: 'register' }, undefined, 'verify')).toBe(
+    expect(nextLine(wait, { calledStep: 'register', httpStatus: 429 })).toBe('Next: wait 35 seconds, then call agentchat_register again.')
+    expect(nextLine({ next_step: 'register' }, { calledStep: 'verify', httpStatus: 429 })).toBe(
       'Next: if the user wants a new code, call agentchat_register again with the same email and handle.',
     )
     // An input to change is asked for whatever was called.
-    expect(nextLine({ next_step: 'register', param: 'email' }, undefined, 'verify')).toBe(
+    expect(nextLine({ next_step: 'register', param: 'email' }, { calledStep: 'verify', httpStatus: 409 })).toBe(
       'Next: call agentchat_register again with a different `email`.',
     )
   })
 
+  it('any other refusal of a code step stops: no new code, no second registration', () => {
+    // A malformed request, or the account gone after the code: stop.
+    expect(actionOfFlow({ next_step: 'register' }, 400, 'verify')).toBe('stop')
+    expect(actionOfFlow({ next_step: 'recover' }, 404, 'recover_verify')).toBe('stop')
+    expect(nextLine({ next_step: 'register' }, { calledStep: 'verify', httpStatus: 400 })).toBe('Next: show the message to the user and stop.')
+    // A code that ended is still a new code, whatever the status.
+    expect(nextLine({ next_step: 'register', status: 'expired' }, { calledStep: 'verify', httpStatus: 400 })).toBe(
+      'Next: if the user wants a new code, call agentchat_register again with the same email and handle.',
+    )
+  })
+
+  it('a wait longer than a client sits out stops, and says when the step can be taken again', () => {
+    expect(nextLine({ next_step: 'register', retry_after_s: 1800 }, { calledStep: 'register', httpStatus: 429 })).toBe(
+      'Next: show the message to the user and stop; after 1800 seconds, call agentchat_register again.',
+    )
+    expect(nextLine({ next_step: 'register', retry_after_s: 840 }, { calledStep: 'verify', httpStatus: 429 })).toBe(
+      'Next: show the message to the user and stop; after 840 seconds, if the user wants a new code, call agentchat_register again with the same email and handle.',
+    )
+    expect(nextLine({ next_step: 'verify', retry_after_s: 120, pending_id: 'pnd_9' }, { calledStep: 'verify', httpStatus: 429 })).toBe(
+      'Next: show the message to the user and stop; after 120 seconds, call agentchat_verify_otp with pending_id `pnd_9` and the 6-digit code.',
+    )
+  })
+
   it('a server failure renders the server’s words and no Next line', () => {
-    expect(renderFlow('We couldn’t send the code. Try again in a few minutes.', { next_step: 'register' }, { next: false })).toBe(
+    expect(actionOfFlow({ next_step: 'register' }, 500, 'verify')).toBe('stop')
+    expect(nextLine({ next_step: 'register' }, { calledStep: 'verify', httpStatus: 500 })).toBeNull()
+    expect(renderFlow('We couldn’t send the code. Try again in a few minutes.', { next_step: 'register' }, { httpStatus: 500 })).toBe(
       'We couldn’t send the code. Try again in a few minutes.',
     )
   })

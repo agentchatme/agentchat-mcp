@@ -129,7 +129,7 @@ export function createHandler(ctx: ToolContext) {
         const flow = flowOf(parsed.data)
         const next =
           flow !== null
-            ? `${capitalized(nextStep(flow, ctx.nameTool, 'register'))} If you can't read ${email} yourself, ask the user for the code.`
+            ? `${capitalized(nextStep(flow, { nameTool: ctx.nameTool, calledStep: 'register', httpStatus: 200 }) ?? '')} If you can't read ${email} yourself, ask the user for the code.`
             : `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`
         return {
           type: 'json',

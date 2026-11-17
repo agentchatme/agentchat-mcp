@@ -68,6 +68,12 @@ const ENDED = new Set(['expired', 'max_attempts_reached'])
 /** The steps that take a code (contract v1 `verify_steps`). */
 const VERIFY_STEPS = new Set(['verify', 'recover_verify', 'rotate_key_verify'])
 
+/** The steps that start a flow and send a code (contract v1 `start_steps`). */
+const START_STEPS = new Set(['register', 'recover', 'rotate_key'])
+
+/** The longest wait a client sits out by itself (contract v1 `wait_limit_s`). */
+const WAIT_LIMIT_S = 60
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -141,47 +147,99 @@ const declared: ToolNamer = (tool) => tool
 const waitFor = (secondsToWait: number | undefined): string =>
   secondsToWait !== undefined && secondsToWait > 0 ? `wait ${secondsToWait} seconds, then ` : ''
 
+/** The client actions of the contract (v1, "Sign-up flows"), but `legacy` (no flow object). */
+export type SignupAction = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop'
+
 /**
- * What to do next for a flow, as one instruction: the call `next_step`
- * names, through this session's tool namer. A wait comes first when the
- * answer carries one; a step no tool here makes points to the manual; a
- * step this code does not know says to stop. Starts lowercase and ends with
- * a period (`nextLine` prefixes it with "Next: ").
- *
- * `calledStep` is the step the answer is to (`register` for
- * agentchat_register, `verify` for agentchat_verify_otp). A start step that
- * follows a code step, or a code that has ended, is a new code: it is only
- * offered (the user decides; no code is sent unasked), after the wait the
- * answer names, else after `resend_after_s`, the time until a new code may
- * be requested (contract v1, the client action rule).
+ * The contract's client action for an answer (contract v1 action rule):
+ * from the flow, the HTTP status, and the step that was called
+ * (`register` for agentchat_register, `verify` for agentchat_verify_otp).
+ * First match wins. A start step after a code step is a new code, offered
+ * only for a 429 (the code step was refused for now) or a code that ended;
+ * any other refusal of a code step is a stop, as is any 5xx.
  */
-export function nextStep(flow: SignupFlow, nameTool: ToolNamer = declared, calledStep?: string): string {
+export function actionOf(flow: SignupFlow, httpStatus: number, calledStep?: string): SignupAction {
   const step = flow.next_step
-  const wait = waitFor(flow.retry_after_s)
-  if (step === 'done') return 'store the API key now; it is shown only once.'
+  const retry = flow.retry_after_s
+  const start = START_STEPS.has(step)
+  if (step === 'done') return 'done'
+  if (httpStatus >= 500) return 'stop'
+  if (VERIFY_STEPS.has(step) && retry === undefined) return 'ask_code'
+  if (start && flow.param !== undefined) return 'ask_param'
+  const ended = flow.status !== undefined && ENDED.has(flow.status)
+  const refusedCode = httpStatus === 429 && calledStep !== undefined && VERIFY_STEPS.has(calledStep)
+  if (start && (ended || refusedCode) && (retry === undefined || retry <= WAIT_LIMIT_S)) return 'offer_new_code'
+  if (httpStatus === 429 && retry !== undefined && retry <= WAIT_LIMIT_S && step === calledStep) return 'wait_then_retry'
+  return 'stop'
+}
+
+/** How a flow is spelled: the session's tool namer, the step answered, and the HTTP status of the answer. */
+export interface NextOptions {
+  nameTool?: ToolNamer
+  calledStep?: string
+  /** The answer's HTTP status; a success when absent. */
+  httpStatus?: number
+}
+
+/**
+ * What to do next for a flow, as one instruction, from the contract's
+ * action (`actionOf`): the call `next_step` names, through this session's
+ * tool namer, with the wait the answer names. A new code is only offered
+ * ("if the user wants a new code, …"): no line sends a code nobody asked
+ * for. A stop says so, and for a wait longer than a client sits out, when
+ * the step can be taken again. A step no tool here makes points to the
+ * manual; a step this code does not know says to stop. Null for a server
+ * failure (5xx): its words alone, since after a failed verify the account
+ * may exist and no line may steer to a second registration. Starts
+ * lowercase and ends with a period (`nextLine` prefixes it with "Next: ").
+ */
+export function nextStep(flow: SignupFlow, options: NextOptions = {}): string | null {
+  const nameTool = options.nameTool ?? declared
+  const httpStatus = options.httpStatus ?? 200
+  const step = flow.next_step
+  const action = actionOf(flow, httpStatus, options.calledStep)
+  if (httpStatus >= 500) return null
+  if (action === 'done') return 'store the API key now; it is shown only once.'
   const tool = TOOL_FOR_STEP[step]
   if (tool === undefined) {
     const manual = MANUAL_FOR_STEP[step]
-    if (manual !== undefined) return `${wait}${manual}.`
+    if (manual !== undefined) return `${waitFor(flow.retry_after_s)}${manual}.`
     return `this tool does not know the step \`${step}\`; show the message to the user and stop.`
   }
   const call = nameTool(tool)
-  if (step === 'verify') {
-    const pending = flow.pending_id !== undefined ? `pending_id \`${flow.pending_id}\`` : 'the same pending_id'
-    return `${wait}call ${call} with ${pending} and the ${flow.code_length ?? 6}-digit code.`
+  const newCode =
+    START_STEPS.has(step) &&
+    flow.param === undefined &&
+    ((flow.status !== undefined && ENDED.has(flow.status)) || (options.calledStep !== undefined && VERIFY_STEPS.has(options.calledStep)))
+  /** The call itself, `wait` placed where it reads. */
+  const take = (wait: string): string => {
+    if (step === 'verify') {
+      const pending = flow.pending_id !== undefined ? `pending_id \`${flow.pending_id}\`` : 'the same pending_id'
+      return `${wait}call ${call} with ${pending} and the ${flow.code_length ?? 6}-digit code.`
+    }
+    if (flow.param !== undefined) return `${wait}call ${call} again with a different \`${flow.param}\`.`
+    if (newCode) return `if the user wants a new code, ${wait}call ${call} again with the same email and handle.`
+    return `${wait}call ${call} again.`
   }
-  if (flow.param !== undefined) return `${wait}call ${call} again with a different \`${flow.param}\`.`
-  const newCode = (flow.status !== undefined && ENDED.has(flow.status)) || (calledStep !== undefined && VERIFY_STEPS.has(calledStep))
-  if (newCode) {
-    const before = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? wait : waitFor(flow.resend_after_s)
-    return `if the user wants a new code, ${before}call ${call} again with the same email and handle.`
+  switch (action) {
+    case 'ask_code':
+    case 'ask_param':
+    case 'wait_then_retry':
+      return take(waitFor(flow.retry_after_s))
+    case 'offer_new_code':
+      // The answer's wait, else the time until a new code may be requested.
+      return take(waitFor(flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? flow.retry_after_s : flow.resend_after_s))
+    default: {
+      const later = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? `; after ${flow.retry_after_s} seconds, ${take('')}` : '.'
+      return `show the message to the user and stop${later}`
+    }
   }
-  return `${wait}call ${call} again.`
 }
 
-/** The one `Next:` line for a flow (see `nextStep`). */
-export function nextLine(flow: SignupFlow, nameTool: ToolNamer = declared, calledStep?: string): string {
-  return `Next: ${nextStep(flow, nameTool, calledStep)}`
+/** The one `Next:` line for a flow (see `nextStep`), or null when it has none. */
+export function nextLine(flow: SignupFlow, options: NextOptions = {}): string | null {
+  const step = nextStep(flow, options)
+  return step === null ? null : `Next: ${step}`
 }
 
 /**
@@ -197,21 +255,12 @@ export function factLines(flow: SignupFlow): string[] {
   return lines
 }
 
-/** How a flow is rendered: the session's tool namer, the step answered, and whether it gets a Next line. */
-export interface RenderOptions {
-  nameTool?: ToolNamer
-  calledStep?: string
-  /** False for a server failure (5xx): its next step is to stop, so no Next line. */
-  next?: boolean
-}
-
 /**
- * The text for a flow: the server's message and the Next line, then the
- * facts after a blank line.
+ * The text for a flow: the server's message and the Next line (none for a
+ * server failure), then the facts after a blank line.
  */
-export function renderFlow(message: string, flow: SignupFlow, options: RenderOptions = {}): string {
-  const next = options.next === false ? [] : [nextLine(flow, options.nameTool, options.calledStep)]
-  const head = [message.trim(), ...next].filter((line) => line.length > 0)
+export function renderFlow(message: string, flow: SignupFlow, options: NextOptions = {}): string {
+  const head = [message.trim(), nextLine(flow, options) ?? ''].filter((line) => line.length > 0)
   const facts = factLines(flow)
   return facts.length > 0 ? `${head.join('\n')}\n\n${facts.join('\n')}` : head.join('\n')
 }
@@ -235,7 +284,7 @@ export function rethrowSignupError(
   const flow = flowOfError(err)
   if (flow !== null && err instanceof AgentChatError) {
     const wait = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? flow.retry_after_s : undefined
-    const text = renderFlow(err.message ?? '', flow, { ...options, next: !(err.status >= 500) })
+    const text = renderFlow(err.message ?? '', flow, { ...options, httpStatus: err.status })
     throw new RenderedServerError(err.code || 'AGENTCHAT_ERROR', text, wait, err)
   }
   rethrowWithGuidance(err, fallback)
