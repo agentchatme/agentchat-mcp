@@ -95,17 +95,14 @@ const flowSource = (body: Record<string, unknown>) =>
 
 /**
  * The codes each tool's route answers with: the contract's cases for that
- * request kind (a `future-` case is a code no server sends yet), plus the
- * codes the route sends that the contract shows on another route only: the
- * verify step can also hit the email caps, when another registration with
- * the email finished after this code was sent (409, as at register).
+ * request kind (a `future-` case is a code no server sends yet).
  */
-function codesOf(kind: Kind, alsoSent: readonly string[] = []): string[] {
+function codesOf(kind: Kind): string[] {
   const shown = CASES.filter((c) => c.request.kind === kind && !c.name.startsWith('future-') && typeof c.response.body['code'] === 'string')
-  return [...new Set([...shown.map((c) => c.response.body['code'] as string), ...alsoSent])].sort()
+  return [...new Set(shown.map((c) => c.response.body['code'] as string))].sort()
 }
 const REGISTER_CODES = codesOf('register')
-const VERIFY_CODES = codesOf('verify', ['EMAIL_LIMIT_REACHED', 'EMAIL_EXHAUSTED'])
+const VERIFY_CODES = codesOf('verify')
 /** Codes a route answers only as a 5xx: the fallback names them SERVER_ERROR. */
 const SERVER_ERROR_CODES = new Set(CASES.filter((c) => c.response.status >= 500).map((c) => c.response.body['code'] as string))
 
@@ -271,10 +268,19 @@ describe('each server answer reaches the model as the server said it', () => {
     )
   })
 
-  it('the email caps after an accepted code (verify) read as they do at register', async () => {
-    for (const name of ['register-email-limit-reached', 'register-email-exhausted']) {
-      expect(await verifyText(answerOf(byName(name)))).toBe(TEXTS.tools[name])
-    }
+  it('the email caps after an accepted code (verify) read as they do at register', () => {
+    expect(TEXTS.tools['verify-email-limit-reached-race']).toBe(TEXTS.tools['register-email-limit-reached'])
+    expect(TEXTS.tools['verify-email-exhausted-race']).toBe(TEXTS.tools['register-email-exhausted'])
+  })
+
+  it('a wait that outlasts the code points to a new code, never back to the code that will be gone', () => {
+    // OTP_EMAIL_LOCKED always answers the start step; another verify-route
+    // 429 keeps the verify step only while the code outlives the wait.
+    expect(nextLineOf(TEXTS.tools['verify-email-locked']!)).toBe('Next: wait 840 seconds, then call agentchat_register again.')
+    expect(nextLineOf(TEXTS.tools['verify-rate-limited-past-the-code']!)).toBe('Next: wait 35 seconds, then call agentchat_register again.')
+    expect(nextLineOf(TEXTS.tools['verify-rate-limited']!)).toBe(
+      'Next: wait 35 seconds, then call agentchat_verify_otp with the same pending_id and the 6-digit code.',
+    )
   })
 
   it.each(OTHER_CASES.map((c) => [c.name, c] as const))('%s: a step no tool here makes points to the manual', (_name, c) => {

@@ -746,7 +746,7 @@
           "expires_in_s": 480,
           "flow": "register",
           "max_attempts": 5,
-          "next_step": "verify",
+          "next_step": "register",
           "pending_id": "pnd_example0pending01",
           "resend_after_s": 0,
           "retry_after_s": 840,
@@ -756,7 +756,7 @@
         "message": "You entered the wrong code too many times. Wait 14 minutes, then request a new code."
       },
       "name": "verify-email-locked",
-      "note": "Too many wrong codes for this email across pending ids. The step it hit stays; the pending code is still alive; the top-level retry_after_s predates the flow object and stays.",
+      "note": "Too many wrong codes for this email across pending ids. next_step is always the start step, as the text says; the pending code is still alive (its fields stay); the top-level retry_after_s predates the flow object and stays.",
       "request": {
         "body": {
           "code": "123456",
@@ -776,7 +776,7 @@
             "expires_in_s": 480,
             "flow": "register",
             "max_attempts": 5,
-            "next_step": "verify",
+            "next_step": "register",
             "pending_id": "pnd_example0pending01",
             "resend_after_s": 0,
             "retry_after_s": 840,
@@ -803,7 +803,7 @@
           "expires_in_s": 480,
           "flow": "recover",
           "max_attempts": 5,
-          "next_step": "recover_verify",
+          "next_step": "recover",
           "pending_id": "pnd_example0pending01",
           "resend_after_s": 0,
           "retry_after_s": 61,
@@ -833,7 +833,7 @@
             "expires_in_s": 480,
             "flow": "recover",
             "max_attempts": 5,
-            "next_step": "recover_verify",
+            "next_step": "recover",
             "pending_id": "pnd_example0pending01",
             "resend_after_s": 0,
             "retry_after_s": 61,
@@ -845,6 +845,63 @@
         },
         "headers": {
           "retry-after": "61"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "OTP_EMAIL_LOCKED",
+        "flow": {
+          "attempts": 3,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 480,
+          "flow": "rotate_key",
+          "max_attempts": 5,
+          "next_step": "rotate_key",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 0,
+          "retry_after_s": 45,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Wait 45 seconds, then request a new code."
+      },
+      "name": "rotate-key-verify-email-locked-short",
+      "note": "The lock ends within the wait limit: wait, then request a new code (the start step), as the text says.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "rotate_key_verify",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_EMAIL_LOCKED",
+          "details": {
+            "attempts": 3,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 480,
+            "flow": "rotate_key",
+            "max_attempts": 5,
+            "next_step": "rotate_key",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 0,
+            "retry_after_s": 45,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Wait 45 seconds, then request a new code.",
+          "retry_after_s": 45
+        },
+        "headers": {
+          "retry-after": "45"
         },
         "status": 429
       }
@@ -902,7 +959,7 @@
         "message": "Too many attempts. Try again in 35 seconds."
       },
       "name": "verify-rate-limited",
-      "note": "The per-IP limit on a verify step (10 per 10 minutes), 35 s left: wait, then verify again with the same pending id and code.",
+      "note": "The per-IP limit on a verify step (10 per 10 minutes), 35 s left, and the code has 335 s left: the verify step stays; wait, then verify again with the same pending id and code.",
       "request": {
         "body": {
           "code": "123456",
@@ -918,6 +975,126 @@
           "details": {
             "flow": "register",
             "next_step": "verify",
+            "retry_after_s": 35,
+            "version": 1
+          },
+          "message": "Too many attempts. Try again in 35 seconds."
+        },
+        "headers": {
+          "retry-after": "35"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "RATE_LIMITED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 35,
+          "version": 1
+        },
+        "message": "Too many attempts. Try again in 35 seconds."
+      },
+      "name": "verify-rate-limited-past-the-code",
+      "note": "The same 35 s wait, but the code has only 35 s left (retry_after_s is not less than expires_in_s): the start step. Wait, then register again for a new code.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "RATE_LIMITED",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "retry_after_s": 35,
+            "version": 1
+          },
+          "message": "Too many attempts. Try again in 35 seconds."
+        },
+        "headers": {
+          "retry-after": "35"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "RATE_LIMITED",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "retry_after_s": 540,
+          "version": 1
+        },
+        "message": "Too many attempts. Try again in 9 minutes."
+      },
+      "name": "recover-verify-rate-limited-outlasts-the-code",
+      "note": "A 540 s wait on a code with 240 s left: the start step, and longer than the wait limit: stop.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "RATE_LIMITED",
+          "details": {
+            "flow": "recover",
+            "next_step": "recover",
+            "retry_after_s": 540,
+            "version": 1
+          },
+          "message": "Too many attempts. Try again in 9 minutes."
+        },
+        "headers": {
+          "retry-after": "540"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "RATE_LIMITED",
+        "flow": {
+          "flow": "rotate_key",
+          "next_step": "rotate_key",
+          "retry_after_s": 35,
+          "version": 1
+        },
+        "message": "Too many attempts. Try again in 35 seconds."
+      },
+      "name": "rotate-key-verify-rate-limited-no-code",
+      "note": "The per-IP limit on a verify step whose pending id is unknown: the start step.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0unknown01"
+        },
+        "kind": "rotate_key_verify",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key/verify"
+      },
+      "response": {
+        "body": {
+          "code": "RATE_LIMITED",
+          "details": {
+            "flow": "rotate_key",
+            "next_step": "rotate_key",
             "retry_after_s": 35,
             "version": 1
           },
@@ -1338,6 +1515,84 @@
             "version": 1
           },
           "message": "The handle @example-relay is taken. Try another."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "EMAIL_LIMIT_REACHED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "version": 1
+        },
+        "message": "This email address already has 10 active agents, the most allowed. Use a different email address."
+      },
+      "name": "verify-email-limit-reached-race",
+      "note": "The code was right but another registration filled the email meanwhile. The pending id is used up (no pending_id); ask for another email and register again. details.limit stays.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "EMAIL_LIMIT_REACHED",
+          "details": {
+            "flow": "register",
+            "limit": 10,
+            "next_step": "register",
+            "param": "email",
+            "version": 1
+          },
+          "message": "This email address already has 10 active agents, the most allowed. Use a different email address."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "EMAIL_EXHAUSTED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "version": 1
+        },
+        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address."
+      },
+      "name": "verify-email-exhausted-race",
+      "note": "The code was right but the email used up its lifetime registrations meanwhile: as above.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "EMAIL_EXHAUSTED",
+          "details": {
+            "flow": "register",
+            "limit": 30,
+            "next_step": "register",
+            "param": "email",
+            "version": 1
+          },
+          "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address."
         },
         "headers": {},
         "status": 409
