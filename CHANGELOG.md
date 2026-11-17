@@ -7,7 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-The release step sets the number, per `VERSIONING.md`.
+## [0.5.4] - 2026-11-17
 
 ### Changed
 
