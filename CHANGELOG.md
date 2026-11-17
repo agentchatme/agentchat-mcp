@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **`npx -y @agentchatme/mcp` on Node 24 or 26 installs the latest
+  release.** `engines.node` is `>=22.0.0` (was `>=22.0.0 <23`). npm installs
+  the newest version whose `engines` admit the running Node and skips the
+  rest without an error, so on Node 24 or 26 it resolved an old 0.1.x build
+  instead. CI runs the tests and the build on Node 22, 24 and 26 and checks
+  on each that the range admits that Node.
+
 ## [0.5.4] - 2026-11-17
 
 ### Changed

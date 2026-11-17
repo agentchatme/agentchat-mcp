@@ -30,11 +30,55 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # npx runs outside the checkout: a semver already in node_modules
+      # (without a root bin link) would shadow the one it fetches.
+      - name: engines.node admits Node 22
+        shell: bash
+        run: |
+          range="$(node -p 'require("./package.json").engines.node')"
+          cd "$RUNNER_TEMP" && npx -y semver@7.7.4 -r "$range" "$(node -v)"
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level high
       - run: pnpm run type-check
       - run: pnpm run test
       - run: pnpm run build
+
+      # Node 24 and 26, in this same job so the required checks stay
+      # `test (<os>)` and gate on every line. npm installs the newest version
+      # whose engines.node admits the running Node and silently skips the
+      # rest, so a range that stops below a current Node line makes
+      # `npm install` and `npx` there pick an old release. pnpm does not
+      # enforce the range, and passing tests would not show it: each leg
+      # checks the range admits its Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: engines.node admits Node 24
+        shell: bash
+        run: |
+          range="$(node -p 'require("./package.json").engines.node')"
+          cd "$RUNNER_TEMP" && npx -y semver@7.7.4 -r "$range" "$(node -v)"
+      - name: install on Node 24
+        run: pnpm install --frozen-lockfile
+      - name: test on Node 24
+        run: pnpm run test
+      - name: build on Node 24
+        run: pnpm run build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - name: engines.node admits Node 26
+        shell: bash
+        run: |
+          range="$(node -p 'require("./package.json").engines.node')"
+          cd "$RUNNER_TEMP" && npx -y semver@7.7.4 -r "$range" "$(node -v)"
+      - name: install on Node 26
+        run: pnpm install --frozen-lockfile
+      - name: test on Node 26
+        run: pnpm run test
+      - name: build on Node 26
+        run: pnpm run build
 
   # Secret scan of the new commits only: the pull request's range, or the
   # push's. The default gitleaks rules plus the AgentChat API key rule
