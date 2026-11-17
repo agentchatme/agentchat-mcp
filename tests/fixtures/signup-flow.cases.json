@@ -1,810 +1,1908 @@
 {
-  "about": "Sign-up answers as a current server sends them (contract v1, \"Sign-up flows\", https://agentchat.me/contract/v1/: the flow object, the codes, the messages and the next steps), each with the flow a client reads from it and the client action it leads to. `request` is the call that was answered (register = POST /v1/register, verify = POST /v1/register/verify, recover = POST /v1/agents/recover, recover_verify = POST /v1/agents/recover/verify, rotate_key = POST /v1/agents/:handle/rotate-key, rotate_key_verify = its /verify). `expected.text` is the exact text the model reads: from agentchat_register / agentchat_verify_otp for the register and verify cases (tools named as declared), and the rendered answer alone for the calls no tool here makes. It is null for verify success, whose answer is the key-carrying JSON (tests/tools/registration-codes.test.ts). Numbers in messages are the server's settings at the time of writing, as an example of their shape.",
+  "about": "Sign-up flows (contract v1, \"Sign-up flows\"): register (POST /v1/register → /v1/register/verify), recover (POST /v1/agents/recover → /recover/verify) and rotate key (POST /v1/agents/{handle}/rotate-key → /verify, with the current key as Bearer). Every answer carries a flow object: at the top level of a 2xx body, in `details` of an error body (flow = body.code ? body.details : body); it is a flow only when it has a string next_step, else the answer is from an older server (action legacy). Each case gives the request (kind = the step it called), the server response (status, the Retry-After header when sent, body) and what a client derives: expect.flow lists every flow field present with its value (a parser may keep more keys, never fewer or different ones), expect.code and expect.message (the text to show verbatim; never branch on it), and expect.action, from this rule, first match wins: no flow → legacy; next_step done → done (the key is in the body); a next_step not in start_steps or verify_steps → stop; HTTP 5xx → stop; a verify step → ask_code when there is no retry_after_s, else wait_then_retry when the status is 429 and retry_after_s ≤ wait_limit_s, else stop; a start step → ask_param when param is set (ask that input again, then call the start step), else offer_new_code when status is expired or max_attempts_reached (ask the person before sending a new code; wait retry_after_s first when it is set), else wait_then_retry when the status is 429 and retry_after_s ≤ wait_limit_s (wait, then repeat next_step), else stop (show message, end). Times are fixed; api_key values are placeholders.",
+  "actions": [
+    "done",
+    "ask_code",
+    "ask_param",
+    "offer_new_code",
+    "wait_then_retry",
+    "stop",
+    "legacy"
+  ],
   "cases": [
     {
-      "name": "register: code sent",
-      "request": "register",
-      "status": 200,
-      "headers": {},
-      "body": {
-        "pending_id": "pnd_1",
-        "message": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.",
-        "version": 1,
-        "flow": "register",
-        "next_step": "verify",
-        "status": "pending",
-        "expires_at": "2026-11-17T12:10:00.000Z",
-        "expires_in_s": 600,
-        "code_length": 6,
-        "attempts": 0,
-        "max_attempts": 5,
-        "resend_after_s": 60
-      },
-      "expected": {
+      "expect": {
+        "action": "ask_code",
+        "code": null,
         "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 600,
-          "code_length": 6,
           "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "register",
           "max_attempts": 5,
-          "resend_after_s": 60
+          "next_step": "verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
         },
+        "message": "We sent a 6-digit code to relay@example.com. It expires in 10 minutes."
+      },
+      "name": "register-code-sent",
+      "note": "POST /v1/register sent a code. The flow fields sit beside pending_id and message.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "register",
+          "max_attempts": 5,
+          "message": "We sent a 6-digit code to relay@example.com. It expires in 10 minutes.",
+          "next_step": "verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
         "action": "ask_code",
-        "text": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\nIf you can't read owner@example.com yourself, ask the user for the code."
-      }
-    },
-    {
-      "name": "register: 429 OTP_COOLDOWN",
-      "request": "register",
-      "status": 429,
-      "headers": {
-        "retry-after": "42"
-      },
-      "body": {
-        "code": "OTP_COOLDOWN",
-        "message": "You can request a new code in 42 seconds.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 42
-        }
-      },
-      "expected": {
+        "code": null,
         "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 42
-        },
-        "action": "wait_then_retry",
-        "text": "Error: OTP_COOLDOWN\n\nYou can request a new code in 42 seconds.\nNext: wait 42 seconds, then call agentchat_register again.\n\nRetry after: 42 seconds."
-      }
-    },
-    {
-      "name": "register: 429 OTP_HOURLY_CAP",
-      "request": "register",
-      "status": 429,
-      "headers": {
-        "retry-after": "1800"
-      },
-      "body": {
-        "code": "OTP_HOURLY_CAP",
-        "message": "Too many codes have been sent. Enter the last code you received, or try again in 30 minutes.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 1800
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 1800
-        },
-        "action": "stop",
-        "text": "Error: OTP_HOURLY_CAP\n\nToo many codes have been sent. Enter the last code you received, or try again in 30 minutes.\nNext: wait 1800 seconds, then call agentchat_register again.\n\nRetry after: 1800 seconds."
-      }
-    },
-    {
-      "name": "register: 429 RATE_LIMITED (per network address)",
-      "request": "register",
-      "status": 429,
-      "headers": {
-        "retry-after": "3600"
-      },
-      "body": {
-        "code": "RATE_LIMITED",
-        "message": "Too many attempts. Try again in 60 minutes.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 3600
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "retry_after_s": 3600
-        },
-        "action": "stop",
-        "text": "Error: RATE_LIMITED\n\nToo many attempts. Try again in 60 minutes.\nNext: wait 3600 seconds, then call agentchat_register again.\n\nRetry after: 3600 seconds."
-      }
-    },
-    {
-      "name": "register: 409 HANDLE_TAKEN",
-      "request": "register",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "HANDLE_TAKEN",
-        "message": "The handle @fresh-bot is taken. Try another.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        },
-        "action": "ask_param",
-        "text": "Error: HANDLE_TAKEN\n\nThe handle @fresh-bot is taken. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
-      }
-    },
-    {
-      "name": "register: 400 INVALID_HANDLE (reserved)",
-      "request": "register",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "INVALID_HANDLE",
-        "message": "The handle @fresh-bot can't be used. Try another.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        },
-        "action": "ask_param",
-        "text": "Error: INVALID_HANDLE\n\nThe handle @fresh-bot can't be used. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
-      }
-    },
-    {
-      "name": "register: 400 VALIDATION_ERROR (handle format)",
-      "request": "register",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "VALIDATION_ERROR",
-        "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter.",
-        "details": {
-          "formErrors": [],
-          "fieldErrors": {
-            "handle": [
-              "Invalid handle"
-            ]
-          },
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        },
-        "action": "ask_param",
-        "text": "Error: VALIDATION_ERROR\n\nEnter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
-      }
-    },
-    {
-      "name": "register: 400 VALIDATION_ERROR (email format)",
-      "request": "register",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "VALIDATION_ERROR",
-        "message": "Enter an email address in the correct format, like name@example.com",
-        "details": {
-          "formErrors": [],
-          "fieldErrors": {
-            "email": [
-              "Invalid email"
-            ]
-          },
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        },
-        "action": "ask_param",
-        "text": "Error: VALIDATION_ERROR\n\nEnter an email address in the correct format, like name@example.com\nNext: call agentchat_register again with a different `email`.\n\nInput to change: `email`."
-      }
-    },
-    {
-      "name": "register: 409 EMAIL_LIMIT_REACHED",
-      "request": "register",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "EMAIL_LIMIT_REACHED",
-        "message": "This email address already has 10 active agents, the most allowed. Use a different email address.",
-        "details": {
-          "limit": 10,
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email",
-          "limit": 10
-        },
-        "action": "ask_param",
-        "text": "Error: EMAIL_LIMIT_REACHED\n\nThis email address already has 10 active agents, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 10.\nInput to change: `email`."
-      }
-    },
-    {
-      "name": "register: 409 EMAIL_EXHAUSTED",
-      "request": "register",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "EMAIL_EXHAUSTED",
-        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address.",
-        "details": {
-          "limit": 30,
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email",
-          "limit": 30
-        },
-        "action": "ask_param",
-        "text": "Error: EMAIL_EXHAUSTED\n\nThis email address has been used for 30 accounts, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 30.\nInput to change: `email`."
-      }
-    },
-    {
-      "name": "register: 500 OTP_FAILED",
-      "request": "register",
-      "status": 500,
-      "headers": {},
-      "body": {
-        "code": "OTP_FAILED",
-        "message": "We couldn't send the code. Try again in a few minutes.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        },
-        "action": "stop",
-        "text": "Error: OTP_FAILED\n\nWe couldn't send the code. Try again in a few minutes.\nNext: call agentchat_register again."
-      }
-    },
-    {
-      "name": "register: 500 INTERNAL_ERROR (text unchanged)",
-      "request": "register",
-      "status": 500,
-      "headers": {},
-      "body": {
-        "code": "INTERNAL_ERROR",
-        "message": "An unexpected error occurred",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        },
-        "action": "stop",
-        "text": "Error: INTERNAL_ERROR\n\nAn unexpected error occurred\nNext: call agentchat_register again."
-      }
-    },
-    {
-      "name": "verify: 400 INVALID_CODE (attempts left)",
-      "request": "verify",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "INVALID_CODE",
-        "message": "That code didn't work. Check the code and try again.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "param": "code",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
+          "attempts": 0,
           "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "param": "code",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
-          "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0
-        },
-        "action": "ask_code",
-        "text": "Error: INVALID_CODE\n\nThat code didn't work. Check the code and try again.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nInput to change: `code`."
-      }
-    },
-    {
-      "name": "verify: 400 VALIDATION_ERROR (code format; not an attempt)",
-      "request": "verify",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "VALIDATION_ERROR",
-        "message": "Enter the code using only 6 digits.",
-        "details": {
-          "formErrors": [],
-          "fieldErrors": {
-            "code": [
-              "Invalid code"
-            ]
-          },
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "param": "code",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
-          "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "param": "code",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
-          "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0
-        },
-        "action": "ask_code",
-        "text": "Error: VALIDATION_ERROR\n\nEnter the code using only 6 digits.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nInput to change: `code`."
-      }
-    },
-    {
-      "name": "verify: 429 OTP_ATTEMPTS_EXHAUSTED (the wrong code that used the last attempt)",
-      "request": "verify",
-      "status": 429,
-      "headers": {
-        "retry-after": "0"
-      },
-      "body": {
-        "code": "OTP_ATTEMPTS_EXHAUSTED",
-        "message": "You entered the wrong code too many times. Request a new code.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "status": "max_attempts_reached",
-          "attempts": 5,
-          "max_attempts": 5,
-          "retry_after_s": 0
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "status": "max_attempts_reached",
-          "attempts": 5,
-          "max_attempts": 5,
-          "retry_after_s": 0
-        },
-        "action": "offer_new_code",
-        "text": "Error: OTP_ATTEMPTS_EXHAUSTED\n\nYou entered the wrong code too many times. Request a new code.\nNext: if the user wants a new code, call agentchat_register again with the same email and handle."
-      }
-    },
-    {
-      "name": "verify: 400 EXPIRED",
-      "request": "verify",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "code": "EXPIRED",
-        "message": "That code has expired. Request a new code.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "status": "expired"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "status": "expired"
-        },
-        "action": "offer_new_code",
-        "text": "Error: EXPIRED\n\nThat code has expired. Request a new code.\nNext: if the user wants a new code, call agentchat_register again with the same email and handle."
-      }
-    },
-    {
-      "name": "verify: 429 OTP_EMAIL_LOCKED",
-      "request": "verify",
-      "status": 429,
-      "headers": {
-        "retry-after": "900"
-      },
-      "body": {
-        "code": "OTP_EMAIL_LOCKED",
-        "message": "You entered the wrong code too many times. Wait 15 minutes, then request a new code.",
-        "retry_after_s": 900,
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
-          "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0,
-          "retry_after_s": 900
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "status": "pending",
-          "pending_id": "pnd_1",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 420,
-          "code_length": 6,
-          "attempts": 2,
-          "max_attempts": 5,
-          "resend_after_s": 0,
-          "retry_after_s": 900
-        },
-        "action": "stop",
-        "text": "Error: OTP_EMAIL_LOCKED\n\nYou entered the wrong code too many times. Wait 15 minutes, then request a new code.\nNext: wait 900 seconds, then call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nRetry after: 900 seconds."
-      }
-    },
-    {
-      "name": "verify: 429 RATE_LIMITED (per network address)",
-      "request": "verify",
-      "status": 429,
-      "headers": {
-        "retry-after": "600"
-      },
-      "body": {
-        "code": "RATE_LIMITED",
-        "message": "Too many attempts. Try again in 10 minutes.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "retry_after_s": 600
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "verify",
-          "retry_after_s": 600
-        },
-        "action": "stop",
-        "text": "Error: RATE_LIMITED\n\nToo many attempts. Try again in 10 minutes.\nNext: wait 600 seconds, then call agentchat_verify_otp with the same pending_id and the 6-digit code.\n\nRetry after: 600 seconds."
-      }
-    },
-    {
-      "name": "verify: 409 HANDLE_TAKEN (taken after the code was accepted)",
-      "request": "verify",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "HANDLE_TAKEN",
-        "message": "The handle @fresh-bot is taken. Try another.",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "handle"
-        },
-        "action": "ask_param",
-        "text": "Error: HANDLE_TAKEN\n\nThe handle @fresh-bot is taken. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
-      }
-    },
-    {
-      "name": "verify: 409 EMAIL_LIMIT_REACHED (another registration finished first)",
-      "request": "verify",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "EMAIL_LIMIT_REACHED",
-        "message": "This email address already has 10 active agents, the most allowed. Use a different email address.",
-        "details": {
-          "limit": 10,
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email",
-          "limit": 10
-        },
-        "action": "ask_param",
-        "text": "Error: EMAIL_LIMIT_REACHED\n\nThis email address already has 10 active agents, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 10.\nInput to change: `email`."
-      }
-    },
-    {
-      "name": "verify: 409 EMAIL_EXHAUSTED (another registration finished first)",
-      "request": "verify",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "EMAIL_EXHAUSTED",
-        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address.",
-        "details": {
-          "limit": 30,
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register",
-          "param": "email",
-          "limit": 30
-        },
-        "action": "ask_param",
-        "text": "Error: EMAIL_EXHAUSTED\n\nThis email address has been used for 30 accounts, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 30.\nInput to change: `email`."
-      }
-    },
-    {
-      "name": "verify: 500 INTERNAL_ERROR (text unchanged)",
-      "request": "verify",
-      "status": 500,
-      "headers": {},
-      "body": {
-        "code": "INTERNAL_ERROR",
-        "message": "An unexpected error occurred",
-        "details": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        }
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "register"
-        },
-        "action": "stop",
-        "text": "Error: INTERNAL_ERROR\n\nAn unexpected error occurred\nNext: call agentchat_register again."
-      }
-    },
-    {
-      "name": "verify: 201 success",
-      "request": "verify",
-      "status": 201,
-      "headers": {},
-      "body": {
-        "api_key": "ac_live_minted",
-        "agent": {
-          "handle": "fresh-bot"
-        },
-        "message": "Email verified. Logged in as @fresh-bot.",
-        "version": 1,
-        "flow": "register",
-        "next_step": "done",
-        "status": "approved"
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
-          "flow": "register",
-          "next_step": "done",
-          "status": "approved"
-        },
-        "action": "done",
-        "text": null
-      }
-    },
-    {
-      "name": "recover: code sent (with handle)",
-      "request": "recover",
-      "status": 200,
-      "headers": {},
-      "body": {
-        "pending_id": "pnd_2",
-        "message": "If @fresh-bot is registered with owner@example.com, we sent a 6-digit code there. It expires in 10 minutes.",
-        "version": 1,
-        "flow": "recover",
-        "next_step": "recover_verify",
-        "status": "pending",
-        "expires_at": "2026-11-17T12:10:00.000Z",
-        "expires_in_s": 600,
-        "code_length": 6,
-        "attempts": 0,
-        "max_attempts": 5,
-        "resend_after_s": 60
-      },
-      "expected": {
-        "flow": {
-          "version": 1,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
           "flow": "recover",
-          "next_step": "recover_verify",
-          "status": "pending",
-          "pending_id": "pnd_2",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 600,
-          "code_length": 6,
-          "attempts": 0,
           "max_attempts": 5,
-          "resend_after_s": 60
+          "next_step": "recover_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
         },
-        "action": "ask_code",
-        "text": "If @fresh-bot is registered with owner@example.com, we sent a 6-digit code there. It expires in 10 minutes.\nNext: recover the key; no tool here does that, see “Lost key — recovery” at https://agentchat.me/skill.md#lost-key--recovery."
+        "message": "If @example-relay is registered with relay@example.com, we sent a 6-digit code there. It expires in 10 minutes."
+      },
+      "name": "recover-code-sent",
+      "note": "Recover with a handle. The same body for a match, no match, an ambiguous email and a rate-limited one (the decoy design): the client cannot and must not tell them apart.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "recover",
+          "max_attempts": 5,
+          "message": "If @example-relay is registered with relay@example.com, we sent a 6-digit code there. It expires in 10 minutes.",
+          "next_step": "recover_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
       }
     },
     {
-      "name": "recover_verify: 409 HANDLE_REQUIRED",
-      "request": "recover_verify",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "code": "HANDLE_REQUIRED",
-        "message": "More than one agent uses this email address. Choose the handle to recover.",
-        "details": {
-          "handles": [
-            "fresh-bot",
-            "scout-bot"
-          ],
-          "version": 1,
+      "expect": {
+        "action": "ask_code",
+        "code": null,
+        "flow": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "recover",
+          "max_attempts": 5,
+          "next_step": "recover_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "If an agent is registered with relay@example.com, we sent a 6-digit code there. It expires in 10 minutes."
+      },
+      "name": "recover-code-sent-no-handle",
+      "note": "Recover with an email only (older clients).",
+      "request": {
+        "body": {
+          "email": "relay@example.com"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "recover",
+          "max_attempts": 5,
+          "message": "If an agent is registered with relay@example.com, we sent a 6-digit code there. It expires in 10 minutes.",
+          "next_step": "recover_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_code",
+        "code": null,
+        "flow": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "rotate_key",
+          "max_attempts": 5,
+          "next_step": "rotate_key_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "We sent a 6-digit code to the email address registered for @example-relay. It expires in 10 minutes."
+      },
+      "name": "rotate-key-code-sent",
+      "note": "Rotate key (needs the current key as Bearer). The text never shows the email address.",
+      "request": {
+        "body": {},
+        "kind": "rotate_key",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key"
+      },
+      "response": {
+        "body": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "rotate_key",
+          "max_attempts": 5,
+          "message": "We sent a 6-digit code to the email address registered for @example-relay. It expires in 10 minutes.",
+          "next_step": "rotate_key_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_code",
+        "code": "INVALID_CODE",
+        "flow": {
+          "attempts": 1,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 580,
+          "flow": "register",
+          "max_attempts": 5,
+          "next_step": "verify",
+          "param": "code",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 40,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "That code didn't work. Check the code and try again."
+      },
+      "name": "verify-wrong-code",
+      "note": "A wrong code with attempts left, 20 s after the code was sent: the code is still alive, ask for it again.",
+      "request": {
+        "body": {
+          "code": "000000",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "INVALID_CODE",
+          "details": {
+            "attempts": 1,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 580,
+            "flow": "register",
+            "max_attempts": 5,
+            "next_step": "verify",
+            "param": "code",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 40,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "That code didn't work. Check the code and try again."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_code",
+        "code": "INVALID_CODE",
+        "flow": {
+          "attempts": 2,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 510,
+          "flow": "recover",
+          "max_attempts": 5,
+          "next_step": "recover_verify",
+          "param": "code",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 0,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "That code didn't work. Check the code and try again."
+      },
+      "name": "recover-verify-wrong-code",
+      "note": "The same answer for a real record and a decoy, in every field.",
+      "request": {
+        "body": {
+          "code": "000000",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "INVALID_CODE",
+          "details": {
+            "attempts": 2,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 510,
+            "flow": "recover",
+            "max_attempts": 5,
+            "next_step": "recover_verify",
+            "param": "code",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 0,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "That code didn't work. Check the code and try again."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_code",
+        "code": "INVALID_CODE",
+        "flow": {
+          "attempts": 1,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 555,
+          "flow": "rotate_key",
+          "max_attempts": 5,
+          "next_step": "rotate_key_verify",
+          "param": "code",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 15,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "That code didn't work. Check the code and try again."
+      },
+      "name": "rotate-key-verify-wrong-code",
+      "note": "Rotate key, a wrong code.",
+      "request": {
+        "body": {
+          "code": "000000",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "rotate_key_verify",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key/verify"
+      },
+      "response": {
+        "body": {
+          "code": "INVALID_CODE",
+          "details": {
+            "attempts": 1,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 555,
+            "flow": "rotate_key",
+            "max_attempts": 5,
+            "next_step": "rotate_key_verify",
+            "param": "code",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 15,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "That code didn't work. Check the code and try again."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "offer_new_code",
+        "code": "OTP_ATTEMPTS_EXHAUSTED",
+        "flow": {
+          "attempts": 5,
+          "flow": "register",
+          "max_attempts": 5,
+          "next_step": "register",
+          "retry_after_s": 0,
+          "status": "max_attempts_reached",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Request a new code."
+      },
+      "name": "verify-last-wrong-code",
+      "note": "The wrong code that used the last attempt is answered at once and ends the pending id. A new code may be requested now (retry_after_s 0). The status decides before the 429: ask the person before sending a new code.",
+      "request": {
+        "body": {
+          "code": "000000",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_ATTEMPTS_EXHAUSTED",
+          "details": {
+            "attempts": 5,
+            "flow": "register",
+            "max_attempts": 5,
+            "next_step": "register",
+            "retry_after_s": 0,
+            "status": "max_attempts_reached",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Request a new code."
+        },
+        "headers": {
+          "retry-after": "0"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "offer_new_code",
+        "code": "OTP_ATTEMPTS_EXHAUSTED",
+        "flow": {
+          "attempts": 5,
+          "flow": "recover",
+          "max_attempts": 5,
+          "next_step": "recover",
+          "retry_after_s": 30,
+          "status": "max_attempts_reached",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Request a new code."
+      },
+      "name": "recover-verify-last-wrong-code-within-the-minute",
+      "note": "Five wrong codes within 30 s: a new code may be requested in 30 s. Still offer_new_code (never a new code unasked); when the person asks, wait retry_after_s first.",
+      "request": {
+        "body": {
+          "code": "000000",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_ATTEMPTS_EXHAUSTED",
+          "details": {
+            "attempts": 5,
+            "flow": "recover",
+            "max_attempts": 5,
+            "next_step": "recover",
+            "retry_after_s": 30,
+            "status": "max_attempts_reached",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Request a new code."
+        },
+        "headers": {
+          "retry-after": "30"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "offer_new_code",
+        "code": "OTP_ATTEMPTS_EXHAUSTED",
+        "flow": {
+          "attempts": 5,
+          "flow": "register",
+          "max_attempts": 5,
+          "next_step": "register",
+          "retry_after_s": 0,
+          "status": "max_attempts_reached",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Request a new code."
+      },
+      "name": "verify-after-attempts-exhausted",
+      "note": "Any later try on a pending id its attempts ended.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_ATTEMPTS_EXHAUSTED",
+          "details": {
+            "attempts": 5,
+            "flow": "register",
+            "max_attempts": 5,
+            "next_step": "register",
+            "retry_after_s": 0,
+            "status": "max_attempts_reached",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Request a new code."
+        },
+        "headers": {
+          "retry-after": "0"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "offer_new_code",
+        "code": "EXPIRED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "status": "expired",
+          "version": 1
+        },
+        "message": "That code has expired. Request a new code."
+      },
+      "name": "verify-expired",
+      "note": "The pending id is unknown or expired (10 minutes).",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "EXPIRED",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "status": "expired",
+            "version": 1
+          },
+          "message": "That code has expired. Request a new code."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "offer_new_code",
+        "code": "EXPIRED",
+        "flow": {
           "flow": "recover",
           "next_step": "recover",
-          "param": "handle"
-        }
+          "status": "expired",
+          "version": 1
+        },
+        "message": "That code has expired. Request a new code."
       },
-      "expected": {
+      "name": "recover-verify-expired",
+      "note": "Recover: expired.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "EXPIRED",
+          "details": {
+            "flow": "recover",
+            "next_step": "recover",
+            "status": "expired",
+            "version": 1
+          },
+          "message": "That code has expired. Request a new code."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "OTP_COOLDOWN",
         "flow": {
-          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 42,
+          "version": 1
+        },
+        "message": "You can request a new code in 42 seconds."
+      },
+      "name": "register-cooldown",
+      "note": "A code was sent to this email less than a minute ago.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_COOLDOWN",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "retry_after_s": 42,
+            "version": 1
+          },
+          "message": "You can request a new code in 42 seconds."
+        },
+        "headers": {
+          "retry-after": "42"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "OTP_COOLDOWN",
+        "flow": {
+          "flow": "rotate_key",
+          "next_step": "rotate_key",
+          "retry_after_s": 60,
+          "version": 1
+        },
+        "message": "You can request a new code in 60 seconds."
+      },
+      "name": "rotate-key-cooldown-at-the-limit",
+      "note": "retry_after_s 60 is still a wait (≤ 60).",
+      "request": {
+        "body": {},
+        "kind": "rotate_key",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_COOLDOWN",
+          "details": {
+            "flow": "rotate_key",
+            "next_step": "rotate_key",
+            "retry_after_s": 60,
+            "version": 1
+          },
+          "message": "You can request a new code in 60 seconds."
+        },
+        "headers": {
+          "retry-after": "60"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "OTP_HOURLY_CAP",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 1800,
+          "version": 1
+        },
+        "message": "Too many codes have been sent. Enter the last code you received, or try again in 30 minutes."
+      },
+      "name": "register-hourly-cap",
+      "note": "20 codes this hour for this email. Longer than 60 s: show the message and end.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_HOURLY_CAP",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "retry_after_s": 1800,
+            "version": 1
+          },
+          "message": "Too many codes have been sent. Enter the last code you received, or try again in 30 minutes."
+        },
+        "headers": {
+          "retry-after": "1800"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "OTP_HOURLY_CAP",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 45,
+          "version": 1
+        },
+        "message": "Too many codes have been sent. Enter the last code you received, or try again in 1 minute."
+      },
+      "name": "register-hourly-cap-ends-soon",
+      "note": "The hourly cap with 45 s left: a wait.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_HOURLY_CAP",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "retry_after_s": 45,
+            "version": 1
+          },
+          "message": "Too many codes have been sent. Enter the last code you received, or try again in 1 minute."
+        },
+        "headers": {
+          "retry-after": "45"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "OTP_EMAIL_LOCKED",
+        "flow": {
+          "attempts": 2,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 480,
+          "flow": "register",
+          "max_attempts": 5,
+          "next_step": "verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 0,
+          "retry_after_s": 840,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Wait 14 minutes, then request a new code."
+      },
+      "name": "verify-email-locked",
+      "note": "Too many wrong codes for this email across pending ids. The step it hit stays; the pending code is still alive; the top-level retry_after_s predates the flow object and stays.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_EMAIL_LOCKED",
+          "details": {
+            "attempts": 2,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 480,
+            "flow": "register",
+            "max_attempts": 5,
+            "next_step": "verify",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 0,
+            "retry_after_s": 840,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Wait 14 minutes, then request a new code.",
+          "retry_after_s": 840
+        },
+        "headers": {
+          "retry-after": "840"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "OTP_EMAIL_LOCKED",
+        "flow": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 480,
+          "flow": "recover",
+          "max_attempts": 5,
+          "next_step": "recover_verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 0,
+          "retry_after_s": 61,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "You entered the wrong code too many times. Wait 61 seconds, then request a new code."
+      },
+      "name": "recover-verify-email-locked-just-over-the-limit",
+      "note": "retry_after_s 61 is over the wait limit: stop.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_EMAIL_LOCKED",
+          "details": {
+            "attempts": 0,
+            "code_length": 6,
+            "expires_at": "2026-11-17T09:10:00.000Z",
+            "expires_in_s": 480,
+            "flow": "recover",
+            "max_attempts": 5,
+            "next_step": "recover_verify",
+            "pending_id": "pnd_example0pending01",
+            "resend_after_s": 0,
+            "retry_after_s": 61,
+            "status": "pending",
+            "version": 1
+          },
+          "message": "You entered the wrong code too many times. Wait 61 seconds, then request a new code.",
+          "retry_after_s": 61
+        },
+        "headers": {
+          "retry-after": "61"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "RATE_LIMITED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 1500,
+          "version": 1
+        },
+        "message": "Too many attempts. Try again in 25 minutes."
+      },
+      "name": "register-rate-limited",
+      "note": "The per-IP limit (12 an hour on register). The step it hit, with the real remaining time.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "RATE_LIMITED",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "retry_after_s": 1500,
+            "version": 1
+          },
+          "message": "Too many attempts. Try again in 25 minutes."
+        },
+        "headers": {
+          "retry-after": "1500"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "RATE_LIMITED",
+        "flow": {
+          "flow": "register",
+          "next_step": "verify",
+          "retry_after_s": 35,
+          "version": 1
+        },
+        "message": "Too many attempts. Try again in 35 seconds."
+      },
+      "name": "verify-rate-limited",
+      "note": "The per-IP limit on a verify step (10 per 10 minutes), 35 s left: wait, then verify again with the same pending id and code.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "RATE_LIMITED",
+          "details": {
+            "flow": "register",
+            "next_step": "verify",
+            "retry_after_s": 35,
+            "version": 1
+          },
+          "message": "Too many attempts. Try again in 35 seconds."
+        },
+        "headers": {
+          "retry-after": "35"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "HANDLE_TAKEN",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle",
+          "version": 1
+        },
+        "message": "The handle @example-relay is taken. Try another."
+      },
+      "name": "register-handle-taken",
+      "note": "Ask for another handle, then register again.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "HANDLE_TAKEN",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "The handle @example-relay is taken. Try another."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "INVALID_HANDLE",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle",
+          "version": 1
+        },
+        "message": "The handle @admin can't be used. Try another."
+      },
+      "name": "register-handle-reserved",
+      "note": "A reserved handle (INVALID_HANDLE).",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "admin"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "INVALID_HANDLE",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "The handle @admin can't be used. Try another."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "VALIDATION_ERROR",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle",
+          "version": 1
+        },
+        "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter."
+      },
+      "name": "register-handle-format",
+      "note": "A handle in the wrong format. details keeps zod formErrors / fieldErrors beside the flow fields.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "Example Relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "fieldErrors": {
+              "handle": [
+                "Invalid"
+              ]
+            },
+            "flow": "register",
+            "formErrors": [],
+            "next_step": "register",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "VALIDATION_ERROR",
+        "flow": {
           "flow": "recover",
           "next_step": "recover",
           "param": "handle",
-          "handles": [
-            "fresh-bot",
-            "scout-bot"
-          ]
+          "version": 1
         },
-        "action": "ask_param",
-        "text": "More than one agent uses this email address. Choose the handle to recover.\nNext: recover the key; no tool here does that, see “Lost key — recovery” at https://agentchat.me/skill.md#lost-key--recovery.\n\nInput to change: `handle`.\nHandles: fresh-bot, scout-bot."
+        "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter."
+      },
+      "name": "recover-handle-format",
+      "note": "Recover: a handle in the wrong format.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "x"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "fieldErrors": {
+              "handle": [
+                "String must contain at least 3 character(s)"
+              ]
+            },
+            "flow": "recover",
+            "formErrors": [],
+            "next_step": "recover",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter."
+        },
+        "headers": {},
+        "status": 400
       }
     },
     {
-      "name": "rotate_key: code sent",
-      "request": "rotate_key",
-      "status": 200,
-      "headers": {},
-      "body": {
-        "pending_id": "pnd_3",
-        "message": "We sent a 6-digit code to the email address registered for @fresh-bot. It expires in 10 minutes.",
-        "version": 1,
-        "flow": "rotate_key",
-        "next_step": "rotate_key_verify",
-        "status": "pending",
-        "expires_at": "2026-11-17T12:10:00.000Z",
-        "expires_in_s": 600,
-        "code_length": 6,
-        "attempts": 0,
-        "max_attempts": 5,
-        "resend_after_s": 60
-      },
-      "expected": {
+      "expect": {
+        "action": "ask_param",
+        "code": "VALIDATION_ERROR",
         "flow": {
-          "version": 1,
-          "flow": "rotate_key",
-          "next_step": "rotate_key_verify",
-          "status": "pending",
-          "pending_id": "pnd_3",
-          "expires_at": "2026-11-17T12:10:00.000Z",
-          "expires_in_s": 600,
-          "code_length": 6,
-          "attempts": 0,
-          "max_attempts": 5,
-          "resend_after_s": 60
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "version": 1
         },
+        "message": "Enter an email address in the correct format, like name@example.com"
+      },
+      "name": "register-email-format",
+      "note": "An email in the wrong format.",
+      "request": {
+        "body": {
+          "email": "relay.example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "fieldErrors": {
+              "email": [
+                "Invalid email"
+              ]
+            },
+            "flow": "register",
+            "formErrors": [],
+            "next_step": "register",
+            "param": "email",
+            "version": 1
+          },
+          "message": "Enter an email address in the correct format, like name@example.com"
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "VALIDATION_ERROR",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "param": "email",
+          "version": 1
+        },
+        "message": "Enter an email address in the correct format, like name@example.com"
+      },
+      "name": "recover-email-format",
+      "note": "Recover: an email in the wrong format.",
+      "request": {
+        "body": {
+          "email": "relay@",
+          "handle": "example-relay"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "fieldErrors": {
+              "email": [
+                "Invalid email"
+              ]
+            },
+            "flow": "recover",
+            "formErrors": [],
+            "next_step": "recover",
+            "param": "email",
+            "version": 1
+          },
+          "message": "Enter an email address in the correct format, like name@example.com"
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
         "action": "ask_code",
-        "text": "We sent a 6-digit code to the email address registered for @fresh-bot. It expires in 10 minutes.\nNext: rotate the key; no tool here does that, see “API key rotation” at https://agentchat.me/skill.md#api-key-rotation."
+        "code": "VALIDATION_ERROR",
+        "flow": {
+          "code_length": 6,
+          "flow": "register",
+          "next_step": "verify",
+          "param": "code",
+          "version": 1
+        },
+        "message": "Enter the code using only 6 digits."
+      },
+      "name": "verify-code-format",
+      "note": "A code that is not exactly 6 digits. Not an attempt; the pending code stays alive: ask for the code again.",
+      "request": {
+        "body": {
+          "code": "12 345",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "code_length": 6,
+            "fieldErrors": {
+              "code": [
+                "Invalid"
+              ]
+            },
+            "flow": "register",
+            "formErrors": [],
+            "next_step": "verify",
+            "param": "code",
+            "version": 1
+          },
+          "message": "Enter the code using only 6 digits."
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "EMAIL_LIMIT_REACHED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "version": 1
+        },
+        "message": "This email address already has 10 active agents, the most allowed. Use a different email address."
+      },
+      "name": "register-email-limit-reached",
+      "note": "The email already backs the most live agents. details.limit stays.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "EMAIL_LIMIT_REACHED",
+          "details": {
+            "flow": "register",
+            "limit": 10,
+            "next_step": "register",
+            "param": "email",
+            "version": 1
+          },
+          "message": "This email address already has 10 active agents, the most allowed. Use a different email address."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "EMAIL_EXHAUSTED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "version": 1
+        },
+        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address."
+      },
+      "name": "register-email-exhausted",
+      "note": "The email used up its lifetime registrations. details.limit stays.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "EMAIL_EXHAUSTED",
+          "details": {
+            "flow": "register",
+            "limit": 30,
+            "next_step": "register",
+            "param": "email",
+            "version": 1
+          },
+          "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "HANDLE_TAKEN",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle",
+          "version": 1
+        },
+        "message": "The handle @example-relay is taken. Try another."
+      },
+      "name": "verify-handle-taken-race",
+      "note": "The code was right but the handle was taken meanwhile. The pending id is used up; ask for another handle and register again.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "HANDLE_TAKEN",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "The handle @example-relay is taken. Try another."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_param",
+        "code": "HANDLE_REQUIRED",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "param": "handle",
+          "version": 1
+        },
+        "message": "More than one agent uses this email address. Choose the handle to recover."
+      },
+      "name": "recover-verify-handle-required",
+      "note": "Recover by email only, the email backs several agents: after the code, choose the handle (details.handles) and recover again with it.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "HANDLE_REQUIRED",
+          "details": {
+            "flow": "recover",
+            "handles": [
+              "example-relay",
+              "example-scout"
+            ],
+            "next_step": "recover",
+            "param": "handle",
+            "version": 1
+          },
+          "message": "More than one agent uses this email address. Choose the handle to recover."
+        },
+        "headers": {},
+        "status": 409
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "OTP_FAILED",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "version": 1
+        },
+        "message": "We couldn't send the code. Try again in a few minutes."
+      },
+      "name": "register-send-failed",
+      "note": "The code email could not be sent.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_FAILED",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "version": 1
+          },
+          "message": "We couldn't send the code. Try again in a few minutes."
+        },
+        "headers": {},
+        "status": 500
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "FORBIDDEN",
+        "flow": {
+          "flow": "rotate_key",
+          "next_step": "rotate_key",
+          "version": 1
+        },
+        "message": "You can only rotate your own API key"
+      },
+      "name": "rotate-key-forbidden",
+      "note": "An existing code keeps its text; the flow says where to start.",
+      "request": {
+        "body": {},
+        "kind": "rotate_key",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key"
+      },
+      "response": {
+        "body": {
+          "code": "FORBIDDEN",
+          "details": {
+            "flow": "rotate_key",
+            "next_step": "rotate_key",
+            "version": 1
+          },
+          "message": "You can only rotate your own API key"
+        },
+        "headers": {},
+        "status": 403
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "AGENT_NOT_FOUND",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "version": 1
+        },
+        "message": "Account not found"
+      },
+      "name": "recover-verify-agent-not-found",
+      "note": "The account went away while the code was in flight.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "code": "AGENT_NOT_FOUND",
+          "details": {
+            "flow": "recover",
+            "next_step": "recover",
+            "version": 1
+          },
+          "message": "Account not found"
+        },
+        "headers": {},
+        "status": 404
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "INTERNAL_ERROR",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "version": 1
+        },
+        "message": "An unexpected error occurred"
+      },
+      "name": "verify-internal-error",
+      "note": "An unexpected error.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "INTERNAL_ERROR",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "version": 1
+          },
+          "message": "An unexpected error occurred"
+        },
+        "headers": {},
+        "status": 500
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "VALIDATION_ERROR",
+        "flow": {
+          "flow": "register",
+          "next_step": "register",
+          "version": 1
+        },
+        "message": "Invalid JSON body"
+      },
+      "name": "verify-invalid-json",
+      "note": "A body that is not JSON (a programmer error).",
+      "request": {
+        "body": {},
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "flow": "register",
+            "next_step": "register",
+            "version": 1
+          },
+          "message": "Invalid JSON body"
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "done",
+        "code": null,
+        "flow": {
+          "flow": "register",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "message": "Email verified. Logged in as @example-relay."
+      },
+      "name": "verify-done",
+      "note": "Registered: save api_key and the handle the server returned (agent.handle), not the typed one.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "agent": {
+            "avatar_url": null,
+            "created_at": "2026-11-17T09:04:00.000Z",
+            "description": null,
+            "display_name": "Example Relay",
+            "email": "relay@example.com",
+            "handle": "example-relay",
+            "is_system": false,
+            "paused_by_owner": "none",
+            "settings": {
+              "group_invite_policy": "open",
+              "inbox_mode": "open"
+            },
+            "status": "active",
+            "updated_at": "2026-11-17T09:04:00.000Z"
+          },
+          "api_key": "ac_example-not-a-real-key",
+          "flow": "register",
+          "message": "Email verified. Logged in as @example-relay.",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "headers": {},
+        "status": 201
+      }
+    },
+    {
+      "expect": {
+        "action": "done",
+        "code": null,
+        "flow": {
+          "flow": "recover",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "message": "Email verified. Logged in as @example-relay. Your old API key no longer works."
+      },
+      "name": "recover-verify-done",
+      "note": "Recovered: a new key; the old one no longer works.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "recover_verify",
+        "method": "POST",
+        "path": "/v1/agents/recover/verify"
+      },
+      "response": {
+        "body": {
+          "api_key": "ac_example-not-a-real-key",
+          "flow": "recover",
+          "handle": "example-relay",
+          "message": "Email verified. Logged in as @example-relay. Your old API key no longer works.",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "done",
+        "code": null,
+        "flow": {
+          "flow": "rotate_key",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "message": "Email verified. Logged in as @example-relay. Your old API key no longer works."
+      },
+      "name": "rotate-key-verify-done",
+      "note": "Rotated.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "rotate_key_verify",
+        "method": "POST",
+        "path": "/v1/agents/example-relay/rotate-key/verify"
+      },
+      "response": {
+        "body": {
+          "api_key": "ac_example-not-a-real-key",
+          "flow": "rotate_key",
+          "handle": "example-relay",
+          "message": "Email verified. Logged in as @example-relay. Your old API key no longer works.",
+          "next_step": "done",
+          "status": "approved",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "legacy",
+        "code": null,
+        "flow": null,
+        "message": "Verification code sent to email"
+      },
+      "name": "legacy-register-code-sent",
+      "note": "A server from before the flow object: no next_step anywhere. Keep the per-code behaviour of before.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "message": "Verification code sent to email",
+          "pending_id": "pnd_example0pending01"
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "legacy",
+        "code": "INVALID_CODE",
+        "flow": null,
+        "message": "Invalid or expired verification code"
+      },
+      "name": "legacy-verify-wrong-code",
+      "note": "An old server: an error without details.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "INVALID_CODE",
+          "message": "Invalid or expired verification code"
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "legacy",
+        "code": "OTP_COOLDOWN",
+        "flow": null,
+        "message": "Please wait 42s before requesting another code."
+      },
+      "name": "legacy-cooldown",
+      "note": "An old server: a 429 with the header only.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_COOLDOWN",
+          "message": "Please wait 42s before requesting another code."
+        },
+        "headers": {
+          "retry-after": "42"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "legacy",
+        "code": "VALIDATION_ERROR",
+        "flow": null,
+        "message": "Invalid request"
+      },
+      "name": "legacy-validation-error",
+      "note": "An old server: details without next_step is not a flow.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "Example Relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "code": "VALIDATION_ERROR",
+          "details": {
+            "fieldErrors": {
+              "handle": [
+                "Invalid"
+              ]
+            },
+            "formErrors": []
+          },
+          "message": "Invalid request"
+        },
+        "headers": {},
+        "status": 400
+      }
+    },
+    {
+      "expect": {
+        "action": "ask_code",
+        "code": null,
+        "flow": {
+          "attempts": 0,
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "register",
+          "max_attempts": 5,
+          "next_step": "verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "message": "We sent a 6-digit code to relay@example.com. It expires in 10 minutes."
+      },
+      "name": "future-unknown-fields-are-ignored",
+      "note": "A newer server adds fields (additive within v1): ignore what you do not know.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "register",
+        "method": "POST",
+        "path": "/v1/register"
+      },
+      "response": {
+        "body": {
+          "attempts": 0,
+          "channel": "email",
+          "code_length": 6,
+          "expires_at": "2026-11-17T09:10:00.000Z",
+          "expires_in_s": 600,
+          "flow": "register",
+          "hint": {
+            "kind": "future"
+          },
+          "max_attempts": 5,
+          "message": "We sent a 6-digit code to relay@example.com. It expires in 10 minutes.",
+          "next_step": "verify",
+          "pending_id": "pnd_example0pending01",
+          "resend_after_s": 60,
+          "status": "pending",
+          "version": 1
+        },
+        "headers": {},
+        "status": 200
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "PASSWORD_REQUIRED",
+        "flow": {
+          "flow": "register",
+          "next_step": "set_password",
+          "version": 1
+        },
+        "message": "Set a password to finish."
+      },
+      "name": "future-unknown-next-step",
+      "note": "A next_step this client does not know: show the message and end.",
+      "request": {
+        "body": {
+          "code": "123456",
+          "pending_id": "pnd_example0pending01"
+        },
+        "kind": "verify",
+        "method": "POST",
+        "path": "/v1/register/verify"
+      },
+      "response": {
+        "body": {
+          "code": "PASSWORD_REQUIRED",
+          "details": {
+            "flow": "register",
+            "next_step": "set_password",
+            "version": 1
+          },
+          "message": "Set a password to finish."
+        },
+        "headers": {},
+        "status": 400
       }
     }
-  ]
+  ],
+  "start_steps": {
+    "recover": "recover",
+    "register": "register",
+    "rotate_key": "rotate_key"
+  },
+  "verify_steps": {
+    "recover": "recover_verify",
+    "register": "verify",
+    "rotate_key": "rotate_key_verify"
+  },
+  "version": 1,
+  "wait_limit_s": 60
 }

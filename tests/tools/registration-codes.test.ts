@@ -24,47 +24,87 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // tools render it — the server's message, one `Next:` line naming the tool
 // for `next_step`, the facts present — and add no rulebook of their own.
 //
-// The cases are tests/fixtures/signup-flow.cases.json: every situation of
-// the contract's sign-up code table as the server answers it, with the flow
-// a client reads, the client action it leads to, and the exact text the
-// model reads. When the contract changes, change the fixture first; these
-// tests then say which text to change.
+// The cases are the contract's sign-up conformance cases
+// (tests/fixtures/signup-flow.cases.json, a byte-identical copy of
+// https://agentchat.me/contract/v1/conformance/signup-flow.cases.json): each
+// request, the server's answer, and the flow, message and client action a
+// client derives. tests/fixtures/signup-flow.texts.json holds the exact text
+// the model reads for each. When the contract changes, copy its cases
+// again; these tests then say which text changed (regenerate the texts with
+// SIGNUP_TEXTS_WRITE=1 and review the diff).
 //
 // The per-code guidance the tools carried before is kept only for a server
-// that sends no `next_step` (an older server); the last part of this file
-// holds that fallback.
+// that sends no `next_step` (an older server); the contract's `legacy` cases
+// and the last part of this file hold that fallback.
 
-const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'signup-flow.cases.json')
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
-type Request = 'register' | 'verify' | 'recover' | 'recover_verify' | 'rotate_key' | 'rotate_key_verify'
-type Action = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop'
+type Kind = 'register' | 'verify' | 'recover' | 'recover_verify' | 'rotate_key' | 'rotate_key_verify'
+type Action = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop' | 'legacy'
 
 interface Case {
   name: string
-  request: Request
-  status: number
-  headers: Record<string, string>
-  body: Record<string, unknown>
-  expected: { flow: Record<string, unknown>; action: Action; text: string | null }
+  note: string
+  request: { kind: Kind; method: string; path: string; body: Record<string, string> }
+  response: { status: number; headers: Record<string, string>; body: Record<string, unknown> }
+  expect: { action: Action; code: string | null; flow: Record<string, unknown> | null; message: string }
 }
 
-const CASES = (JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as { cases: Case[] }).cases
-const TOOL_CASES = CASES.filter((c) => c.request === 'register' || c.request === 'verify')
-const OTHER_CASES = CASES.filter((c) => c.request !== 'register' && c.request !== 'verify')
+interface Cases {
+  version: number
+  actions: Action[]
+  start_steps: Record<string, string>
+  verify_steps: Record<string, string>
+  wait_limit_s: number
+  cases: Case[]
+}
 
+interface Texts {
+  about: string
+  tools: Record<string, string>
+  rendered: Record<string, string>
+}
+
+const CONTRACT = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'signup-flow.cases.json'), 'utf8')) as Cases
+const TEXTS_PATH = path.join(FIXTURES, 'signup-flow.texts.json')
+const TEXTS = JSON.parse(fs.readFileSync(TEXTS_PATH, 'utf8')) as Texts
+const CASES = CONTRACT.cases
+const onTool = (c: Case) => c.request.kind === 'register' || c.request.kind === 'verify'
+const TOOL_CASES = CASES.filter(onTool)
+const OTHER_CASES = CASES.filter((c) => !onTool(c))
+const byName = (name: string): Case => {
+  const found = CASES.find((c) => c.name === name)
+  if (found === undefined) throw new Error(`no contract case ${name}`)
+  return found
+}
+
+/** The flow fields these tools read beside the contract's flow: the existing details they render. */
+const DETAIL_FIELDS = ['limit', 'handles'] as const
 /** The flow fields these tools read; every other field is ignored. */
-const READ_FIELDS = ['next_step', 'status', 'pending_id', 'param', 'code_length', 'retry_after_s', 'limit', 'handles'] as const
+const READ_FIELDS = ['next_step', 'status', 'pending_id', 'param', 'code_length', 'retry_after_s'] as const
 
-function readPart(flow: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(READ_FIELDS.filter((f) => flow[f] !== undefined).map((f) => [f, flow[f]]))
+function pick(source: Record<string, unknown> | null | undefined, fields: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(fields.filter((f) => source?.[f] !== undefined).map((f) => [f, source![f]]))
 }
 
-/** The codes each tool's route answers with, from the cases. */
-function codesOf(request: Request): string[] {
-  return [...new Set(CASES.filter((c) => c.request === request && typeof c.body['code'] === 'string').map((c) => c.body['code'] as string))]
+const flowSource = (body: Record<string, unknown>) =>
+  (typeof body['code'] === 'string' ? body['details'] : body) as Record<string, unknown> | null | undefined
+
+/**
+ * The codes each tool's route answers with: the contract's cases for that
+ * request kind (a `future-` case is a code no server sends yet), plus the
+ * codes the route sends that the contract shows on another route only: the
+ * verify step can also hit the email caps, when another registration with
+ * the email finished after this code was sent (409, as at register).
+ */
+function codesOf(kind: Kind, alsoSent: readonly string[] = []): string[] {
+  const shown = CASES.filter((c) => c.request.kind === kind && !c.name.startsWith('future-') && typeof c.response.body['code'] === 'string')
+  return [...new Set([...shown.map((c) => c.response.body['code'] as string), ...alsoSent])].sort()
 }
 const REGISTER_CODES = codesOf('register')
-const VERIFY_CODES = codesOf('verify')
+const VERIFY_CODES = codesOf('verify', ['EMAIL_LIMIT_REACHED', 'EMAIL_EXHAUSTED'])
+/** Codes a route answers only as a 5xx: the fallback names them SERVER_ERROR. */
+const SERVER_ERROR_CODES = new Set(CASES.filter((c) => c.response.status >= 500).map((c) => c.response.body['code'] as string))
 
 // ── the real pipeline: SDK call over a stubbed fetch → typed error → rendered text
 
@@ -87,20 +127,27 @@ function makeCtx(respond: () => Response, extra: Partial<ToolContext> = {}): Too
   } as unknown as ToolContext
 }
 
-const answerOf = (c: Case) => () => json(c.status, c.body, c.headers)
+const answerOf = (c: Case) => () => json(c.response.status, c.response.body, c.response.headers)
+
+function joined(result: { content: unknown[] }): string {
+  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
+}
 
 async function registerText(answer: () => Response, extra?: Partial<ToolContext>): Promise<string> {
-  const result = await registerAccount.createHandler(makeCtx(answer, extra))({ email: 'owner@example.com', handle: 'fresh-bot' })
-  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
+  return joined(await registerAccount.createHandler(makeCtx(answer, extra))({ email: 'relay@example.com', handle: 'example-relay' }))
 }
 
 async function verifyText(answer: () => Response, extra?: Partial<ToolContext>): Promise<string> {
-  const result = await verifyOtp.createHandler(makeCtx(answer, extra))({ pending_id: 'pnd_1', code: '123456' })
-  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
+  return joined(await verifyOtp.createHandler(makeCtx(answer, extra))({ pending_id: 'pnd_example0pending01', code: '123456' }))
 }
 
-const textOf = (c: Case, extra?: Partial<ToolContext>) =>
-  c.request === 'register' ? registerText(answerOf(c), extra) : verifyText(answerOf(c), extra)
+async function textOf(c: Case, extra?: Partial<ToolContext>): Promise<string> {
+  const answer = answerOf(c)
+  if (c.request.kind === 'register') {
+    return joined(await registerAccount.createHandler(makeCtx(answer, extra))(c.request.body as registerAccount.Input))
+  }
+  return joined(await verifyOtp.createHandler(makeCtx(answer, extra))(c.request.body as verifyOtp.Input))
+}
 
 function nextLineOf(text: string): string {
   const line = text.split('\n').find((l) => l.startsWith('Next: '))
@@ -109,77 +156,100 @@ function nextLineOf(text: string): string {
 }
 
 /** What each client action looks like in the Next line of a tool on this surface. */
-const ACTION_NEXT: Record<Exclude<Action, 'done'>, RegExp> = {
-  ask_code: /^Next: (wait \d+ seconds, then )?call agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.$/,
+const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy'>, RegExp> = {
+  ask_code: /^Next: call agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.$/,
   ask_param: /^Next: call agentchat_register again with a different `(email|handle)`\.$/,
   offer_new_code: /^Next: if the user wants a new code, (wait \d+ seconds, then )?call agentchat_register again with the same email and handle\.$/,
   wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register|verify_otp) /,
-  // A long wait names it; a server failure names the step to repeat.
-  stop: /^Next: (wait \d+ seconds, then )?call agentchat_(register|verify_otp) /,
+  // A long wait names it; a server failure names the step to repeat; a step
+  // this version does not know says to stop.
+  stop: /^Next: ((wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message above to the user and stop\.$)/,
 }
 
-describe('the fixture covers the contract’s sign-up table', () => {
-  it('names are unique, every action is known, and each tool’s route has its cases', () => {
+describe('the contract’s sign-up cases', () => {
+  it('are the contract version this code reads, with every action known and a text for every case', () => {
+    expect(CONTRACT.version).toBe(1)
+    expect(CONTRACT.wait_limit_s).toBe(60)
+    expect(CONTRACT.start_steps).toEqual({ register: 'register', recover: 'recover', rotate_key: 'rotate_key' })
+    expect(CONTRACT.verify_steps).toEqual({ register: 'verify', recover: 'recover_verify', rotate_key: 'rotate_key_verify' })
     expect(new Set(CASES.map((c) => c.name)).size).toBe(CASES.length)
-    for (const c of CASES) expect(['done', 'ask_code', 'ask_param', 'offer_new_code', 'wait_then_retry', 'stop'], c.name).toContain(c.expected.action)
-    expect(REGISTER_CODES.sort()).toEqual(
-      ['EMAIL_EXHAUSTED', 'EMAIL_LIMIT_REACHED', 'HANDLE_TAKEN', 'INTERNAL_ERROR', 'INVALID_HANDLE', 'OTP_COOLDOWN', 'OTP_FAILED', 'OTP_HOURLY_CAP', 'RATE_LIMITED', 'VALIDATION_ERROR'],
-    )
-    expect(VERIFY_CODES.sort()).toEqual(
-      ['EMAIL_EXHAUSTED', 'EMAIL_LIMIT_REACHED', 'EXPIRED', 'HANDLE_TAKEN', 'INTERNAL_ERROR', 'INVALID_CODE', 'OTP_ATTEMPTS_EXHAUSTED', 'OTP_EMAIL_LOCKED', 'RATE_LIMITED', 'VALIDATION_ERROR'],
-    )
+    for (const c of CASES) expect(CONTRACT.actions, c.name).toContain(c.expect.action)
+    expect(Object.keys(TEXTS.tools).sort()).toEqual(TOOL_CASES.map((c) => c.name).sort())
+    expect(Object.keys(TEXTS.rendered).sort()).toEqual(OTHER_CASES.map((c) => c.name).sort())
   })
 
-  it.each(CASES.map((c) => [c.name, c] as const))('%s: the flow read from the body is the expected one', (_name, c) => {
-    expect(readPart(c.expected.flow), 'the fixture’s expected flow is the body’s').toEqual(
-      readPart((typeof c.body['code'] === 'string' ? c.body['details'] : c.body) as Record<string, unknown>),
-    )
-    expect(flowOf(c.body)).toEqual(readPart(c.expected.flow))
+  it.each(CASES.map((c) => [c.name, c] as const))('%s: the flow read from the answer is the contract’s', (_name, c) => {
+    const flow = flowOf(c.response.body)
+    if (c.expect.flow === null) {
+      expect(flow).toBeNull()
+      return
+    }
+    expect(flow).not.toBeNull()
+    expect(pick(flow as unknown as Record<string, unknown>, READ_FIELDS)).toEqual(pick(c.expect.flow, READ_FIELDS))
+    expect(pick(flow as unknown as Record<string, unknown>, DETAIL_FIELDS)).toEqual(pick(flowSource(c.response.body), DETAIL_FIELDS))
+    expect(c.response.body['message']).toBe(c.expect.message)
+  })
+
+  it('when the texts change on purpose: SIGNUP_TEXTS_WRITE=1 rewrites them (then fails, to be reviewed)', async () => {
+    if (process.env['SIGNUP_TEXTS_WRITE'] !== '1') return
+    const tools: Record<string, string> = {}
+    for (const c of TOOL_CASES) tools[c.name] = await textOf(c)
+    const rendered: Record<string, string> = {}
+    for (const c of OTHER_CASES) rendered[c.name] = renderFlow(c.response.body['message'] as string, flowOf(c.response.body)!)
+    fs.writeFileSync(TEXTS_PATH, `${JSON.stringify({ about: TEXTS.about, tools, rendered }, null, 2)}\n`)
+    throw new Error(`texts rewritten at ${TEXTS_PATH}; review the diff, then re-run without SIGNUP_TEXTS_WRITE`)
   })
 })
 
 describe('each server answer reaches the model as the server said it', () => {
-  for (const c of TOOL_CASES.filter((tc) => tc.expected.text !== null)) {
+  for (const c of TOOL_CASES) {
     it(`${c.name}: the exact text`, async () => {
-      expect(await textOf(c)).toBe(c.expected.text)
+      expect(await textOf(c)).toBe(TEXTS.tools[c.name])
     })
+  }
 
-    it(`${c.name}: the server’s code and message verbatim, a Next line for ${c.expected.action}, the facts present`, async () => {
+  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.action !== 'done')) {
+    it(`${c.name}: the server’s code and message verbatim, a Next line for ${c.expect.action}, the facts present`, async () => {
       const shown = await textOf(c)
-      const code = c.body['code']
-      if (typeof code === 'string') {
+      if (c.expect.code !== null) {
         // The server's own code, whatever the HTTP status (a 5xx included).
-        expect(shown.startsWith(`Error: ${code}\n\n${c.body['message'] as string}\nNext: `), shown).toBe(true)
+        expect(shown.startsWith(`Error: ${c.expect.code}\n\n${c.expect.message}\nNext: `), shown).toBe(true)
       } else {
-        expect(shown.startsWith(`${c.body['message'] as string}\nNext: `), shown).toBe(true)
+        expect(shown.startsWith(`${c.expect.message}\nNext: `), shown).toBe(true)
       }
-      expect(nextLineOf(shown)).toMatch(ACTION_NEXT[c.expected.action as Exclude<Action, 'done'>])
-      const flow = c.expected.flow
+      expect(nextLineOf(shown)).toMatch(ACTION_NEXT[c.expect.action as keyof typeof ACTION_NEXT])
+      const flow = c.expect.flow!
+      const details = flowSource(c.response.body)
       const retry = typeof flow['retry_after_s'] === 'number' ? flow['retry_after_s'] : 0
       if (retry > 0) expect(shown).toContain(`\n\nRetry after: ${retry} seconds.`)
       else expect(shown).not.toContain('Retry after:')
-      if (flow['limit'] !== undefined) expect(shown).toContain(`\nLimit: ${String(flow['limit'])}.`)
+      if (details?.['limit'] !== undefined) expect(shown).toContain(`\nLimit: ${String(details['limit'])}.`)
       if (flow['param'] !== undefined) expect(shown).toContain(`\nInput to change: \`${String(flow['param'])}\`.`)
       // No rulebook of the tool's own: none of the fallback guidance shows.
-      const guidance = c.request === 'register' ? registerAccount.GUIDANCE : verifyOtp.GUIDANCE
+      const guidance = c.request.kind === 'register' ? registerAccount.GUIDANCE : verifyOtp.GUIDANCE
       for (const text of Object.values(guidance)) expect(shown).not.toContain(text)
     })
   }
 
-  it('register success adds the one agent line, naming the email it was sent to', async () => {
-    const sent = CASES.find((c) => c.name === 'register: code sent')!
-    const shown = await textOf(sent)
-    expect(shown.split('\n')).toEqual([
-      'We sent a 6-digit code to owner@example.com. It expires in 10 minutes.',
-      'Next: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
-      "If you can't read owner@example.com yourself, ask the user for the code.",
+  it('register success adds the one agent line, naming the email the code went to', async () => {
+    expect((await textOf(byName('register-code-sent'))).split('\n')).toEqual([
+      'We sent a 6-digit code to relay@example.com. It expires in 10 minutes.',
+      'Next: call agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
+      "If you can't read relay@example.com yourself, ask the user for the code.",
     ])
   })
 
+  it('the email caps after an accepted code (verify) read as they do at register', async () => {
+    for (const name of ['register-email-limit-reached', 'register-email-exhausted']) {
+      expect(await verifyText(answerOf(byName(name)))).toBe(TEXTS.tools[name])
+    }
+  })
+
   it.each(OTHER_CASES.map((c) => [c.name, c] as const))('%s: a step no tool here makes points to the manual', (_name, c) => {
-    const flow = flowOf(c.body)!
-    expect(renderFlow(c.body['message'] as string, flow)).toBe(c.expected.text)
-    expect(nextLine(flow)).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
+    const flow = flowOf(c.response.body)!
+    expect(renderFlow(c.expect.message, flow)).toBe(TEXTS.rendered[c.name])
+    if (c.expect.action === 'done') expect(nextLine(flow)).toBe('Next: store the API key now; it is shown only once.')
+    else expect(nextLine(flow)).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
   })
 })
 
@@ -187,16 +257,13 @@ describe('the Next line names tools as the session’s runtime shows them', () =
   const spell = (tool: string) => `mcp__agentchat__${tool}`
 
   it('through the context’s namer, in success and error answers', async () => {
-    const sent = CASES.find((c) => c.name === 'register: code sent')!
-    const wrong = CASES.find((c) => c.name === 'verify: 400 INVALID_CODE (attempts left)')!
-    const taken = CASES.find((c) => c.name === 'register: 409 HANDLE_TAKEN')!
-    expect(nextLineOf(await textOf(sent, { nameTool: spell }))).toBe(
-      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
+    expect(nextLineOf(await textOf(byName('register-code-sent'), { nameTool: spell }))).toBe(
+      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
     )
-    expect(nextLineOf(await textOf(wrong, { nameTool: spell }))).toBe(
-      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
+    expect(nextLineOf(await textOf(byName('verify-wrong-code'), { nameTool: spell }))).toBe(
+      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
     )
-    expect(nextLineOf(await textOf(taken, { nameTool: spell }))).toBe(
+    expect(nextLineOf(await textOf(byName('register-handle-taken'), { nameTool: spell }))).toBe(
       'Next: call mcp__agentchat__agentchat_register again with a different `handle`.',
     )
   })
@@ -206,14 +273,13 @@ describe('the Next line names tools as the session’s runtime shows them', () =
   })
 
   it('buildMcpServer hands its toolNamer to the sign-up tools', async () => {
-    const cooldown = CASES.find((c) => c.name === 'register: 429 OTP_COOLDOWN')!
-    vi.stubGlobal('fetch', (async () => answerOf(cooldown)()) as typeof fetch)
+    vi.stubGlobal('fetch', (async () => answerOf(byName('register-cooldown'))()) as typeof fetch)
     const server = buildMcpServer({ apiBase: 'https://namer.agentchat.test', apiKey: null, toolNamer: (tool) => `agentchat__${tool}` })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: 'registration-codes', version: '0.0.0' })
     await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
     try {
-      const result = await client.callTool({ name: 'agentchat_register', arguments: { email: 'owner@example.com', handle: 'fresh-bot' } })
+      const result = await client.callTool({ name: 'agentchat_register', arguments: { email: 'relay@example.com', handle: 'example-relay' } })
       expect(result.isError).toBe(true)
       expect((result.content as Array<{ text: string }>)[0]!.text).toBe(
         'Error: OTP_COOLDOWN\n\nYou can request a new code in 42 seconds.\nNext: wait 42 seconds, then call agentchat__agentchat_register again.\n\nRetry after: 42 seconds.',
@@ -285,34 +351,32 @@ describe('rendering rules', () => {
 })
 
 describe('verify success: the key, and the server’s words when the SDK hands them over', () => {
-  const success = CASES.find((c) => c.name === 'verify: 201 success')!
-
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
   it('with agentchatme 1.3.x (key and agent only): the answer as before, key and handle from the server', async () => {
-    const payload = JSON.parse(await verifyText(answerOf(success))) as Record<string, unknown>
+    const payload = JSON.parse(await textOf(byName('verify-done'))) as Record<string, unknown>
     expect(payload['ok']).toBe(true)
-    expect(payload['api_key']).toBe('ac_live_minted')
-    expect(payload['handle']).toBe('fresh-bot')
+    expect(payload['api_key']).toBe('ac_example-not-a-real-key')
+    // The handle the server returned, not the typed one.
+    expect(payload['handle']).toBe('example-relay')
     expect(payload['message']).toBeUndefined()
     expect(String(payload['important'])).toContain('exactly once')
   })
 
   it('with an SDK whose verify result carries the flow fields: the server’s message comes first', async () => {
     vi.spyOn(AgentChatClient, 'verify').mockResolvedValue({
-      agent: { handle: 'fresh-bot' },
-      apiKey: 'ac_live_minted',
+      agent: { handle: 'example-relay' },
+      apiKey: 'ac_example-not-a-real-key',
       client: {} as AgentChatClient,
-      message: 'Email verified. Logged in as @fresh-bot.',
+      message: 'Email verified. Logged in as @example-relay.',
       next_step: 'done',
       status: 'approved',
     } as Awaited<ReturnType<typeof AgentChatClient.verify>>)
     const payload = JSON.parse(await verifyText(() => json(500, {}))) as Record<string, unknown>
     expect(Object.keys(payload).slice(0, 4)).toEqual(['ok', 'message', 'handle', 'api_key'])
-    expect(payload['message']).toBe('Email verified. Logged in as @fresh-bot.')
-    expect(payload['handle']).toBe('fresh-bot')
+    expect(payload['message']).toBe('Email verified. Logged in as @example-relay.')
   })
 })
 
@@ -320,7 +384,7 @@ describe('verify success: the key, and the server’s words when the SDK hands t
 
 /**
  * Capitalized words in these texts that are not error codes. A new one has
- * to be added here (or to the fixture's codes) on purpose.
+ * to be added here (or to the contract's cases) on purpose.
  */
 const NOT_CODES: ReadonlySet<string> = new Set([
   'API', // "API key"
@@ -396,11 +460,25 @@ describe('an older server (no next_step): the per-code fallback', () => {
         // A 5xx reaches the model as SERVER_ERROR ("transient; retry
         // shortly"), whatever the wire code: guidance keyed by it would
         // never be read.
-        if (code === 'OTP_FAILED' || code === 'INTERNAL_ERROR') {
+        if (SERVER_ERROR_CODES.has(code)) {
           expect(tool.module.GUIDANCE[code], `${tool.name}: ${code} is a 5xx`).toBeUndefined()
           continue
         }
         expect(tool.module.GUIDANCE[code], `${tool.name} has fallback guidance for ${code}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('the contract’s legacy cases get the fallback: the server’s words, the guidance, no Next line', async () => {
+    const legacy = TOOL_CASES.filter((c) => c.expect.action === 'legacy')
+    expect(legacy.length).toBeGreaterThan(0)
+    for (const c of legacy) {
+      const shown = await textOf(c)
+      expect(shown, c.name).not.toContain('Next: ')
+      expect(shown, c.name).toContain(c.expect.message)
+      if (c.expect.code !== null) {
+        const guidance = (c.request.kind === 'register' ? registerAccount.GUIDANCE : verifyOtp.GUIDANCE)[c.expect.code]!
+        expect(shown, c.name).toContain(guidance)
       }
     }
   })
@@ -432,17 +510,11 @@ describe('an older server (no next_step): the per-code fallback', () => {
       expect(shown).toBe('Error: SERVER_ERROR\n\nAgentChat reported a server-side error. This is transient; retry shortly.')
     })
   }
-
-  it('register success without a flow object: the answer as before', async () => {
-    const payload = JSON.parse(await registerText(() => json(200, { pending_id: 'pnd_1', message: 'sent' }))) as Record<string, unknown>
-    expect(payload).toMatchObject({ ok: true, pending_id: 'pnd_1', message: 'sent' })
-    expect(String(payload['next_step'])).toContain('Call agentchat_verify_otp with this pending_id')
-  })
 })
 
 describe('an earlier verify that may have created the account', () => {
   it('a 2xx without a key gives the recovery step, and never says to verify again', async () => {
-    const noKey = await verifyText(() => json(201, { agent: { handle: 'fresh-bot' } }))
+    const noKey = await verifyText(() => json(201, { agent: { handle: 'example-relay' } }))
     expect(noKey).toContain(RECOVER_THE_KEY)
     expect(noKey).not.toMatch(/retry agentchat_verify_otp/i)
     // The server said success: the account exists, under a handle the agent keeps.
