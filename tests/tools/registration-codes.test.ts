@@ -99,18 +99,6 @@ function actionOf(c: Case): Action {
   return flow === null ? 'legacy' : actionOfFlow(flow, c.response.status, STEP_OF_KIND[c.request.kind])
 }
 
-/**
- * Cases whose `expect.action` the contract copy still states by the rule
- * before it knew the called step (a wait, then a start step after a code
- * step, which would send a code nobody asked for). The contract is being
- * re-cut; this list goes when the new copy lands.
- */
-const ACTION_BEFORE_AMENDMENT: ReadonlySet<string> = new Set([
-  'verify-rate-limited-past-the-code',
-  'rotate-key-verify-email-locked-short',
-  'rotate-key-verify-rate-limited-no-code',
-])
-
 /** The flow fields these tools read beside the contract's flow: the existing details they render. */
 const DETAIL_FIELDS = ['limit', 'handles'] as const
 /** The flow fields these tools read; every other field is ignored. */
@@ -239,10 +227,7 @@ describe('the contract’s sign-up cases', () => {
     expect(CONTRACT.wait_limit_s).toBe(60)
     expect(new Set(Object.values(CONTRACT.verify_steps))).toEqual(new Set(['verify', 'recover_verify', 'rotate_key_verify']))
     expect(new Set(Object.values(CONTRACT.start_steps))).toEqual(new Set(['register', 'recover', 'rotate_key']))
-    for (const c of CASES) {
-      if (ACTION_BEFORE_AMENDMENT.has(c.name)) expect(actionOf(c), `${c.name}: drop it from ACTION_BEFORE_AMENDMENT`).not.toBe(c.expect.action)
-      else expect(actionOf(c), c.name).toBe(c.expect.action)
-    }
+    for (const c of CASES) expect(actionOf(c), c.name).toBe(c.expect.action)
   })
 
   it('are the contract version this code reads, with every action known and a text for every case', () => {

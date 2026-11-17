@@ -200,10 +200,12 @@ export function nextStep(flow: SignupFlow, options: NextOptions = {}): string | 
   const action = actionOf(flow, httpStatus, options.calledStep)
   if (httpStatus >= 500) return null
   if (action === 'done') return 'store the API key now; it is shown only once.'
+  // An offer waits the answer's wait, else the time until a new code may be requested.
+  const offerWait = waitFor(flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? flow.retry_after_s : flow.resend_after_s)
   const tool = TOOL_FOR_STEP[step]
   if (tool === undefined) {
     const manual = MANUAL_FOR_STEP[step]
-    if (manual !== undefined) return `${waitFor(flow.retry_after_s)}${manual}.`
+    if (manual !== undefined) return `${action === 'offer_new_code' ? offerWait : waitFor(flow.retry_after_s)}${manual}.`
     return `this tool does not know the step \`${step}\`; show the message to the user and stop.`
   }
   const call = nameTool(tool)
@@ -227,8 +229,7 @@ export function nextStep(flow: SignupFlow, options: NextOptions = {}): string | 
     case 'wait_then_retry':
       return take(waitFor(flow.retry_after_s))
     case 'offer_new_code':
-      // The answer's wait, else the time until a new code may be requested.
-      return take(waitFor(flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? flow.retry_after_s : flow.resend_after_s))
+      return take(offerWait)
     default: {
       const later = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? `; after ${flow.retry_after_s} seconds, ${take('')}` : '.'
       return `show the message to the user and stop${later}`

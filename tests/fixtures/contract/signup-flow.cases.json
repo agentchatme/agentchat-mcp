@@ -1,5 +1,5 @@
 {
-  "about": "Sign-up flows (contract v1, \"Sign-up flows\"): register (POST /v1/register → /v1/register/verify), recover (POST /v1/agents/recover → /recover/verify) and rotate key (POST /v1/agents/{handle}/rotate-key → /verify, with the current key as Bearer). Every answer carries a flow object: at the top level of a 2xx body, in `details` of an error body (flow = body.code ? body.details : body); it is a flow only when it has a string next_step, else the answer is from an older server (action legacy). Each case gives the request (kind = the step it called), the server response (status, the Retry-After header when sent, body) and what a client derives: expect.flow lists every flow field present with its value (a parser may keep more keys, never fewer or different ones), expect.code and expect.message (the text to show verbatim; never branch on it), and expect.action, from this rule, first match wins: no flow → legacy; next_step done → done (the key is in the body); a next_step not in start_steps or verify_steps → stop; HTTP 5xx → stop; a verify step → ask_code when there is no retry_after_s, else wait_then_retry when the status is 429 and retry_after_s ≤ wait_limit_s, else stop; a start step → ask_param when param is set (ask that input again, then call the start step), else offer_new_code when status is expired or max_attempts_reached (ask the person before sending a new code; wait retry_after_s first when it is set), else wait_then_retry when the status is 429 and retry_after_s ≤ wait_limit_s (wait, then repeat next_step), else stop (show message, end). Times are fixed; api_key values are placeholders.",
+  "about": "Sign-up flows (contract v1, \"Sign-up flows\"): register (POST /v1/register → /v1/register/verify), recover (POST /v1/agents/recover → /recover/verify) and rotate key (POST /v1/agents/{handle}/rotate-key → /verify, with the current key as Bearer). Every answer carries a flow object: at the top level of a 2xx body, in `details` of an error body (flow = body.code ? body.details : body); it is a flow only when it has a string next_step, else the answer is from an older server (action legacy). Each case gives the request (kind = the step that was called), the server response (status, the Retry-After header when sent, body) and what a client derives: expect.flow lists every flow field present with its value (a parser may keep more keys, never fewer or different ones), expect.code and expect.message (the text to show verbatim; never branch on it), and expect.action = actionOf(flow, HTTP status, called step), first match wins: no flow → legacy; next_step done → done (the key is in the body); HTTP 5xx → stop (after a verify 500 the account may exist); next_step a verify step and no retry_after_s → ask_code; next_step a start step with param → ask_param (ask that input again, then call the start step); next_step a start step, no param, status expired or max_attempts_reached or the answer a 429 to a called verify step, and retry_after_s absent or ≤ wait_limit_s → offer_new_code (ask the person before sending a new code; wait retry_after_s, and resend_after_s, first if they accept); HTTP 429, retry_after_s ≤ wait_limit_s and next_step equal to the called step → wait_then_retry (wait, then repeat it); anything else → stop (show message, end). OTP_ATTEMPTS_EXHAUSTED carries no Retry-After and no retry_after_s, only resend_after_s. Times are fixed; api_key values are placeholders.",
   "actions": [
     "done",
     "ask_code",
@@ -373,14 +373,14 @@
           "flow": "register",
           "max_attempts": 5,
           "next_step": "register",
-          "retry_after_s": 0,
+          "resend_after_s": 0,
           "status": "max_attempts_reached",
           "version": 1
         },
         "message": "You entered the wrong code too many times. Request a new code."
       },
       "name": "verify-last-wrong-code",
-      "note": "The wrong code that used the last attempt is answered at once and ends the pending id. A new code may be requested now (retry_after_s 0). The status decides before the 429: ask the person before sending a new code.",
+      "note": "The wrong code that used the last attempt is answered at once and ends the pending id. No Retry-After and no retry_after_s (repeating this request never succeeds); resend_after_s 0: a new code may be requested now. Ask the person before sending one.",
       "request": {
         "body": {
           "code": "000000",
@@ -398,15 +398,13 @@
             "flow": "register",
             "max_attempts": 5,
             "next_step": "register",
-            "retry_after_s": 0,
+            "resend_after_s": 0,
             "status": "max_attempts_reached",
             "version": 1
           },
           "message": "You entered the wrong code too many times. Request a new code."
         },
-        "headers": {
-          "retry-after": "0"
-        },
+        "headers": {},
         "status": 429
       }
     },
@@ -419,14 +417,14 @@
           "flow": "recover",
           "max_attempts": 5,
           "next_step": "recover",
-          "retry_after_s": 30,
+          "resend_after_s": 30,
           "status": "max_attempts_reached",
           "version": 1
         },
         "message": "You entered the wrong code too many times. Request a new code."
       },
       "name": "recover-verify-last-wrong-code-within-the-minute",
-      "note": "Five wrong codes within 30 s: a new code may be requested in 30 s. Still offer_new_code (never a new code unasked); when the person asks, wait retry_after_s first.",
+      "note": "Five wrong codes within 30 s: a new code may be requested in 30 s (resend_after_s). offer_new_code (never a new code unasked); when the person asks, wait resend_after_s first.",
       "request": {
         "body": {
           "code": "000000",
@@ -444,15 +442,13 @@
             "flow": "recover",
             "max_attempts": 5,
             "next_step": "recover",
-            "retry_after_s": 30,
+            "resend_after_s": 30,
             "status": "max_attempts_reached",
             "version": 1
           },
           "message": "You entered the wrong code too many times. Request a new code."
         },
-        "headers": {
-          "retry-after": "30"
-        },
+        "headers": {},
         "status": 429
       }
     },
@@ -465,14 +461,14 @@
           "flow": "register",
           "max_attempts": 5,
           "next_step": "register",
-          "retry_after_s": 0,
+          "resend_after_s": 0,
           "status": "max_attempts_reached",
           "version": 1
         },
         "message": "You entered the wrong code too many times. Request a new code."
       },
       "name": "verify-after-attempts-exhausted",
-      "note": "Any later try on a pending id its attempts ended.",
+      "note": "Any later try on a pending id its attempts ended (resend_after_s 0: the record is gone).",
       "request": {
         "body": {
           "code": "123456",
@@ -490,15 +486,13 @@
             "flow": "register",
             "max_attempts": 5,
             "next_step": "register",
-            "retry_after_s": 0,
+            "resend_after_s": 0,
             "status": "max_attempts_reached",
             "version": 1
           },
           "message": "You entered the wrong code too many times. Request a new code."
         },
-        "headers": {
-          "retry-after": "0"
-        },
+        "headers": {},
         "status": 429
       }
     },
@@ -651,6 +645,85 @@
         },
         "headers": {
           "retry-after": "60"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "wait_then_retry",
+        "code": "OTP_COOLDOWN",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "retry_after_s": 25,
+          "version": 1
+        },
+        "message": "You can request a new code in 25 seconds."
+      },
+      "name": "recover-cooldown",
+      "note": "Recover claims the send slot for the email string it names, whatever the string backs: inside the minute every input (a real pair, an unknown one, an email alone) gets this same 429.",
+      "request": {
+        "body": {
+          "email": "relay@example.com",
+          "handle": "example-relay"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_COOLDOWN",
+          "details": {
+            "flow": "recover",
+            "next_step": "recover",
+            "retry_after_s": 25,
+            "version": 1
+          },
+          "message": "You can request a new code in 25 seconds."
+        },
+        "headers": {
+          "retry-after": "25"
+        },
+        "status": 429
+      }
+    },
+    {
+      "expect": {
+        "action": "stop",
+        "code": "OTP_HOURLY_CAP",
+        "flow": {
+          "flow": "recover",
+          "next_step": "recover",
+          "retry_after_s": 2400,
+          "version": 1
+        },
+        "message": "Too many codes have been sent. Enter the last code you received, or try again in 40 minutes."
+      },
+      "name": "recover-hourly-cap",
+      "note": "Recover past 20 codes this hour for the email string, the same for every input. Go back to the code already held while it is pending; else stop.",
+      "request": {
+        "body": {
+          "email": "relay@example.com"
+        },
+        "kind": "recover",
+        "method": "POST",
+        "path": "/v1/agents/recover"
+      },
+      "response": {
+        "body": {
+          "code": "OTP_HOURLY_CAP",
+          "details": {
+            "flow": "recover",
+            "next_step": "recover",
+            "retry_after_s": 2400,
+            "version": 1
+          },
+          "message": "Too many codes have been sent. Enter the last code you received, or try again in 40 minutes."
+        },
+        "headers": {
+          "retry-after": "2400"
         },
         "status": 429
       }
@@ -851,7 +924,7 @@
     },
     {
       "expect": {
-        "action": "wait_then_retry",
+        "action": "offer_new_code",
         "code": "OTP_EMAIL_LOCKED",
         "flow": {
           "attempts": 3,
@@ -870,7 +943,7 @@
         "message": "You entered the wrong code too many times. Wait 45 seconds, then request a new code."
       },
       "name": "rotate-key-verify-email-locked-short",
-      "note": "The lock ends within the wait limit: wait, then request a new code (the start step), as the text says.",
+      "note": "The lock ends within the wait limit, on a verify call: offer a new code (the start step), as the text says; if the person accepts, wait retry_after_s first. Never wait and send a code unasked.",
       "request": {
         "body": {
           "code": "123456",
@@ -988,7 +1061,7 @@
     },
     {
       "expect": {
-        "action": "wait_then_retry",
+        "action": "offer_new_code",
         "code": "RATE_LIMITED",
         "flow": {
           "flow": "register",
@@ -999,7 +1072,7 @@
         "message": "Too many attempts. Try again in 35 seconds."
       },
       "name": "verify-rate-limited-past-the-code",
-      "note": "The same 35 s wait, but the code has only 35 s left (retry_after_s is not less than expires_in_s): the start step. Wait, then register again for a new code.",
+      "note": "The same 35 s wait, but the code has only 35 s left (retry_after_s is not less than expires_in_s): the start step. The called step was a verify step: offer a new code (wait retry_after_s if the person accepts).",
       "request": {
         "body": {
           "code": "123456",
@@ -1068,7 +1141,7 @@
     },
     {
       "expect": {
-        "action": "wait_then_retry",
+        "action": "offer_new_code",
         "code": "RATE_LIMITED",
         "flow": {
           "flow": "rotate_key",
@@ -1079,7 +1152,7 @@
         "message": "Too many attempts. Try again in 35 seconds."
       },
       "name": "rotate-key-verify-rate-limited-no-code",
-      "note": "The per-IP limit on a verify step whose pending id is unknown: the start step.",
+      "note": "The per-IP limit on a verify step whose pending id is unknown: the start step; the called step was a verify step: offer a new code.",
       "request": {
         "body": {
           "code": "123456",
@@ -1721,7 +1794,7 @@
         "message": "Account not found"
       },
       "name": "recover-verify-agent-not-found",
-      "note": "The account went away while the code was in flight.",
+      "note": "The account went away while the code was in flight. An existing code keeps its text; a non-429 4xx to a verify call that is not expired / max_attempts_reached is stop, not an offer.",
       "request": {
         "body": {
           "code": "123456",
@@ -1757,7 +1830,7 @@
         "message": "An unexpected error occurred"
       },
       "name": "verify-internal-error",
-      "note": "An unexpected error.",
+      "note": "An unexpected error. Any 5xx is stop: after a verify 500 the account may exist, so never steer to a second registration.",
       "request": {
         "body": {
           "code": "123456",
@@ -1793,7 +1866,7 @@
         "message": "Invalid JSON body"
       },
       "name": "verify-invalid-json",
-      "note": "A body that is not JSON (a programmer error).",
+      "note": "A body that is not JSON (a programmer error) on a verify call: stop, not an offer.",
       "request": {
         "body": {},
         "kind": "verify",
