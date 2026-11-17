@@ -7,8 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Added behaviour → a minor release, per `VERSIONING.md`; the release step
-sets the number.
+The release step sets the number, per `VERSIONING.md`.
 
 ### Changed
 
