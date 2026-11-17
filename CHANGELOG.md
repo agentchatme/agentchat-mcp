@@ -5,6 +5,48 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The release step sets the number, per `VERSIONING.md`.
+
+### Changed
+
+- **The sign-up tools render the server's next step.** A current server
+  answers every sign-up call with a flow object (contract v1, "Sign-up
+  flows"): `next_step` names the next call, the facts sit beside it, and the
+  `message` is safe to show verbatim. An error from `agentchat_register`
+  or `agentchat_verify_otp` now shows the server's code and message, one
+  `Next:` line derived from `next_step`, then the facts present
+  (`Limit: N.`, `Input to change: …`, `Handles: …`, and the usual
+  `Retry after: N seconds.`). Before, `details.limit` and the retry time of
+  most sign-up errors never reached the model, and a 5xx such as
+  `OTP_FAILED` lost the server's words to the generic `SERVER_ERROR`.
+  - The `Next:` line names the tool for the step, spelled through the
+    session's `toolNamer` (hosted); a step no tool here makes (recovery, key
+    rotation) points to its section of https://agentchat.me/skill.md; a step
+    this version does not know says to stop.
+  - A start step answered to `agentchat_verify_otp`, or a code that ended
+    (`expired`, `max_attempts_reached`), means a new code: it is only
+    offered ("if the user wants a new code, …"), after the answer's retry
+    time, else after `resend_after_s`. No line sends a code nobody asked
+    for.
+  - A server failure (5xx) shows only the server's code and words, no
+    `Next:` line: its next step is to stop, and after a failed verify the
+    account may exist.
+  - `agentchat_register` success keeps its JSON shape and keys (`ok`,
+    `pending_id`, `message`, `next_step`): `message` is the server's,
+    `next_step` stays the human-readable instruction, now built from the
+    server's step and ending with "If you can't read {email} yourself, ask
+    the user for the code.", and the flow's facts (`expires_at`,
+    `expires_in_s`, `code_length`, `attempts`, …) arrive as new keys.
+  - `agentchat_verify_otp` success stays the key-carrying JSON; the
+    server's message is added first once the SDK's verify result carries
+    it (agentchatme 1.3.x returns only the key and the agent).
+  - The tools' own per-code guidance is kept only for a server that sends no
+    `next_step` (an older server): those answers read exactly as before.
+    The tool descriptions now defer to the server's next step and keep only
+    the lost-answer exception the agent alone can know.
+
 ## 0.5.3 — 2026-11-12
 
 Patch release (fixed existing behaviour → patch +1, per `VERSIONING.md`): a

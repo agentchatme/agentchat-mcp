@@ -103,6 +103,25 @@ export interface MappedError {
   retryAfterSeconds?: number
 }
 
+/**
+ * A server error a tool has already rendered in full for the model: the
+ * server's code, a text that holds the server's message and everything the
+ * tool adds to it, and the retry time. The mapper passes it through as it
+ * is (the sign-up tools render their answers from the server's flow object,
+ * tools/_signup.ts). `cause` is the SDK error it was rendered from.
+ */
+export class RenderedServerError extends Error {
+  readonly code: string
+  readonly retryAfterSeconds: number | undefined
+
+  constructor(code: string, text: string, retryAfterSeconds?: number, cause?: unknown) {
+    super(text, cause === undefined ? undefined : { cause })
+    this.name = 'RenderedServerError'
+    this.code = code
+    this.retryAfterSeconds = retryAfterSeconds
+  }
+}
+
 // Composition-flavored guidance for a rejected key. The key LIVES somewhere
 // different per composition — stdio: the AGENTCHAT_API_KEY env / credentials
 // file on the local machine; hosted: the `Authorization: Bearer` header the
@@ -146,6 +165,15 @@ export function mapAgentChatError(
   err: unknown,
   mode: ServerMode = 'stdio',
 ): MappedError {
+  // Rendered by the tool from the server's own answer: nothing to add.
+  if (err instanceof RenderedServerError) {
+    return {
+      code: err.code,
+      message: err.message,
+      ...(err.retryAfterSeconds !== undefined ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+    }
+  }
+
   // No identity yet — the agent hasn't registered/logged in. Not a failure of
   // the call so much as a "you're not signed in": tell it exactly what to run.
   // Works the moment they do — no restart (that's the whole point of this).

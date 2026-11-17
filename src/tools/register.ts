@@ -2,7 +2,7 @@ import { AgentChatClient } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { rethrowWithGuidance } from './_rest.js'
+import { flowOf, nextStep, rethrowSignupError } from './_signup.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import { RECOVER_THE_KEY } from './_texts.js'
 
@@ -34,10 +34,16 @@ export const DESCRIPTION = [
   '',
   'Starts the two-step registration: the server creates a pending account and emails a 6-digit verification code to `email`. Complete it by calling agentchat_verify_otp with the returned `pending_id` and the code — that step mints the API key (shown exactly once).',
   '',
-  'Errors say what to do. HANDLE_TAKEN or INVALID_HANDLE (taken, or reserved): pick a different handle — unless HANDLE_TAKEN names the handle you just registered after a verify that got no answer: then recover its key. EMAIL_LIMIT_REACHED: this email already backs as many live agents as it may — use a different email (a `+` alias counts as a different one), or delete one of its agents. EMAIL_EXHAUSTED: this email has used all its registrations, deleted agents included — use a different email. OTP_COOLDOWN or OTP_HOURLY_CAP: codes went to this email moments ago, or too often this hour — use the code you have, or wait the retry time. RATE_LIMITED: too many sign-ups from this network address — wait. If the code email cannot be sent, the call fails as a server error: try again shortly.',
+  'Every answer gives the server’s message and, unless the server failed, the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
 
 /**
+ * @deprecated The fallback for a server that sends no `next_step` (an older
+ * server) — the per-code rulebook this tool carried before the server said
+ * the next step. A current server's answer is rendered from its flow object
+ * (tools/_signup.ts) and never reaches this map. Remove it once no supported
+ * server answers without `next_step`.
+ *
  * The next step for each code POST /v1/register answers with, appended to
  * the server's own message (rethrowWithGuidance). The server's codes: 400
  * VALIDATION_ERROR (not JSON, or the schema) and INVALID_HANDLE (invalid or
@@ -49,7 +55,8 @@ export const DESCRIPTION = [
  * OTP_FAILED (the code email could not be sent) and INTERNAL_ERROR. A 5xx
  * reaches the model as SERVER_ERROR, "transient; retry shortly" — the right
  * step for both — so it has no entry here. The test that holds this list
- * against the server's: tests/tools/registration-codes.test.ts.
+ * against the server's (as it was before the flow object):
+ * tests/tools/registration-codes.test.ts.
  */
 export const GUIDANCE: Readonly<Record<string, string>> = {
   VALIDATION_ERROR:
@@ -77,6 +84,10 @@ const ResponseSchema = z
   .object({ pending_id: z.string().min(1) })
   .passthrough()
 
+function capitalized(text: string): string {
+  return text.length > 0 ? `${text[0]!.toUpperCase()}${text.slice(1)}` : text
+}
+
 export function createHandler(ctx: ToolContext) {
   return async ({ email, handle }: Input) =>
     withErrorBoundary(
@@ -100,7 +111,7 @@ export function createHandler(ctx: ToolContext) {
         try {
           data = await AgentChatClient.register({ email, handle, baseUrl: apiBase, fetch: fetchImpl })
         } catch (err) {
-          rethrowWithGuidance(err, GUIDANCE)
+          rethrowSignupError(err, GUIDANCE, { nameTool: ctx.nameTool, calledStep: 'register' })
         }
         const parsed = ResponseSchema.safeParse(data)
         if (!parsed.success) {
@@ -108,12 +119,24 @@ export function createHandler(ctx: ToolContext) {
             'The server accepted the registration request but returned no pending_id, so the flow cannot continue. Retry agentchat_register; if this repeats, the API is misbehaving — report it.',
           )
         }
+        // The same JSON as ever: the server's fields (its message, the
+        // pending id, and on a current server the flow's facts as new keys),
+        // with `next_step` the human-readable instruction. A current server
+        // names the step (flow object, tools/_signup.ts): the instruction is
+        // built from it, plus the one line only this tool knows to add — the
+        // code goes to an inbox the agent may not be able to read. An older
+        // server names none: the instruction as before.
+        const flow = flowOf(parsed.data)
+        const next =
+          flow !== null
+            ? `${capitalized(nextStep(flow, { nameTool: ctx.nameTool, calledStep: 'register', httpStatus: 200 }) ?? '')} If you can't read ${email} yourself, ask the user for the code.`
+            : `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`
         return {
           type: 'json',
           value: {
             ok: true,
             ...parsed.data,
-            next_step: `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`,
+            next_step: next,
           },
         }
       },

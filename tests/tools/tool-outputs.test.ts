@@ -70,6 +70,13 @@ interface Scenario {
   answers: Answer[]
   /** Session key; null = an unauthenticated session. Default: KEY. */
   apiKey?: string | null
+  /**
+   * Keys of the JSON answer that the installed SDK may or may not hand
+   * over, with their value when it does (verify success carries the
+   * server's `message` only when the SDK's verify result does; agentchatme
+   * 1.3.x does not). Compared, and pinned, without them.
+   */
+  sdkMayAdd?: Record<string, unknown>
 }
 
 interface WireCall {
@@ -247,6 +254,11 @@ const SCENARIOS: Scenario[] = [
   { name: 'register: 2xx empty body', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [empty(200)], apiKey: null },
   { name: 'register: 2xx body cut mid-read', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [cutOff(200, '{"pending_id":"pe')], apiKey: null },
   { name: 'register: 2xx not JSON', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [text(200, '<html>ok</html>')], apiKey: null },
+  // A current server: every answer carries the flow object (contract v1, "Sign-up flows").
+  { name: 'register: code sent (flow object)', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [json(200, { pending_id: 'pend_1', message: 'We sent a 6-digit code to owner@example.com. It expires in 10 minutes.', version: 1, flow: 'register', next_step: 'verify', status: 'pending', expires_at: '2026-11-17T12:10:00.000Z', expires_in_s: 600, code_length: 6, attempts: 0, max_attempts: 5, resend_after_s: 60 })], apiKey: null },
+  { name: 'register: 429 OTP_COOLDOWN (flow object)', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [json(429, { code: 'OTP_COOLDOWN', message: 'You can request a new code in 42 seconds.', details: { version: 1, flow: 'register', next_step: 'register', retry_after_s: 42 } }, { 'retry-after': '42' })], apiKey: null },
+  { name: 'register: 409 EMAIL_LIMIT_REACHED (flow object)', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [json(409, { code: 'EMAIL_LIMIT_REACHED', message: 'This email address already has 10 active agents, the most allowed. Use a different email address.', details: { limit: 10, version: 1, flow: 'register', next_step: 'register', param: 'email' } })], apiKey: null },
+  { name: 'register: 500 OTP_FAILED (flow object)', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [json(500, { code: 'OTP_FAILED', message: "We couldn't send the code. Try again in a few minutes.", details: { version: 1, flow: 'register', next_step: 'register' } })], apiKey: null },
 
   // ── agentchat_verify_otp ──
   { name: 'verify: key minted', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '123456' }, answers: [json(200, { api_key: 'ac_live_minted', agent: { handle: 'fresh-bot', id: 'agt_1' } })], apiKey: null },
@@ -265,6 +277,10 @@ const SCENARIOS: Scenario[] = [
   { name: 'verify: 2xx JSON null', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '123456' }, answers: [json(200, null)], apiKey: null },
   { name: 'verify: 2xx body cut mid-read', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '123456' }, answers: [cutOff(200, '{"api_key":"ac_li')], apiKey: null },
   { name: 'verify: 2xx not JSON', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '123456' }, answers: [text(200, '<html>ok</html>')], apiKey: null },
+  // A current server: every answer carries the flow object (contract v1, "Sign-up flows").
+  { name: 'verify: 400 INVALID_CODE (flow object)', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '000000' }, answers: [json(400, { code: 'INVALID_CODE', message: "That code didn't work. Check the code and try again.", details: { version: 1, flow: 'register', next_step: 'verify', status: 'pending', pending_id: 'pend_1', param: 'code', expires_at: '2026-11-17T12:10:00.000Z', expires_in_s: 420, code_length: 6, attempts: 2, max_attempts: 5, resend_after_s: 0 } })], apiKey: null },
+  { name: 'verify: 400 EXPIRED (flow object)', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_x', code: '123456' }, answers: [json(400, { code: 'EXPIRED', message: 'That code has expired. Request a new code.', details: { version: 1, flow: 'register', next_step: 'register', status: 'expired' } })], apiKey: null },
+  { name: 'verify: 201 success (flow object)', tool: 'agentchat_verify_otp', args: { pending_id: 'pend_1', code: '123456' }, answers: [json(201, { api_key: 'ac_live_minted', agent: { handle: 'fresh-bot' }, message: 'Email verified. Logged in as @fresh-bot.', version: 1, flow: 'register', next_step: 'done', status: 'approved' })], apiKey: null, sdkMayAdd: { message: 'Email verified. Logged in as @fresh-bot.' } },
 ]
 
 function authOf(headers: Headers): WireCall['auth'] {
@@ -339,6 +355,25 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/**
+ * `recorded` without the scenario's SDK-dependent keys, each checked first:
+ * when present it holds the expected value.
+ */
+function withoutSdkKeys(scenario: Scenario, recorded: Recorded): Recorded {
+  const optional = scenario.sdkMayAdd
+  if (optional === undefined) return recorded
+  const content = (recorded.result.content as Array<{ type: string; value?: unknown }>).map((item) => {
+    if (item.type !== 'json' || typeof item.value !== 'object' || item.value === null) return item
+    const value = { ...(item.value as Record<string, unknown>) }
+    for (const [key, expected] of Object.entries(optional)) {
+      if (key in value) expect(value[key], `${scenario.name}: ${key}`).toEqual(expected)
+      delete value[key]
+    }
+    return { ...item, value }
+  })
+  return { ...recorded, result: { ...recorded.result, content } }
+}
+
 describe('what a caller sees from the tools with their own wire calls', () => {
   it('every scenario name is unique', () => {
     const names = SCENARIOS.map((s) => s.name)
@@ -347,7 +382,7 @@ describe('what a caller sees from the tools with their own wire calls', () => {
 
   it('matches the pinned outputs, scenario by scenario', async () => {
     const recorded: Record<string, Recorded> = {}
-    for (const scenario of SCENARIOS) recorded[scenario.name] = await run(scenario)
+    for (const scenario of SCENARIOS) recorded[scenario.name] = withoutSdkKeys(scenario, await run(scenario))
 
     if (process.env['TOOL_OUTPUTS_FIXTURE_WRITE'] === '1') {
       fs.writeFileSync(FIXTURE_PATH, `${JSON.stringify(recorded, null, 2)}\n`)

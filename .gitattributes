@@ -1,0 +1,3 @@
+# Copies of the contract's conformance fixtures (https://agentchat.me/contract/v1/):
+# kept byte-identical, so no line-ending conversion on checkout.
+tests/fixtures/contract/** -text
