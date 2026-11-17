@@ -67,7 +67,7 @@ export interface ToolContext {
   /**
    * How this session's runtime spells a tool name to its model (the
    * composition's `toolNamer`), for the tool names a tool writes into its
-   * own answer (the sign-up tools' `Next:` line). Absent = the declared
+   * own answer (the sign-up tools' next step). Absent = the declared
    * names.
    */
   nameTool?: ToolNamer

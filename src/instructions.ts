@@ -56,7 +56,7 @@ export type ServerMode = 'stdio' | 'hosted'
  * How a runtime spells one of this server's tool names to its model, e.g.
  * `(tool) => 'agentchat__' + tool` for OpenClaw. Given the declared name
  * (`agentchat_inbox`), returns the name the model sees. Applied to the
- * instructions text and to the tool a sign-up answer's `Next:` line names
+ * instructions text and to the tool a sign-up answer's next step names
  * (tools/_signup.ts).
  */
 export type ToolNamer = (tool: string) => string

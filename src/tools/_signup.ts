@@ -13,9 +13,12 @@ import { rethrowWithGuidance } from './_rest.js'
 // success carries it at the top level of the body; an error inside
 // `details`, beside the existing details.
 //
-// The two sign-up tools render exactly that: the server's message, one
-// `Next:` line derived from `next_step` (the tool to call, spelled as this
-// session's runtime shows tools), then the facts present. The tools keep no
+// The two sign-up tools render exactly that. An error: the server's code
+// and message, one `Next:` line derived from `next_step` (the tool to call,
+// spelled as this session's runtime shows tools), then the facts present. A
+// success keeps the JSON shape it always had (tools/register.ts,
+// tools/verify-otp.ts): the server's fields, with the same instruction as
+// the human-readable `next_step`. The tools keep no
 // rulebook of their own for what an error means; the per-code guidance
 // they used to carry is only the fallback for a server that sends no
 // `next_step` (an older server). Fields this code does not know are ignored.
@@ -129,31 +132,37 @@ export function flowOfError(err: unknown): SignupFlow | null {
 const declared: ToolNamer = (tool) => tool
 
 /**
- * The one `Next:` line for a flow: the call `next_step` names, through this
- * session's tool namer. A wait comes first when the answer carries one; a
- * step no tool here makes points to the manual; a step this code does not
- * know says to stop.
+ * What to do next for a flow, as one instruction: the call `next_step`
+ * names, through this session's tool namer. A wait comes first when the
+ * answer carries one; a step no tool here makes points to the manual; a
+ * step this code does not know says to stop. Starts lowercase and ends with
+ * a period (`nextLine` prefixes it with "Next: ").
  */
-export function nextLine(flow: SignupFlow, nameTool: ToolNamer = declared): string {
+export function nextStep(flow: SignupFlow, nameTool: ToolNamer = declared): string {
   const step = flow.next_step
   const wait = flow.retry_after_s !== undefined && flow.retry_after_s > 0 ? `wait ${flow.retry_after_s} seconds, then ` : ''
-  if (step === 'done') return 'Next: store the API key now; it is shown only once.'
+  if (step === 'done') return 'store the API key now; it is shown only once.'
   const tool = TOOL_FOR_STEP[step]
   if (tool === undefined) {
     const manual = MANUAL_FOR_STEP[step]
-    if (manual !== undefined) return `Next: ${wait}${manual}.`
-    return `Next: this tool does not know the step \`${step}\`; show the message above to the user and stop.`
+    if (manual !== undefined) return `${wait}${manual}.`
+    return `this tool does not know the step \`${step}\`; show the message to the user and stop.`
   }
   const call = nameTool(tool)
   if (step === 'verify') {
     const pending = flow.pending_id !== undefined ? `pending_id \`${flow.pending_id}\`` : 'the same pending_id'
-    return `Next: ${wait}call ${call} with ${pending} and the ${flow.code_length ?? 6}-digit code.`
+    return `${wait}call ${call} with ${pending} and the ${flow.code_length ?? 6}-digit code.`
   }
-  if (flow.param !== undefined) return `Next: ${wait}call ${call} again with a different \`${flow.param}\`.`
+  if (flow.param !== undefined) return `${wait}call ${call} again with a different \`${flow.param}\`.`
   if (flow.status !== undefined && ENDED.has(flow.status)) {
-    return `Next: if the user wants a new code, ${wait}call ${call} again with the same email and handle.`
+    return `if the user wants a new code, ${wait}call ${call} again with the same email and handle.`
   }
-  return `Next: ${wait}call ${call} again.`
+  return `${wait}call ${call} again.`
+}
+
+/** The one `Next:` line for a flow (see `nextStep`). */
+export function nextLine(flow: SignupFlow, nameTool: ToolNamer = declared): string {
+  return `Next: ${nextStep(flow, nameTool)}`
 }
 
 /**
@@ -170,16 +179,11 @@ export function factLines(flow: SignupFlow): string[] {
 }
 
 /**
- * The text for a flow: the server's message, the Next line, any lines the
- * tool adds for this answer, then the facts after a blank line.
+ * The text for a flow: the server's message and the Next line, then the
+ * facts after a blank line.
  */
-export function renderFlow(
-  message: string,
-  flow: SignupFlow,
-  nameTool: ToolNamer = declared,
-  extra: readonly string[] = [],
-): string {
-  const head = [message.trim(), nextLine(flow, nameTool), ...extra].filter((line) => line.length > 0)
+export function renderFlow(message: string, flow: SignupFlow, nameTool: ToolNamer = declared): string {
+  const head = [message.trim(), nextLine(flow, nameTool)].filter((line) => line.length > 0)
   const facts = factLines(flow)
   return facts.length > 0 ? `${head.join('\n')}\n\n${facts.join('\n')}` : head.join('\n')
 }

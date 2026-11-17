@@ -11,7 +11,7 @@ import { buildMcpServer } from '../../src/lib.js'
 import { Semaphore } from '../../src/semaphore.js'
 import * as registerAccount from '../../src/tools/register.js'
 import * as verifyOtp from '../../src/tools/verify-otp.js'
-import { factLines, flowOf, nextLine, renderFlow, type SignupFlow } from '../../src/tools/_signup.js'
+import { factLines, flowOf, nextLine, nextStep, renderFlow, type SignupFlow } from '../../src/tools/_signup.js'
 import { RECOVER_THE_KEY } from '../../src/tools/_texts.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
@@ -21,8 +21,11 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // what they say about an answer is the advice it gets at its first step. A
 // current server's answer carries a flow object (contract v1, "Sign-up
 // flows"): `next_step`, the facts, and a message safe to show verbatim. The
-// tools render it — the server's message, one `Next:` line naming the tool
-// for `next_step`, the facts present — and add no rulebook of their own.
+// tools render it and add no rulebook of their own. An error: the server's
+// code and message, one `Next:` line naming the tool for `next_step`, the
+// facts present. A success keeps the JSON it always had: the server's
+// fields (new facts as new keys), `next_step` the human-readable
+// instruction built from the server's step.
 //
 // The cases are the contract's sign-up conformance cases
 // (tests/fixtures/signup-flow.cases.json, a byte-identical copy of
@@ -149,21 +152,31 @@ async function textOf(c: Case, extra?: Partial<ToolContext>): Promise<string> {
   return joined(await verifyOtp.createHandler(makeCtx(answer, extra))(c.request.body as verifyOtp.Input))
 }
 
+/** The Next line of an error's text, or of a register success: "Next: " + its JSON `next_step`. */
 function nextLineOf(text: string): string {
+  if (text.startsWith('{')) {
+    const payload = JSON.parse(text) as Record<string, unknown>
+    return `Next: ${String(payload['next_step'])}`
+  }
   const line = text.split('\n').find((l) => l.startsWith('Next: '))
   expect(line, text).toBeDefined()
   return line!
 }
 
+/** A register success's `next_step` ends with the one line only the tool adds. */
+const AGENT_LINE = " If you can't read relay@example.com yourself, ask the user for the code."
+
+const capitalized = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`
+
 /** What each client action looks like in the Next line of a tool on this surface. */
 const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy'>, RegExp> = {
-  ask_code: /^Next: call agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.$/,
+  ask_code: /^Next: [Cc]all agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.( If you can't read \S+ yourself, ask the user for the code\.)?$/,
   ask_param: /^Next: call agentchat_register again with a different `(email|handle)`\.$/,
   offer_new_code: /^Next: if the user wants a new code, (wait \d+ seconds, then )?call agentchat_register again with the same email and handle\.$/,
   wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register|verify_otp) /,
   // A long wait names it; a server failure names the step to repeat; a step
   // this version does not know says to stop.
-  stop: /^Next: ((wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message above to the user and stop\.$)/,
+  stop: /^Next: ((wait \d+ seconds, then )?call agentchat_(register|verify_otp) |this tool does not know the step `[a-z_]+`; show the message to the user and stop\.$)/,
 }
 
 describe('the contract’s sign-up cases', () => {
@@ -208,15 +221,11 @@ describe('each server answer reaches the model as the server said it', () => {
     })
   }
 
-  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.action !== 'done')) {
+  for (const c of TOOL_CASES.filter((tc) => tc.expect.flow !== null && tc.expect.code !== null)) {
     it(`${c.name}: the server’s code and message verbatim, a Next line for ${c.expect.action}, the facts present`, async () => {
       const shown = await textOf(c)
-      if (c.expect.code !== null) {
-        // The server's own code, whatever the HTTP status (a 5xx included).
-        expect(shown.startsWith(`Error: ${c.expect.code}\n\n${c.expect.message}\nNext: `), shown).toBe(true)
-      } else {
-        expect(shown.startsWith(`${c.expect.message}\nNext: `), shown).toBe(true)
-      }
+      // The server's own code, whatever the HTTP status (a 5xx included).
+      expect(shown.startsWith(`Error: ${c.expect.code}\n\n${c.expect.message}\nNext: `), shown).toBe(true)
       expect(nextLineOf(shown)).toMatch(ACTION_NEXT[c.expect.action as keyof typeof ACTION_NEXT])
       const flow = c.expect.flow!
       const details = flowSource(c.response.body)
@@ -231,12 +240,35 @@ describe('each server answer reaches the model as the server said it', () => {
     })
   }
 
+  // The keys an older server's success gave (tests/fixtures/tool-outputs.json): every one stays.
+  const LEGACY_REGISTER_KEYS = ['ok', 'pending_id', 'message', 'next_step']
+
+  for (const c of TOOL_CASES.filter((tc) => tc.request.kind === 'register' && tc.expect.code === null)) {
+    it(`${c.name}: the same JSON as before — the server’s fields, next_step the instruction built from its step`, async () => {
+      const payload = JSON.parse(await textOf(c)) as Record<string, unknown>
+      expect(Object.keys(payload).slice(0, 2)).toEqual(['ok', 'pending_id'])
+      for (const key of LEGACY_REGISTER_KEYS) expect(payload, key).toHaveProperty(key)
+      expect(payload['ok']).toBe(true)
+      expect(payload['message']).toBe(c.expect.message)
+      const body = c.response.body
+      if (c.expect.flow === null) {
+        // An older server: the instruction as before.
+        expect(String(payload['next_step'])).toMatch(/^A 6-digit verification code was emailed to relay@example\.com\. Call agentchat_verify_otp with this pending_id/)
+        return
+      }
+      // Every field the server sent is there as it came (new facts as new
+      // keys), except next_step, which is the instruction.
+      for (const [key, value] of Object.entries(body)) if (key !== 'next_step') expect(payload[key], key).toEqual(value)
+      expect(payload['next_step']).toBe(`${capitalized(nextStep(flowOf(body)!))}${AGENT_LINE}`)
+      expect(nextLineOf(JSON.stringify(payload))).toMatch(ACTION_NEXT[c.expect.action as keyof typeof ACTION_NEXT])
+    })
+  }
+
   it('register success adds the one agent line, naming the email the code went to', async () => {
-    expect((await textOf(byName('register-code-sent'))).split('\n')).toEqual([
-      'We sent a 6-digit code to relay@example.com. It expires in 10 minutes.',
-      'Next: call agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
-      "If you can't read relay@example.com yourself, ask the user for the code.",
-    ])
+    const payload = JSON.parse(await textOf(byName('register-code-sent'))) as Record<string, unknown>
+    expect(payload['next_step']).toBe(
+      "Call agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code. If you can't read relay@example.com yourself, ask the user for the code.",
+    )
   })
 
   it('the email caps after an accepted code (verify) read as they do at register', async () => {
@@ -258,7 +290,7 @@ describe('the Next line names tools as the session’s runtime shows them', () =
 
   it('through the context’s namer, in success and error answers', async () => {
     expect(nextLineOf(await textOf(byName('register-code-sent'), { nameTool: spell }))).toBe(
-      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
+      `Next: Call mcp__agentchat__agentchat_verify_otp with pending_id \`pnd_example0pending01\` and the 6-digit code.${AGENT_LINE}`,
     )
     expect(nextLineOf(await textOf(byName('verify-wrong-code'), { nameTool: spell }))).toBe(
       'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_example0pending01` and the 6-digit code.',
@@ -296,7 +328,7 @@ describe('rendering rules', () => {
 
   it('a step this code does not know says to stop; `done` says to store the key', () => {
     expect(nextLine({ next_step: 'confirm_device' })).toBe(
-      'Next: this tool does not know the step `confirm_device`; show the message above to the user and stop.',
+      'Next: this tool does not know the step `confirm_device`; show the message to the user and stop.',
     )
     expect(nextLine({ next_step: 'done', status: 'approved' })).toBe('Next: store the API key now; it is shown only once.')
   })
@@ -444,7 +476,8 @@ describe('the sign-up tools name only codes the server sends', () => {
   })
 
   it('the descriptions defer to the server’s Next line, and keep only what the agent alone can know', () => {
-    for (const tool of TOOLS) expect(tool.module.DESCRIPTION).toContain('the server’s message and a `Next:` line naming the call to make; follow it.')
+    expect(registerAccount.DESCRIPTION).toContain('Every answer gives the server’s message and the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it.')
+    expect(verifyOtp.DESCRIPTION).toContain('Every error gives the server’s message and the call to make next (its `Next:` line); follow it.')
     expect(registerAccount.DESCRIPTION).toContain(
       'if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key',
     )

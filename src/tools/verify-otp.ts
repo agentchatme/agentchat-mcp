@@ -25,7 +25,7 @@ export const DESCRIPTION = [
   '',
   'On success this mints the account’s API key and returns it EXACTLY ONCE, together with the registered handle. Immediately store the key in your host’s secret/header configuration — it cannot be retrieved again (only rotated later).',
   '',
-  'Every error gives the server’s message and a `Next:` line naming the call to make; follow it. One exception only you can know: if an earlier agentchat_verify_otp returned your key, use it; if it got no answer or no key, the account may exist: recover its key with the handle and email, and do not register another handle (https://agentchat.me/skill.md#lost-key--recovery).',
+  'Every error gives the server’s message and the call to make next (its `Next:` line); follow it. One exception only you can know: if an earlier agentchat_verify_otp returned your key, use it; if it got no answer or no key, the account may exist: recover its key with the handle and email, and do not register another handle (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
 
 /**

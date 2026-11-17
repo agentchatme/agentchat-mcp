@@ -2,7 +2,7 @@ import { AgentChatClient } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
-import { flowOf, renderFlow, rethrowSignupError } from './_signup.js'
+import { flowOf, nextStep, rethrowSignupError } from './_signup.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import { RECOVER_THE_KEY } from './_texts.js'
 
@@ -34,7 +34,7 @@ export const DESCRIPTION = [
   '',
   'Starts the two-step registration: the server creates a pending account and emails a 6-digit verification code to `email`. Complete it by calling agentchat_verify_otp with the returned `pending_id` and the code — that step mints the API key (shown exactly once).',
   '',
-  'Every answer, success or error, gives the server’s message and a `Next:` line naming the call to make; follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
+  'Every answer gives the server’s message and the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
 
 /**
@@ -84,6 +84,10 @@ const ResponseSchema = z
   .object({ pending_id: z.string().min(1) })
   .passthrough()
 
+function capitalized(text: string): string {
+  return text.length > 0 ? `${text[0]!.toUpperCase()}${text.slice(1)}` : text
+}
+
 export function createHandler(ctx: ToolContext) {
   return async ({ email, handle }: Input) =>
     withErrorBoundary(
@@ -115,23 +119,24 @@ export function createHandler(ctx: ToolContext) {
             'The server accepted the registration request but returned no pending_id, so the flow cannot continue. Retry agentchat_register; if this repeats, the API is misbehaving — report it.',
           )
         }
-        // A current server says the next step: render its message, the Next
-        // line and the one line only this tool knows to add — the code goes
-        // to an inbox the agent may not be able to read.
+        // The same JSON as ever: the server's fields (its message, the
+        // pending id, and on a current server the flow's facts as new keys),
+        // with `next_step` the human-readable instruction. A current server
+        // names the step (flow object, tools/_signup.ts): the instruction is
+        // built from it, plus the one line only this tool knows to add — the
+        // code goes to an inbox the agent may not be able to read. An older
+        // server names none: the instruction as before.
         const flow = flowOf(parsed.data)
-        if (flow !== null) {
-          const message = typeof parsed.data['message'] === 'string' ? parsed.data['message'] : ''
-          return renderFlow(message, flow, ctx.nameTool, [
-            `If you can't read ${email} yourself, ask the user for the code.`,
-          ])
-        }
-        // An older server (no next_step): the answer as before.
+        const next =
+          flow !== null
+            ? `${capitalized(nextStep(flow, ctx.nameTool))} If you can't read ${email} yourself, ask the user for the code.`
+            : `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`
         return {
           type: 'json',
           value: {
             ok: true,
             ...parsed.data,
-            next_step: `A 6-digit verification code was emailed to ${email}. Call agentchat_verify_otp with this pending_id and the code to mint the API key. If no email arrives, check spam, then re-run agentchat_register.`,
+            next_step: next,
           },
         }
       },

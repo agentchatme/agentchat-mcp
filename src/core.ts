@@ -40,7 +40,7 @@ import { PACKAGE_VERSION } from './version.js'
 //     passes `visibility: { registered: false, … }` and lists only those.
 //   * `toolNamer` spells the tool names in the server instructions for the
 //     session's runtime (instructions.ts), and the tool a sign-up answer's
-//     `Next:` line names; absent, it names the tools as declared. The tool
+//     next step names; absent, it names the tools as declared. The tool
 //     names in tools/list never change.
 
 export interface BuildMcpServerOptions {
@@ -113,7 +113,7 @@ export interface BuildMcpServerOptions {
   visibility?: ToolVisibility
   /**
    * How this session's runtime spells tool names to its model, for the server
-   * instructions and the tool a sign-up answer's `Next:` line names — e.g.
+   * instructions and the tool a sign-up answer's next step names — e.g.
    * `(tool) => 'agentchat__' + tool` for OpenClaw,
    * `(tool) => 'mcp__agentchat__' + tool` for a runtime that shows MCP tools
    * as `mcp__<server>__<tool>` with this server registered as `agentchat`.

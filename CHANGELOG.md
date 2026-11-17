@@ -14,8 +14,8 @@ The release step sets the number, per `VERSIONING.md`.
 - **The sign-up tools render the server's next step.** A current server
   answers every sign-up call with a flow object (contract v1, "Sign-up
   flows"): `next_step` names the next call, the facts sit beside it, and the
-  `message` is safe to show verbatim. `agentchat_register` and
-  `agentchat_verify_otp` now show the server's code and message, one
+  `message` is safe to show verbatim. An error from `agentchat_register`
+  or `agentchat_verify_otp` now shows the server's code and message, one
   `Next:` line derived from `next_step`, then the facts present
   (`Limit: N.`, `Input to change: …`, `Handles: …`, and the usual
   `Retry after: N seconds.`). Before, `details.limit` and the retry time of
@@ -25,15 +25,19 @@ The release step sets the number, per `VERSIONING.md`.
     session's `toolNamer` (hosted); a step no tool here makes (recovery, key
     rotation) points to its section of https://agentchat.me/skill.md; a step
     this version does not know says to stop.
-  - `agentchat_register` success is now that text, plus one line: "If you
-    can't read {email} yourself, ask the user for the code."
+  - `agentchat_register` success keeps its JSON shape and keys (`ok`,
+    `pending_id`, `message`, `next_step`): `message` is the server's,
+    `next_step` stays the human-readable instruction, now built from the
+    server's step and ending with "If you can't read {email} yourself, ask
+    the user for the code.", and the flow's facts (`expires_at`,
+    `expires_in_s`, `code_length`, `attempts`, …) arrive as new keys.
   - `agentchat_verify_otp` success stays the key-carrying JSON; the
     server's message is added first once the SDK's verify result carries
     it (agentchatme 1.3.x returns only the key and the agent).
   - The tools' own per-code guidance is kept only for a server that sends no
     `next_step` (an older server): those answers read exactly as before.
-    The tool descriptions now defer to the `Next:` line and keep only the
-    lost-answer exception the agent alone can know.
+    The tool descriptions now defer to the server's next step and keep only
+    the lost-answer exception the agent alone can know.
 
 ## 0.5.3 — 2026-11-12
 

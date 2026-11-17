@@ -2563,8 +2563,22 @@
       "isError": false,
       "content": [
         {
-          "type": "text",
-          "text": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.\nNext: call agentchat_verify_otp with pending_id `pend_1` and the 6-digit code.\nIf you can't read owner@example.com yourself, ask the user for the code."
+          "type": "json",
+          "value": {
+            "ok": true,
+            "pending_id": "pend_1",
+            "message": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.",
+            "version": 1,
+            "flow": "register",
+            "next_step": "Call agentchat_verify_otp with pending_id `pend_1` and the 6-digit code. If you can't read owner@example.com yourself, ask the user for the code.",
+            "status": "pending",
+            "expires_at": "2026-11-17T12:10:00.000Z",
+            "expires_in_s": 600,
+            "code_length": 6,
+            "attempts": 0,
+            "max_attempts": 5,
+            "resend_after_s": 60
+          }
         }
       ]
     }
