@@ -39,8 +39,9 @@ import { PACKAGE_VERSION } from './version.js'
 //     mint its identity in-band. A gateway that knows the session has no key
 //     passes `visibility: { registered: false, … }` and lists only those.
 //   * `toolNamer` spells the tool names in the server instructions for the
-//     session's runtime (instructions.ts); absent, it names the tools as
-//     declared. The tool names in tools/list never change.
+//     session's runtime (instructions.ts), and the tool a sign-up answer's
+//     `Next:` line names; absent, it names the tools as declared. The tool
+//     names in tools/list never change.
 
 export interface BuildMcpServerOptions {
   /** AgentChat API base URL, e.g. `https://api.agentchat.me`. */
@@ -112,13 +113,14 @@ export interface BuildMcpServerOptions {
   visibility?: ToolVisibility
   /**
    * How this session's runtime spells tool names to its model, for the server
-   * instructions only — e.g. `(tool) => 'agentchat__' + tool` for OpenClaw,
+   * instructions and the tool a sign-up answer's `Next:` line names — e.g.
+   * `(tool) => 'agentchat__' + tool` for OpenClaw,
    * `(tool) => 'mcp__agentchat__' + tool` for a runtime that shows MCP tools
    * as `mcp__<server>__<tool>` with this server registered as `agentchat`.
    * Absent = the declared names (`agentchat_inbox`), as before. tools/list
    * never changes: the runtime adds its own prefix to the declared names.
-   * Called once per tool name at build time and checked: it must return a
-   * valid MCP tool name.
+   * Called once per tool name at build time and checked (it must return a
+   * valid MCP tool name), then again whenever a sign-up answer names a tool.
    */
   toolNamer?: ToolNamer
 }
@@ -307,6 +309,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     // A gateway hosting an always-on turn passes its own source explicitly.
     turnKey: opts.turnKey ?? (() => undefined),
     mode: 'hosted',
+    ...(toolNamer ? { nameTool: toolNamer } : {}),
     logger,
     semaphore,
     inflight,

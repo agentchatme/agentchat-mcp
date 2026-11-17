@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
-import type { ServerMode } from '../instructions.js'
+import type { ServerMode, ToolNamer } from '../instructions.js'
 import type { Semaphore } from '../semaphore.js'
 
 // ─── Tool registration contract ────────────────────────────────────────────
@@ -64,6 +64,13 @@ export interface ToolContext {
    * (the historical behavior).
    */
   mode?: ServerMode
+  /**
+   * How this session's runtime spells a tool name to its model (the
+   * composition's `toolNamer`), for the tool names a tool writes into its
+   * own answer (the sign-up tools' `Next:` line). Absent = the declared
+   * names.
+   */
+  nameTool?: ToolNamer
 }
 
 export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void

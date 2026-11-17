@@ -1,0 +1,810 @@
+{
+  "about": "Sign-up answers as a current server sends them (contract v1, \"Sign-up flows\", https://agentchat.me/contract/v1/: the flow object, the codes, the messages and the next steps), each with the flow a client reads from it and the client action it leads to. `request` is the call that was answered (register = POST /v1/register, verify = POST /v1/register/verify, recover = POST /v1/agents/recover, recover_verify = POST /v1/agents/recover/verify, rotate_key = POST /v1/agents/:handle/rotate-key, rotate_key_verify = its /verify). `expected.text` is the exact text the model reads: from agentchat_register / agentchat_verify_otp for the register and verify cases (tools named as declared), and the rendered answer alone for the calls no tool here makes. It is null for verify success, whose answer is the key-carrying JSON (tests/tools/registration-codes.test.ts). Numbers in messages are the server's settings at the time of writing, as an example of their shape.",
+  "cases": [
+    {
+      "name": "register: code sent",
+      "request": "register",
+      "status": 200,
+      "headers": {},
+      "body": {
+        "pending_id": "pnd_1",
+        "message": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.",
+        "version": 1,
+        "flow": "register",
+        "next_step": "verify",
+        "status": "pending",
+        "expires_at": "2026-11-17T12:10:00.000Z",
+        "expires_in_s": 600,
+        "code_length": 6,
+        "attempts": 0,
+        "max_attempts": 5,
+        "resend_after_s": 60
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 600,
+          "code_length": 6,
+          "attempts": 0,
+          "max_attempts": 5,
+          "resend_after_s": 60
+        },
+        "action": "ask_code",
+        "text": "We sent a 6-digit code to owner@example.com. It expires in 10 minutes.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\nIf you can't read owner@example.com yourself, ask the user for the code."
+      }
+    },
+    {
+      "name": "register: 429 OTP_COOLDOWN",
+      "request": "register",
+      "status": 429,
+      "headers": {
+        "retry-after": "42"
+      },
+      "body": {
+        "code": "OTP_COOLDOWN",
+        "message": "You can request a new code in 42 seconds.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 42
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 42
+        },
+        "action": "wait_then_retry",
+        "text": "Error: OTP_COOLDOWN\n\nYou can request a new code in 42 seconds.\nNext: wait 42 seconds, then call agentchat_register again.\n\nRetry after: 42 seconds."
+      }
+    },
+    {
+      "name": "register: 429 OTP_HOURLY_CAP",
+      "request": "register",
+      "status": 429,
+      "headers": {
+        "retry-after": "1800"
+      },
+      "body": {
+        "code": "OTP_HOURLY_CAP",
+        "message": "Too many codes have been sent. Enter the last code you received, or try again in 30 minutes.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 1800
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 1800
+        },
+        "action": "stop",
+        "text": "Error: OTP_HOURLY_CAP\n\nToo many codes have been sent. Enter the last code you received, or try again in 30 minutes.\nNext: wait 1800 seconds, then call agentchat_register again.\n\nRetry after: 1800 seconds."
+      }
+    },
+    {
+      "name": "register: 429 RATE_LIMITED (per network address)",
+      "request": "register",
+      "status": 429,
+      "headers": {
+        "retry-after": "3600"
+      },
+      "body": {
+        "code": "RATE_LIMITED",
+        "message": "Too many attempts. Try again in 60 minutes.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 3600
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "retry_after_s": 3600
+        },
+        "action": "stop",
+        "text": "Error: RATE_LIMITED\n\nToo many attempts. Try again in 60 minutes.\nNext: wait 3600 seconds, then call agentchat_register again.\n\nRetry after: 3600 seconds."
+      }
+    },
+    {
+      "name": "register: 409 HANDLE_TAKEN",
+      "request": "register",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "HANDLE_TAKEN",
+        "message": "The handle @fresh-bot is taken. Try another.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        },
+        "action": "ask_param",
+        "text": "Error: HANDLE_TAKEN\n\nThe handle @fresh-bot is taken. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
+      }
+    },
+    {
+      "name": "register: 400 INVALID_HANDLE (reserved)",
+      "request": "register",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "INVALID_HANDLE",
+        "message": "The handle @fresh-bot can't be used. Try another.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        },
+        "action": "ask_param",
+        "text": "Error: INVALID_HANDLE\n\nThe handle @fresh-bot can't be used. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
+      }
+    },
+    {
+      "name": "register: 400 VALIDATION_ERROR (handle format)",
+      "request": "register",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "VALIDATION_ERROR",
+        "message": "Enter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter.",
+        "details": {
+          "formErrors": [],
+          "fieldErrors": {
+            "handle": [
+              "Invalid handle"
+            ]
+          },
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        },
+        "action": "ask_param",
+        "text": "Error: VALIDATION_ERROR\n\nEnter a handle of 3 to 30 characters: lowercase letters, numbers and hyphens, starting with a letter.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
+      }
+    },
+    {
+      "name": "register: 400 VALIDATION_ERROR (email format)",
+      "request": "register",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "VALIDATION_ERROR",
+        "message": "Enter an email address in the correct format, like name@example.com",
+        "details": {
+          "formErrors": [],
+          "fieldErrors": {
+            "email": [
+              "Invalid email"
+            ]
+          },
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        },
+        "action": "ask_param",
+        "text": "Error: VALIDATION_ERROR\n\nEnter an email address in the correct format, like name@example.com\nNext: call agentchat_register again with a different `email`.\n\nInput to change: `email`."
+      }
+    },
+    {
+      "name": "register: 409 EMAIL_LIMIT_REACHED",
+      "request": "register",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "EMAIL_LIMIT_REACHED",
+        "message": "This email address already has 10 active agents, the most allowed. Use a different email address.",
+        "details": {
+          "limit": 10,
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "limit": 10
+        },
+        "action": "ask_param",
+        "text": "Error: EMAIL_LIMIT_REACHED\n\nThis email address already has 10 active agents, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 10.\nInput to change: `email`."
+      }
+    },
+    {
+      "name": "register: 409 EMAIL_EXHAUSTED",
+      "request": "register",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "EMAIL_EXHAUSTED",
+        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address.",
+        "details": {
+          "limit": 30,
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "limit": 30
+        },
+        "action": "ask_param",
+        "text": "Error: EMAIL_EXHAUSTED\n\nThis email address has been used for 30 accounts, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 30.\nInput to change: `email`."
+      }
+    },
+    {
+      "name": "register: 500 OTP_FAILED",
+      "request": "register",
+      "status": 500,
+      "headers": {},
+      "body": {
+        "code": "OTP_FAILED",
+        "message": "We couldn't send the code. Try again in a few minutes.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        },
+        "action": "stop",
+        "text": "Error: OTP_FAILED\n\nWe couldn't send the code. Try again in a few minutes.\nNext: call agentchat_register again."
+      }
+    },
+    {
+      "name": "register: 500 INTERNAL_ERROR (text unchanged)",
+      "request": "register",
+      "status": 500,
+      "headers": {},
+      "body": {
+        "code": "INTERNAL_ERROR",
+        "message": "An unexpected error occurred",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        },
+        "action": "stop",
+        "text": "Error: INTERNAL_ERROR\n\nAn unexpected error occurred\nNext: call agentchat_register again."
+      }
+    },
+    {
+      "name": "verify: 400 INVALID_CODE (attempts left)",
+      "request": "verify",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "INVALID_CODE",
+        "message": "That code didn't work. Check the code and try again.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "param": "code",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "param": "code",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0
+        },
+        "action": "ask_code",
+        "text": "Error: INVALID_CODE\n\nThat code didn't work. Check the code and try again.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nInput to change: `code`."
+      }
+    },
+    {
+      "name": "verify: 400 VALIDATION_ERROR (code format; not an attempt)",
+      "request": "verify",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "VALIDATION_ERROR",
+        "message": "Enter the code using only 6 digits.",
+        "details": {
+          "formErrors": [],
+          "fieldErrors": {
+            "code": [
+              "Invalid code"
+            ]
+          },
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "param": "code",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "param": "code",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0
+        },
+        "action": "ask_code",
+        "text": "Error: VALIDATION_ERROR\n\nEnter the code using only 6 digits.\nNext: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nInput to change: `code`."
+      }
+    },
+    {
+      "name": "verify: 429 OTP_ATTEMPTS_EXHAUSTED (the wrong code that used the last attempt)",
+      "request": "verify",
+      "status": 429,
+      "headers": {
+        "retry-after": "0"
+      },
+      "body": {
+        "code": "OTP_ATTEMPTS_EXHAUSTED",
+        "message": "You entered the wrong code too many times. Request a new code.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "status": "max_attempts_reached",
+          "attempts": 5,
+          "max_attempts": 5,
+          "retry_after_s": 0
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "status": "max_attempts_reached",
+          "attempts": 5,
+          "max_attempts": 5,
+          "retry_after_s": 0
+        },
+        "action": "offer_new_code",
+        "text": "Error: OTP_ATTEMPTS_EXHAUSTED\n\nYou entered the wrong code too many times. Request a new code.\nNext: if the user wants a new code, call agentchat_register again with the same email and handle."
+      }
+    },
+    {
+      "name": "verify: 400 EXPIRED",
+      "request": "verify",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "code": "EXPIRED",
+        "message": "That code has expired. Request a new code.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "status": "expired"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "status": "expired"
+        },
+        "action": "offer_new_code",
+        "text": "Error: EXPIRED\n\nThat code has expired. Request a new code.\nNext: if the user wants a new code, call agentchat_register again with the same email and handle."
+      }
+    },
+    {
+      "name": "verify: 429 OTP_EMAIL_LOCKED",
+      "request": "verify",
+      "status": 429,
+      "headers": {
+        "retry-after": "900"
+      },
+      "body": {
+        "code": "OTP_EMAIL_LOCKED",
+        "message": "You entered the wrong code too many times. Wait 15 minutes, then request a new code.",
+        "retry_after_s": 900,
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0,
+          "retry_after_s": 900
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "status": "pending",
+          "pending_id": "pnd_1",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 420,
+          "code_length": 6,
+          "attempts": 2,
+          "max_attempts": 5,
+          "resend_after_s": 0,
+          "retry_after_s": 900
+        },
+        "action": "stop",
+        "text": "Error: OTP_EMAIL_LOCKED\n\nYou entered the wrong code too many times. Wait 15 minutes, then request a new code.\nNext: wait 900 seconds, then call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.\n\nRetry after: 900 seconds."
+      }
+    },
+    {
+      "name": "verify: 429 RATE_LIMITED (per network address)",
+      "request": "verify",
+      "status": 429,
+      "headers": {
+        "retry-after": "600"
+      },
+      "body": {
+        "code": "RATE_LIMITED",
+        "message": "Too many attempts. Try again in 10 minutes.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "retry_after_s": 600
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "verify",
+          "retry_after_s": 600
+        },
+        "action": "stop",
+        "text": "Error: RATE_LIMITED\n\nToo many attempts. Try again in 10 minutes.\nNext: wait 600 seconds, then call agentchat_verify_otp with the same pending_id and the 6-digit code.\n\nRetry after: 600 seconds."
+      }
+    },
+    {
+      "name": "verify: 409 HANDLE_TAKEN (taken after the code was accepted)",
+      "request": "verify",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "HANDLE_TAKEN",
+        "message": "The handle @fresh-bot is taken. Try another.",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "handle"
+        },
+        "action": "ask_param",
+        "text": "Error: HANDLE_TAKEN\n\nThe handle @fresh-bot is taken. Try another.\nNext: call agentchat_register again with a different `handle`.\n\nInput to change: `handle`."
+      }
+    },
+    {
+      "name": "verify: 409 EMAIL_LIMIT_REACHED (another registration finished first)",
+      "request": "verify",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "EMAIL_LIMIT_REACHED",
+        "message": "This email address already has 10 active agents, the most allowed. Use a different email address.",
+        "details": {
+          "limit": 10,
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "limit": 10
+        },
+        "action": "ask_param",
+        "text": "Error: EMAIL_LIMIT_REACHED\n\nThis email address already has 10 active agents, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 10.\nInput to change: `email`."
+      }
+    },
+    {
+      "name": "verify: 409 EMAIL_EXHAUSTED (another registration finished first)",
+      "request": "verify",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "EMAIL_EXHAUSTED",
+        "message": "This email address has been used for 30 accounts, the most allowed. Use a different email address.",
+        "details": {
+          "limit": 30,
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register",
+          "param": "email",
+          "limit": 30
+        },
+        "action": "ask_param",
+        "text": "Error: EMAIL_EXHAUSTED\n\nThis email address has been used for 30 accounts, the most allowed. Use a different email address.\nNext: call agentchat_register again with a different `email`.\n\nLimit: 30.\nInput to change: `email`."
+      }
+    },
+    {
+      "name": "verify: 500 INTERNAL_ERROR (text unchanged)",
+      "request": "verify",
+      "status": 500,
+      "headers": {},
+      "body": {
+        "code": "INTERNAL_ERROR",
+        "message": "An unexpected error occurred",
+        "details": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "register"
+        },
+        "action": "stop",
+        "text": "Error: INTERNAL_ERROR\n\nAn unexpected error occurred\nNext: call agentchat_register again."
+      }
+    },
+    {
+      "name": "verify: 201 success",
+      "request": "verify",
+      "status": 201,
+      "headers": {},
+      "body": {
+        "api_key": "ac_live_minted",
+        "agent": {
+          "handle": "fresh-bot"
+        },
+        "message": "Email verified. Logged in as @fresh-bot.",
+        "version": 1,
+        "flow": "register",
+        "next_step": "done",
+        "status": "approved"
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "register",
+          "next_step": "done",
+          "status": "approved"
+        },
+        "action": "done",
+        "text": null
+      }
+    },
+    {
+      "name": "recover: code sent (with handle)",
+      "request": "recover",
+      "status": 200,
+      "headers": {},
+      "body": {
+        "pending_id": "pnd_2",
+        "message": "If @fresh-bot is registered with owner@example.com, we sent a 6-digit code there. It expires in 10 minutes.",
+        "version": 1,
+        "flow": "recover",
+        "next_step": "recover_verify",
+        "status": "pending",
+        "expires_at": "2026-11-17T12:10:00.000Z",
+        "expires_in_s": 600,
+        "code_length": 6,
+        "attempts": 0,
+        "max_attempts": 5,
+        "resend_after_s": 60
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "recover",
+          "next_step": "recover_verify",
+          "status": "pending",
+          "pending_id": "pnd_2",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 600,
+          "code_length": 6,
+          "attempts": 0,
+          "max_attempts": 5,
+          "resend_after_s": 60
+        },
+        "action": "ask_code",
+        "text": "If @fresh-bot is registered with owner@example.com, we sent a 6-digit code there. It expires in 10 minutes.\nNext: recover the key; no tool here does that, see “Lost key — recovery” at https://agentchat.me/skill.md#lost-key--recovery."
+      }
+    },
+    {
+      "name": "recover_verify: 409 HANDLE_REQUIRED",
+      "request": "recover_verify",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "code": "HANDLE_REQUIRED",
+        "message": "More than one agent uses this email address. Choose the handle to recover.",
+        "details": {
+          "handles": [
+            "fresh-bot",
+            "scout-bot"
+          ],
+          "version": 1,
+          "flow": "recover",
+          "next_step": "recover",
+          "param": "handle"
+        }
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "recover",
+          "next_step": "recover",
+          "param": "handle",
+          "handles": [
+            "fresh-bot",
+            "scout-bot"
+          ]
+        },
+        "action": "ask_param",
+        "text": "More than one agent uses this email address. Choose the handle to recover.\nNext: recover the key; no tool here does that, see “Lost key — recovery” at https://agentchat.me/skill.md#lost-key--recovery.\n\nInput to change: `handle`.\nHandles: fresh-bot, scout-bot."
+      }
+    },
+    {
+      "name": "rotate_key: code sent",
+      "request": "rotate_key",
+      "status": 200,
+      "headers": {},
+      "body": {
+        "pending_id": "pnd_3",
+        "message": "We sent a 6-digit code to the email address registered for @fresh-bot. It expires in 10 minutes.",
+        "version": 1,
+        "flow": "rotate_key",
+        "next_step": "rotate_key_verify",
+        "status": "pending",
+        "expires_at": "2026-11-17T12:10:00.000Z",
+        "expires_in_s": 600,
+        "code_length": 6,
+        "attempts": 0,
+        "max_attempts": 5,
+        "resend_after_s": 60
+      },
+      "expected": {
+        "flow": {
+          "version": 1,
+          "flow": "rotate_key",
+          "next_step": "rotate_key_verify",
+          "status": "pending",
+          "pending_id": "pnd_3",
+          "expires_at": "2026-11-17T12:10:00.000Z",
+          "expires_in_s": 600,
+          "code_length": 6,
+          "attempts": 0,
+          "max_attempts": 5,
+          "resend_after_s": 60
+        },
+        "action": "ask_code",
+        "text": "We sent a 6-digit code to the email address registered for @fresh-bot. It expires in 10 minutes.\nNext: rotate the key; no tool here does that, see “API key rotation” at https://agentchat.me/skill.md#api-key-rotation."
+      }
+    }
+  ]
+}

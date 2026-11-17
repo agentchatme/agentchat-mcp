@@ -1,71 +1,326 @@
-import { type AgentChatClient } from 'agentchatme'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { AgentChatClient } from 'agentchatme'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import pino from 'pino'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NotRegisteredError } from '../../src/client.js'
 import { buildMcpServer } from '../../src/lib.js'
 import { Semaphore } from '../../src/semaphore.js'
 import * as registerAccount from '../../src/tools/register.js'
 import * as verifyOtp from '../../src/tools/verify-otp.js'
+import { factLines, flowOf, nextLine, renderFlow, type SignupFlow } from '../../src/tools/_signup.js'
 import { RECOVER_THE_KEY } from '../../src/tools/_texts.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 
-// ─── Sign-up errors: only codes the server sends, each with its next step ──
+// ─── Sign-up answers: the server says the next step ────────────────────────
 //
 // An agent with no integration onboards through exactly these two tools, so
-// what they say about an error is the advice it gets at its first step. They
-// once named EMAIL_TAKEN, CODE_EXPIRED and PENDING_NOT_FOUND, which the
-// server never sends, and said nothing about the codes it does send.
+// what they say about an answer is the advice it gets at its first step. A
+// current server's answer carries a flow object (contract v1, "Sign-up
+// flows"): `next_step`, the facts, and a message safe to show verbatim. The
+// tools render it — the server's message, one `Next:` line naming the tool
+// for `next_step`, the facts present — and add no rulebook of their own.
 //
-// The lists below are the server's, copied from the AgentChat API (read
-// 2026-11-12): every code POST /v1/register and POST /v1/register/verify
-// answer with, including the per-address limiter in front of both routes,
-// the per-email code-send and code-verify limits, and the last-resort
-// handler. Status, Retry-After and the message are as the server sends them
-// (the numbers in a message are the server's current settings, shown as an
-// example of its shape). When the server changes these routes, change the
-// list here first; the tests then say which tool text to change.
+// The cases are tests/fixtures/signup-flow.cases.json: every situation of
+// the contract's sign-up code table as the server answers it, with the flow
+// a client reads, the client action it leads to, and the exact text the
+// model reads. When the contract changes, change the fixture first; these
+// tests then say which text to change.
+//
+// The per-code guidance the tools carried before is kept only for a server
+// that sends no `next_step` (an older server); the last part of this file
+// holds that fallback.
 
-interface ServerCode {
+const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'signup-flow.cases.json')
+
+type Request = 'register' | 'verify' | 'recover' | 'recover_verify' | 'rotate_key' | 'rotate_key_verify'
+type Action = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop'
+
+interface Case {
+  name: string
+  request: Request
   status: number
-  /** Seconds, when the server sends a Retry-After header with this code. */
-  retryAfter?: number
-  /** The server's message. */
-  message: string
-  /** When the server sends it. */
-  when: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+  expected: { flow: Record<string, unknown>; action: Action; text: string | null }
 }
 
-const REGISTER_CODES: Record<string, ServerCode> = {
-  VALIDATION_ERROR: { status: 400, message: 'Invalid request', when: 'the body is not JSON, or fails the request schema' },
-  INVALID_HANDLE: { status: 400, message: 'Handle is invalid or reserved', when: 'the handle is not valid or is reserved' },
-  HANDLE_TAKEN: { status: 409, message: 'Handle @fresh-bot is already taken', when: 'another agent has this handle' },
-  EMAIL_LIMIT_REACHED: { status: 409, message: 'This email already backs 10 active agents. Delete one, or register with a different email.', when: 'the email already backs as many live agents as it may (details.limit)' },
-  EMAIL_EXHAUSTED: { status: 409, message: 'This email has reached the maximum of 30 account registrations.', when: 'the email has used all its lifetime registrations (details.limit)' },
-  OTP_COOLDOWN: { status: 429, retryAfter: 42, message: 'Please wait 42s before requesting another code.', when: 'a code went to this email within the send cooldown' },
-  OTP_HOURLY_CAP: { status: 429, retryAfter: 1800, message: 'Maximum 20 verification codes per hour. Please try again later.', when: 'this email was sent too many codes this hour' },
-  RATE_LIMITED: { status: 429, message: 'Too many requests. Try again in 3600 seconds.', when: 'too many register requests from this network address (no Retry-After)' },
-  OTP_FAILED: { status: 500, message: 'Failed to send verification code', when: 'the code email could not be sent' },
-  INTERNAL_ERROR: { status: 500, message: 'An unexpected error occurred', when: 'an unexpected server error' },
+const CASES = (JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as { cases: Case[] }).cases
+const TOOL_CASES = CASES.filter((c) => c.request === 'register' || c.request === 'verify')
+const OTHER_CASES = CASES.filter((c) => c.request !== 'register' && c.request !== 'verify')
+
+/** The flow fields these tools read; every other field is ignored. */
+const READ_FIELDS = ['next_step', 'status', 'pending_id', 'param', 'code_length', 'retry_after_s', 'limit', 'handles'] as const
+
+function readPart(flow: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(READ_FIELDS.filter((f) => flow[f] !== undefined).map((f) => [f, flow[f]]))
 }
 
-const VERIFY_CODES: Record<string, ServerCode> = {
-  VALIDATION_ERROR: { status: 400, message: 'Invalid request', when: 'the body is not JSON, or fails the request schema' },
-  EXPIRED: { status: 400, message: 'Registration expired or invalid. Please start again.', when: 'no pending registration has this pending_id: expired, completed, cancelled, or never issued' },
-  OTP_ATTEMPTS_EXHAUSTED: { status: 429, message: 'Too many incorrect codes (max 5). Please request a new one.', when: 'too many wrong codes for this pending_id; the pending registration is cancelled (no Retry-After)' },
-  OTP_EMAIL_LOCKED: { status: 429, retryAfter: 900, message: 'Too many wrong codes for this email. Try again in 15 minutes.', when: 'too many codes tried for this email, across its code flows' },
-  INVALID_CODE: { status: 400, message: 'Invalid or expired verification code', when: 'the code is wrong or expired' },
-  HANDLE_TAKEN: { status: 409, message: 'Handle @fresh-bot is already taken', when: 'the handle was taken between register and verify (the pending registration is used up)' },
-  EMAIL_LIMIT_REACHED: { status: 409, message: 'This email already backs 10 active agents. Delete one, or register with a different email.', when: 'another registration with this email finished first and filled its live slots' },
-  EMAIL_EXHAUSTED: { status: 409, message: 'This email has reached the maximum of 30 account registrations.', when: 'another registration with this email finished first and spent its last registration' },
-  RATE_LIMITED: { status: 429, message: 'Too many requests. Try again in 600 seconds.', when: 'too many verify requests from this network address (no Retry-After)' },
-  INTERNAL_ERROR: { status: 500, message: 'An unexpected error occurred', when: 'an unexpected server error' },
+/** The codes each tool's route answers with, from the cases. */
+function codesOf(request: Request): string[] {
+  return [...new Set(CASES.filter((c) => c.request === request && typeof c.body['code'] === 'string').map((c) => c.body['code'] as string))]
 }
+const REGISTER_CODES = codesOf('register')
+const VERIFY_CODES = codesOf('verify')
+
+// ── the real pipeline: SDK call over a stubbed fetch → typed error → rendered text
+
+const json = (status: number, value: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } })
+
+function makeCtx(respond: () => Response, extra: Partial<ToolContext> = {}): ToolContext {
+  const fetchImpl = (async () => respond()) as typeof fetch
+  return {
+    get client(): AgentChatClient {
+      throw new NotRegisteredError()
+    },
+    logger: pino({ level: 'silent' }),
+    selfHandle: null,
+    semaphore: new Semaphore(10),
+    inflight: new Set(),
+    rest: { apiBase: 'https://api.agentchat.test', apiKey: null, fetchImpl },
+    turnKey: () => undefined,
+    ...extra,
+  } as unknown as ToolContext
+}
+
+const answerOf = (c: Case) => () => json(c.status, c.body, c.headers)
+
+async function registerText(answer: () => Response, extra?: Partial<ToolContext>): Promise<string> {
+  const result = await registerAccount.createHandler(makeCtx(answer, extra))({ email: 'owner@example.com', handle: 'fresh-bot' })
+  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
+}
+
+async function verifyText(answer: () => Response, extra?: Partial<ToolContext>): Promise<string> {
+  const result = await verifyOtp.createHandler(makeCtx(answer, extra))({ pending_id: 'pnd_1', code: '123456' })
+  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
+}
+
+const textOf = (c: Case, extra?: Partial<ToolContext>) =>
+  c.request === 'register' ? registerText(answerOf(c), extra) : verifyText(answerOf(c), extra)
+
+function nextLineOf(text: string): string {
+  const line = text.split('\n').find((l) => l.startsWith('Next: '))
+  expect(line, text).toBeDefined()
+  return line!
+}
+
+/** What each client action looks like in the Next line of a tool on this surface. */
+const ACTION_NEXT: Record<Exclude<Action, 'done'>, RegExp> = {
+  ask_code: /^Next: (wait \d+ seconds, then )?call agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.$/,
+  ask_param: /^Next: call agentchat_register again with a different `(email|handle)`\.$/,
+  offer_new_code: /^Next: if the user wants a new code, (wait \d+ seconds, then )?call agentchat_register again with the same email and handle\.$/,
+  wait_then_retry: /^Next: wait \d+ seconds, then call agentchat_(register|verify_otp) /,
+  // A long wait names it; a server failure names the step to repeat.
+  stop: /^Next: (wait \d+ seconds, then )?call agentchat_(register|verify_otp) /,
+}
+
+describe('the fixture covers the contract’s sign-up table', () => {
+  it('names are unique, every action is known, and each tool’s route has its cases', () => {
+    expect(new Set(CASES.map((c) => c.name)).size).toBe(CASES.length)
+    for (const c of CASES) expect(['done', 'ask_code', 'ask_param', 'offer_new_code', 'wait_then_retry', 'stop'], c.name).toContain(c.expected.action)
+    expect(REGISTER_CODES.sort()).toEqual(
+      ['EMAIL_EXHAUSTED', 'EMAIL_LIMIT_REACHED', 'HANDLE_TAKEN', 'INTERNAL_ERROR', 'INVALID_HANDLE', 'OTP_COOLDOWN', 'OTP_FAILED', 'OTP_HOURLY_CAP', 'RATE_LIMITED', 'VALIDATION_ERROR'],
+    )
+    expect(VERIFY_CODES.sort()).toEqual(
+      ['EMAIL_EXHAUSTED', 'EMAIL_LIMIT_REACHED', 'EXPIRED', 'HANDLE_TAKEN', 'INTERNAL_ERROR', 'INVALID_CODE', 'OTP_ATTEMPTS_EXHAUSTED', 'OTP_EMAIL_LOCKED', 'RATE_LIMITED', 'VALIDATION_ERROR'],
+    )
+  })
+
+  it.each(CASES.map((c) => [c.name, c] as const))('%s: the flow read from the body is the expected one', (_name, c) => {
+    expect(readPart(c.expected.flow), 'the fixture’s expected flow is the body’s').toEqual(
+      readPart((typeof c.body['code'] === 'string' ? c.body['details'] : c.body) as Record<string, unknown>),
+    )
+    expect(flowOf(c.body)).toEqual(readPart(c.expected.flow))
+  })
+})
+
+describe('each server answer reaches the model as the server said it', () => {
+  for (const c of TOOL_CASES.filter((tc) => tc.expected.text !== null)) {
+    it(`${c.name}: the exact text`, async () => {
+      expect(await textOf(c)).toBe(c.expected.text)
+    })
+
+    it(`${c.name}: the server’s code and message verbatim, a Next line for ${c.expected.action}, the facts present`, async () => {
+      const shown = await textOf(c)
+      const code = c.body['code']
+      if (typeof code === 'string') {
+        // The server's own code, whatever the HTTP status (a 5xx included).
+        expect(shown.startsWith(`Error: ${code}\n\n${c.body['message'] as string}\nNext: `), shown).toBe(true)
+      } else {
+        expect(shown.startsWith(`${c.body['message'] as string}\nNext: `), shown).toBe(true)
+      }
+      expect(nextLineOf(shown)).toMatch(ACTION_NEXT[c.expected.action as Exclude<Action, 'done'>])
+      const flow = c.expected.flow
+      const retry = typeof flow['retry_after_s'] === 'number' ? flow['retry_after_s'] : 0
+      if (retry > 0) expect(shown).toContain(`\n\nRetry after: ${retry} seconds.`)
+      else expect(shown).not.toContain('Retry after:')
+      if (flow['limit'] !== undefined) expect(shown).toContain(`\nLimit: ${String(flow['limit'])}.`)
+      if (flow['param'] !== undefined) expect(shown).toContain(`\nInput to change: \`${String(flow['param'])}\`.`)
+      // No rulebook of the tool's own: none of the fallback guidance shows.
+      const guidance = c.request === 'register' ? registerAccount.GUIDANCE : verifyOtp.GUIDANCE
+      for (const text of Object.values(guidance)) expect(shown).not.toContain(text)
+    })
+  }
+
+  it('register success adds the one agent line, naming the email it was sent to', async () => {
+    const sent = CASES.find((c) => c.name === 'register: code sent')!
+    const shown = await textOf(sent)
+    expect(shown.split('\n')).toEqual([
+      'We sent a 6-digit code to owner@example.com. It expires in 10 minutes.',
+      'Next: call agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
+      "If you can't read owner@example.com yourself, ask the user for the code.",
+    ])
+  })
+
+  it.each(OTHER_CASES.map((c) => [c.name, c] as const))('%s: a step no tool here makes points to the manual', (_name, c) => {
+    const flow = flowOf(c.body)!
+    expect(renderFlow(c.body['message'] as string, flow)).toBe(c.expected.text)
+    expect(nextLine(flow)).toMatch(/no tool here does that, see “(Lost key — recovery|API key rotation)” at https:\/\/agentchat\.me\/skill\.md#(lost-key--recovery|api-key-rotation)\.$/)
+  })
+})
+
+describe('the Next line names tools as the session’s runtime shows them', () => {
+  const spell = (tool: string) => `mcp__agentchat__${tool}`
+
+  it('through the context’s namer, in success and error answers', async () => {
+    const sent = CASES.find((c) => c.name === 'register: code sent')!
+    const wrong = CASES.find((c) => c.name === 'verify: 400 INVALID_CODE (attempts left)')!
+    const taken = CASES.find((c) => c.name === 'register: 409 HANDLE_TAKEN')!
+    expect(nextLineOf(await textOf(sent, { nameTool: spell }))).toBe(
+      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
+    )
+    expect(nextLineOf(await textOf(wrong, { nameTool: spell }))).toBe(
+      'Next: call mcp__agentchat__agentchat_verify_otp with pending_id `pnd_1` and the 6-digit code.',
+    )
+    expect(nextLineOf(await textOf(taken, { nameTool: spell }))).toBe(
+      'Next: call mcp__agentchat__agentchat_register again with a different `handle`.',
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('buildMcpServer hands its toolNamer to the sign-up tools', async () => {
+    const cooldown = CASES.find((c) => c.name === 'register: 429 OTP_COOLDOWN')!
+    vi.stubGlobal('fetch', (async () => answerOf(cooldown)()) as typeof fetch)
+    const server = buildMcpServer({ apiBase: 'https://namer.agentchat.test', apiKey: null, toolNamer: (tool) => `agentchat__${tool}` })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'registration-codes', version: '0.0.0' })
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+    try {
+      const result = await client.callTool({ name: 'agentchat_register', arguments: { email: 'owner@example.com', handle: 'fresh-bot' } })
+      expect(result.isError).toBe(true)
+      expect((result.content as Array<{ text: string }>)[0]!.text).toBe(
+        'Error: OTP_COOLDOWN\n\nYou can request a new code in 42 seconds.\nNext: wait 42 seconds, then call agentchat__agentchat_register again.\n\nRetry after: 42 seconds.',
+      )
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+})
+
+describe('rendering rules', () => {
+  const base: SignupFlow = { next_step: 'register' }
+
+  it('a step this code does not know says to stop; `done` says to store the key', () => {
+    expect(nextLine({ next_step: 'confirm_device' })).toBe(
+      'Next: this tool does not know the step `confirm_device`; show the message above to the user and stop.',
+    )
+    expect(nextLine({ next_step: 'done', status: 'approved' })).toBe('Next: store the API key now; it is shown only once.')
+  })
+
+  it('a wait comes first, also before an offer of a new code or a step no tool makes', () => {
+    expect(nextLine({ ...base, status: 'max_attempts_reached', retry_after_s: 30 })).toBe(
+      'Next: if the user wants a new code, wait 30 seconds, then call agentchat_register again with the same email and handle.',
+    )
+    expect(nextLine({ next_step: 'recover', retry_after_s: 12 })).toMatch(/^Next: wait 12 seconds, then recover the key; no tool here does that/)
+    expect(nextLine({ ...base, retry_after_s: 0 })).toBe('Next: call agentchat_register again.')
+  })
+
+  it('the code length comes from the flow, 6 when absent; an unknown pending id is "the same pending_id"', () => {
+    expect(nextLine({ next_step: 'verify', pending_id: 'pnd_9', code_length: 8 })).toBe(
+      'Next: call agentchat_verify_otp with pending_id `pnd_9` and the 8-digit code.',
+    )
+    expect(nextLine({ next_step: 'verify' })).toBe('Next: call agentchat_verify_otp with the same pending_id and the 6-digit code.')
+  })
+
+  it('facts in a fixed order; the retry time is the boundary’s own line', () => {
+    expect(factLines({ ...base, retry_after_s: 5, limit: 10, param: 'handle', handles: ['a-bot', 'b-bot'] })).toEqual([
+      'Limit: 10.',
+      'Input to change: `handle`.',
+      'Handles: a-bot, b-bot.',
+    ])
+    expect(factLines(base)).toEqual([])
+  })
+
+  it('reads only well-typed fields and ignores the rest', () => {
+    expect(
+      flowOf({
+        code: 'X',
+        message: 'm',
+        details: { next_step: 'register', status: 7, param: '', limit: 1.5, retry_after_s: -1, handles: ['ok', 3, ''], code_length: 0, brand_new_field: { a: 1 } },
+      }),
+    ).toEqual({ next_step: 'register', handles: ['ok'] })
+    // A success body carries it at the top level; an error body only in details.
+    expect(flowOf({ next_step: 'verify', pending_id: 'p' })).toEqual({ next_step: 'verify', pending_id: 'p' })
+    expect(flowOf({ code: 'X', message: 'm', next_step: 'verify' })).toBeNull()
+    expect(flowOf({ pending_id: 'p', message: 'sent' })).toBeNull()
+    expect(flowOf(null)).toBeNull()
+  })
+
+  it('the retry time falls back to the Retry-After header when details carry none', async () => {
+    const shown = await registerText(() =>
+      json(429, { code: 'OTP_COOLDOWN', message: 'You can request a new code in 9 seconds.', details: { next_step: 'register' } }, { 'retry-after': '9' }),
+    )
+    expect(shown).toBe(
+      'Error: OTP_COOLDOWN\n\nYou can request a new code in 9 seconds.\nNext: wait 9 seconds, then call agentchat_register again.\n\nRetry after: 9 seconds.',
+    )
+  })
+})
+
+describe('verify success: the key, and the server’s words when the SDK hands them over', () => {
+  const success = CASES.find((c) => c.name === 'verify: 201 success')!
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('with agentchatme 1.3.x (key and agent only): the answer as before, key and handle from the server', async () => {
+    const payload = JSON.parse(await verifyText(answerOf(success))) as Record<string, unknown>
+    expect(payload['ok']).toBe(true)
+    expect(payload['api_key']).toBe('ac_live_minted')
+    expect(payload['handle']).toBe('fresh-bot')
+    expect(payload['message']).toBeUndefined()
+    expect(String(payload['important'])).toContain('exactly once')
+  })
+
+  it('with an SDK whose verify result carries the flow fields: the server’s message comes first', async () => {
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue({
+      agent: { handle: 'fresh-bot' },
+      apiKey: 'ac_live_minted',
+      client: {} as AgentChatClient,
+      message: 'Email verified. Logged in as @fresh-bot.',
+      next_step: 'done',
+      status: 'approved',
+    } as Awaited<ReturnType<typeof AgentChatClient.verify>>)
+    const payload = JSON.parse(await verifyText(() => json(500, {}))) as Record<string, unknown>
+    expect(Object.keys(payload).slice(0, 4)).toEqual(['ok', 'message', 'handle', 'api_key'])
+    expect(payload['message']).toBe('Email verified. Logged in as @fresh-bot.')
+    expect(payload['handle']).toBe('fresh-bot')
+  })
+})
+
+// ─── The fallback: a server that sends no next_step ────────────────────────
 
 /**
  * Capitalized words in these texts that are not error codes. A new one has
- * to be added here (or to a code list above) on purpose.
+ * to be added here (or to the fixture's codes) on purpose.
  */
 const NOT_CODES: ReadonlySet<string> = new Set([
   'API', // "API key"
@@ -88,44 +343,6 @@ function capitalizedWords(text: string): string[] {
   return [...new Set(text.match(CAPITALIZED) ?? [])]
 }
 
-// ── the real pipeline: SDK call over a stubbed fetch → typed error → mapped text
-
-const json = (status: number, value: unknown, headers: Record<string, string> = {}) =>
-  new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } })
-
-function makeCtx(respond: () => Response): ToolContext {
-  const fetchImpl = (async () => respond()) as typeof fetch
-  return {
-    get client(): AgentChatClient {
-      throw new NotRegisteredError()
-    },
-    logger: pino({ level: 'silent' }),
-    selfHandle: null,
-    semaphore: new Semaphore(10),
-    inflight: new Set(),
-    rest: { apiBase: 'https://api.agentchat.test', apiKey: null, fetchImpl },
-    turnKey: () => undefined,
-  } as unknown as ToolContext
-}
-
-function serverAnswer(code: string, spec: ServerCode): Response {
-  return json(
-    spec.status,
-    { code, message: spec.message },
-    spec.retryAfter !== undefined ? { 'retry-after': String(spec.retryAfter) } : {},
-  )
-}
-
-async function registerText(answer: () => Response): Promise<string> {
-  const result = await registerAccount.createHandler(makeCtx(answer))({ email: 'owner@example.com', handle: 'fresh-bot' })
-  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
-}
-
-async function verifyText(answer: () => Response): Promise<string> {
-  const result = await verifyOtp.createHandler(makeCtx(answer))({ pending_id: 'pnd_1', code: '123456' })
-  return (result.content as Array<{ text: string }>).map((part) => part.text).join('\n')
-}
-
 async function inputSchemas(): Promise<Map<string, string>> {
   const server = buildMcpServer({ apiBase: 'https://codes.invalid', apiKey: null })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -140,11 +357,6 @@ async function inputSchemas(): Promise<Map<string, string>> {
   }
 }
 
-/** The code the model branches on: the server's own, except a 5xx, which the error mapper names SERVER_ERROR. */
-function shownCode(code: string, spec: ServerCode): string {
-  return spec.status >= 500 ? 'SERVER_ERROR' : code
-}
-
 const TOOLS = [
   { name: registerAccount.NAME, module: registerAccount, codes: REGISTER_CODES, text: registerText },
   { name: verifyOtp.NAME, module: verifyOtp, codes: VERIFY_CODES, text: verifyText },
@@ -154,133 +366,91 @@ describe('the sign-up tools name only codes the server sends', () => {
   function expectOnlyServerCodes(tool: (typeof TOOLS)[number], where: string, text: string) {
     for (const word of capitalizedWords(text)) {
       if (NOT_CODES.has(word)) continue
-      expect(Object.keys(tool.codes), `${tool.name} ${where} names ${word}`).toContain(word)
+      expect(tool.codes, `${tool.name} ${where} names ${word}`).toContain(word)
     }
   }
 
-  it('every capitalized word in each description and parameter text is a server code of that route, or a known non-code', async () => {
+  it('every capitalized word in each description, parameter text and fallback guidance is a server code of that route, or a known non-code', async () => {
     const schemas = await inputSchemas()
     for (const tool of TOOLS) {
       expectOnlyServerCodes(tool, 'description', tool.module.DESCRIPTION)
       expectOnlyServerCodes(tool, 'parameters', schemas.get(tool.name)!)
+      for (const [code, text] of Object.entries(tool.module.GUIDANCE)) expectOnlyServerCodes(tool, `guidance for ${code}`, text)
     }
   })
 
-  it('every capitalized word in the guidance is a server code of that route, or a known non-code', () => {
-    for (const tool of TOOLS) {
-      const guidance = (tool.module as { GUIDANCE?: Record<string, string> }).GUIDANCE
-      expect(guidance, `${tool.name} exports its GUIDANCE`).toBeDefined()
-      for (const [code, text] of Object.entries(guidance ?? {})) expectOnlyServerCodes(tool, `guidance for ${code}`, text)
-    }
-  })
-
-  it('guidance is keyed only by codes the route sends, and covers every one the model sees under its own code', () => {
-    for (const tool of TOOLS) {
-      const guidance = (tool.module as { GUIDANCE?: Record<string, string> }).GUIDANCE ?? {}
-      for (const code of Object.keys(guidance)) {
-        expect(Object.keys(tool.codes), `${tool.name} guides ${code}`).toContain(code)
-      }
-      for (const [code, spec] of Object.entries(tool.codes)) {
-        // A 5xx reaches the model as SERVER_ERROR ("transient; retry shortly"),
-        // whatever the wire code: guidance keyed by it would never be read.
-        if (spec.status >= 500) {
-          expect(guidance[code], `${tool.name}: ${code} is a 5xx`).toBeUndefined()
-          continue
-        }
-        expect(guidance[code], `${tool.name} has guidance for ${code} (${spec.when})`).toBeTruthy()
-      }
-    }
-  })
-
-  it('the success texts name no code outside the lists', async () => {
-    const minted = await verifyText(() => json(201, { api_key: 'ac_minted', agent: { handle: 'fresh-bot' } }))
-    const pending = await registerText(() => json(200, { pending_id: 'pnd_1', message: 'sent' }))
-    for (const [name, text, codes] of [
-      ['agentchat_verify_otp', minted, VERIFY_CODES],
-      ['agentchat_register', pending, REGISTER_CODES],
-    ] as const) {
-      for (const word of capitalizedWords(text.replace(/ac_minted/g, ''))) {
-        if (NOT_CODES.has(word)) continue
-        expect(Object.keys(codes), `${name} success text names ${word}`).toContain(word)
-      }
-    }
+  it('the descriptions defer to the server’s Next line, and keep only what the agent alone can know', () => {
+    for (const tool of TOOLS) expect(tool.module.DESCRIPTION).toContain('the server’s message and a `Next:` line naming the call to make; follow it.')
+    expect(registerAccount.DESCRIPTION).toContain(
+      'if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key',
+    )
+    expect(verifyOtp.DESCRIPTION).toContain('the account may exist: recover its key with the handle and email, and do not register another handle')
   })
 })
 
-// What the model reads for each server answer, and the next step it is given.
-const REGISTER_NEXT: Record<string, RegExp> = {
-  VALIDATION_ERROR: /Check the arguments: `email` is one email address, `handle` 3-30 lowercase letters/,
-  INVALID_HANDLE: /reserved or not a valid handle\. Pick a different handle and call agentchat_register again/,
-  HANDLE_TAKEN: /Pick a different handle and call agentchat_register again .*— unless it is the handle you just registered and an earlier agentchat_verify_otp got no answer or no key: then the account exists, so keep the handle\. Recover its key/,
-  EMAIL_LIMIT_REACHED: /already backs as many live agents as it may\. Register with a different email address .*or delete one of the agents this email backs/,
-  EMAIL_EXHAUSTED: /used all of its registrations \(deleted agents count too\).*Register with a different email address/,
-  OTP_COOLDOWN: /A code was emailed to this address moments ago\. If you have the pending_id from that call, use that code with agentchat_verify_otp; otherwise wait the retry time, then call agentchat_register again/,
-  OTP_HOURLY_CAP: /Too many codes were emailed to this address in the last hour\..*agentchat_verify_otp.*wait the retry time before calling agentchat_register again/,
-  RATE_LIMITED: /^Rate limit exceeded\. Too many requests\. Try again in 3600 seconds\. Too many sign-up requests came from this network address .*Wait before calling agentchat_register again/m,
-  OTP_FAILED: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
-  INTERNAL_ERROR: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
-}
-
-const VERIFY_NEXT: Record<string, RegExp> = {
-  VALIDATION_ERROR: /Check the arguments: `pending_id` exactly as agentchat_register returned it, `code` the 6 digits from the email/,
-  EXPIRED: /No pending registration has this pending_id any more.*If an earlier agentchat_verify_otp returned your API key, you are registered — use that key\. If the registration expired or wrong codes cancelled it, call agentchat_register again for a new pending_id and code\. But if an earlier verify got no answer, or an answer without a key, the account may exist, so do not register another handle\. Recover its key/,
-  OTP_ATTEMPTS_EXHAUSTED: /Too many wrong codes were tried, so this registration is cancelled\. Call agentchat_register again/,
-  OTP_EMAIL_LOCKED: /Too many codes were tried for this email.*Wait the retry time before calling agentchat_verify_otp again; registering again does not lift the wait/,
-  INVALID_CODE: /Re-check the 6 digits from the NEWEST verification email and try again.*OTP_ATTEMPTS_EXHAUSTED/,
-  HANDLE_TAKEN: /The code was right, but the handle was taken first, so this registration is used up: call agentchat_register again with a different handle — unless an earlier agentchat_verify_otp of yours for this handle got no answer or no key; then that account is yours, so keep the handle\. Recover its key/,
-  EMAIL_LIMIT_REACHED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
-  EMAIL_EXHAUSTED: /The code was right, but another registration with this email finished first.*Call agentchat_register again with a different email address/,
-  RATE_LIMITED: /^Rate limit exceeded\. Too many requests\. Try again in 600 seconds\. Too many verification requests came from this network address .*Wait before calling agentchat_verify_otp again/m,
-  INTERNAL_ERROR: /^AgentChat reported a server-side error\. This is transient; retry shortly\.$/m,
-}
-
-describe('each server answer reaches the model with its code and the right next step', () => {
-  for (const [tool, codes, next, text] of [
-    ['agentchat_register', REGISTER_CODES, REGISTER_NEXT, registerText],
-    ['agentchat_verify_otp', VERIFY_CODES, VERIFY_NEXT, verifyText],
-  ] as const) {
-    it(`${tool}: every code in the server's list is covered here`, () => {
-      expect(Object.keys(next).sort()).toEqual(Object.keys(codes).sort())
-    })
-
-    for (const [code, spec] of Object.entries(codes)) {
-      it(`${tool}: ${spec.status} ${code} — ${spec.when}`, async () => {
-        const shown = await text(() => serverAnswer(code, spec))
-        expect(shown.startsWith(`Error: ${shownCode(code, spec)}\n`), shown).toBe(true)
-        // The server's own words survive (for RATE_LIMITED too: with no
-        // Retry-After they are the only place the wait is stated), each as
-        // its own sentence before the guidance.
-        if (spec.status < 500) {
-          const sentence = /[.!?]$/.test(spec.message) ? spec.message : `${spec.message}.`
-          expect(shown, shown).toContain(`${sentence} `)
+describe('an older server (no next_step): the per-code fallback', () => {
+  it('the fallback guidance is keyed only by codes the route sends, and covers every one the model sees under its own code', () => {
+    for (const tool of TOOLS) {
+      for (const code of Object.keys(tool.module.GUIDANCE)) expect(tool.codes, `${tool.name} guides ${code}`).toContain(code)
+      for (const code of tool.codes) {
+        // A 5xx reaches the model as SERVER_ERROR ("transient; retry
+        // shortly"), whatever the wire code: guidance keyed by it would
+        // never be read.
+        if (code === 'OTP_FAILED' || code === 'INTERNAL_ERROR') {
+          expect(tool.module.GUIDANCE[code], `${tool.name}: ${code} is a 5xx`).toBeUndefined()
+          continue
         }
-        expect(shown).toMatch(next[code]!)
-        // The retry time is shown exactly when the server sends one.
-        if (spec.retryAfter !== undefined) expect(shown).toContain(`Retry after: ${spec.retryAfter} seconds.`)
+        expect(tool.module.GUIDANCE[code], `${tool.name} has fallback guidance for ${code}`).toBeTruthy()
+      }
+    }
+  })
+
+  for (const tool of TOOLS) {
+    for (const [code, guidance] of Object.entries(tool.module.GUIDANCE)) {
+      it(`${tool.name}: ${code} without a flow object gets the server's message and the fallback guidance`, async () => {
+        const status = /^(OTP_COOLDOWN|OTP_HOURLY_CAP|OTP_EMAIL_LOCKED|OTP_ATTEMPTS_EXHAUSTED|RATE_LIMITED)$/.test(code)
+          ? 429
+          : /^(HANDLE_TAKEN|EMAIL_LIMIT_REACHED|EMAIL_EXHAUSTED)$/.test(code)
+            ? 409
+            : 400
+        const retry: Record<string, string> =
+          code === 'RATE_LIMITED' || code === 'OTP_ATTEMPTS_EXHAUSTED' ? {} : status === 429 ? { 'retry-after': '42' } : {}
+        // An older server's body: code and message, details without next_step.
+        const shown = await tool.text(() => json(status, { code, message: `Old server says ${code}.`, details: { limit: 10 } }, retry))
+        expect(shown.startsWith(`Error: ${code}\n\n`), shown).toBe(true)
+        if (code === 'RATE_LIMITED') expect(shown).toMatch(/^Rate limit exceeded\. Old server says RATE_LIMITED\. /m)
+        else expect(shown).toContain(`Old server says ${code}. `)
+        expect(shown).toContain(guidance)
+        expect(shown).not.toContain('Next: ')
+        if ('retry-after' in retry) expect(shown).toContain('Retry after: 42 seconds.')
         else expect(shown).not.toContain('Retry after:')
       })
     }
+
+    it(`${tool.name}: a 5xx without a flow object is SERVER_ERROR, as before`, async () => {
+      const shown = await tool.text(() => json(500, { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' }))
+      expect(shown).toBe('Error: SERVER_ERROR\n\nAgentChat reported a server-side error. This is transient; retry shortly.')
+    })
   }
+
+  it('register success without a flow object: the answer as before', async () => {
+    const payload = JSON.parse(await registerText(() => json(200, { pending_id: 'pnd_1', message: 'sent' }))) as Record<string, unknown>
+    expect(payload).toMatchObject({ ok: true, pending_id: 'pnd_1', message: 'sent' })
+    expect(String(payload['next_step'])).toContain('Call agentchat_verify_otp with this pending_id')
+  })
 })
 
 describe('an earlier verify that may have created the account', () => {
-  it('EXPIRED, a 2xx without a key and HANDLE_TAKEN on the handle you just registered all give the recovery step; none says to verify again', async () => {
-    const expired = await verifyText(() => serverAnswer('EXPIRED', VERIFY_CODES['EXPIRED']!))
+  it('a 2xx without a key gives the recovery step, and never says to verify again', async () => {
     const noKey = await verifyText(() => json(201, { agent: { handle: 'fresh-bot' } }))
-    const takenAtRegister = await registerText(() => serverAnswer('HANDLE_TAKEN', REGISTER_CODES['HANDLE_TAKEN']!))
-    const takenAtVerify = await verifyText(() => serverAnswer('HANDLE_TAKEN', VERIFY_CODES['HANDLE_TAKEN']!))
-    for (const [name, text] of [['EXPIRED', expired], ['no key', noKey], ['register HANDLE_TAKEN', takenAtRegister], ['verify HANDLE_TAKEN', takenAtVerify]] as const) {
-      expect(text, name).toContain(RECOVER_THE_KEY)
-      expect(text, name).not.toMatch(/retry agentchat_verify_otp/i)
-    }
+    expect(noKey).toContain(RECOVER_THE_KEY)
+    expect(noKey).not.toMatch(/retry agentchat_verify_otp/i)
     // The server said success: the account exists, under a handle the agent keeps.
     expect(noKey).toContain('the account exists with a key you do not hold')
     expect(noKey).toContain('Do not register another handle.')
-    expect(verifyOtp.DESCRIPTION).toContain('the account may exist: recover its key with the handle and email, and do not register another handle')
-    expect(registerAccount.DESCRIPTION).toContain('unless HANDLE_TAKEN names the handle you just registered after a verify that got no answer: then recover its key')
     for (const word of capitalizedWords(noKey)) {
       if (NOT_CODES.has(word) || word === 'INTERNAL_ERROR') continue
-      expect(Object.keys(VERIFY_CODES), `no-key text names ${word}`).toContain(word)
+      expect(VERIFY_CODES, `no-key text names ${word}`).toContain(word)
     }
   })
 
@@ -292,9 +462,6 @@ describe('an earlier verify that may have created the account', () => {
     expect(RECOVER_THE_KEY).toContain('`agentchat recover --handle <handle> --email <email>`, then `agentchat recover --code <code>`')
     expect(RECOVER_THE_KEY).toContain('POST /v1/agents/recover {"email","handle"}, then POST /v1/agents/recover/verify {"pending_id","code"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set)')
     expect(RECOVER_THE_KEY).toContain('If you can do neither, ask your operator.')
-    // Recovery answers the same and sends nothing within a minute of another
-    // code to the same email (a sign-up code counts), past the hourly cap, or
-    // when the send fails: a missing code proves nothing.
     expect(RECOVER_THE_KEY).toContain('No code is sent within a minute of another code to the same email (a sign-up code counts): wait a minute and ask once more.')
     expect(RECOVER_THE_KEY).toContain('A missing code never means the account is missing; if none comes, ask your operator.')
     expect(RECOVER_THE_KEY).not.toMatch(/no account was created|register again/i)
