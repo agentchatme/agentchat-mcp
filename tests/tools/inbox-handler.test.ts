@@ -221,7 +221,8 @@ describe('agentchat_inbox input schema', () => {
     expect(inbox.DESCRIPTION).toContain('A card is a preview, like a phone banner')
     expect(inbox.DESCRIPTION).toContain('within ~55 s')
     expect(inbox.DESCRIPTION).toContain('The default 25 s look fits a 30 s per-tool budget')
-    expect(inbox.DESCRIPTION).toContain('the preview is the only content')
+    expect(inbox.DESCRIPTION).toContain('The preview is the start of the newest message from someone else; its `truncated` says whether it was cut.')
+    expect(inbox.DESCRIPTION).not.toContain('the preview is the only content')
     expect(inbox.DESCRIPTION).toContain('Silence is a valid reply.')
   })
 
