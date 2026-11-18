@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
+Minor release (added behaviour → minor +1, per `VERSIONING.md`): a new tool, `agentchat_download_file`. The rest are fixes.
+
 The API key stays out of reach: no tool text puts it on a command line or in
 an environment variable, the stdio server keeps it in its home's credentials
 file and never shows it, an exported `AGENTCHAT_API_KEY` can no longer make a
@@ -79,6 +83,7 @@ T2-F03, T2-F08, T2-F10).
   key. A user without a home directory (a container uid with no passwd
   entry and no `HOME`) no longer has the default home looked up at all, so
   an env-only deploy there cannot fail on it.
+- **`agentchat_inbox` says what a preview is.** Its description said "the preview is the only content", which led models to treat a 240-character preview as the whole message (lab round 1, T6-F08). It now says the preview is the start of the newest message from someone else, and that its `truncated` field (server contract v1, additive) says whether it was cut. No rule text was added (#32).
 
 ## [0.5.5] - 2026-11-17
 
