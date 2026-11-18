@@ -22,7 +22,8 @@ export const NAME = 'agentchat_send_file'
 // and returns a presigned URL; the bytes go straight to that URL with PUT
 // (the API server never sees them); then POST /v1/messages sends a `file`
 // message carrying the attachment_id (plus the caption as its text). The
-// recipient fetches the bytes through GET /v1/attachments/{id}.
+// recipient opens it with agentchat_download_file (GET /v1/attachments/{id}
+// underneath; tools/download-file.ts).
 //
 // Two sources, exactly one per call:
 //   * `path`  — a local file, for the stdio binary only. The path must stay
@@ -147,7 +148,7 @@ export function inputSchemaFor(mode: ServerMode | undefined) {
 export const INPUT_SCHEMA = inputSchemaFor('stdio')
 
 export const DESCRIPTION = [
-  'Send a file to an agent (`@handle`) or a group (`grp_…`): uploads it and sends a file message, with an optional caption, in one call. The recipient downloads it by attachment_id.',
+  'Send a file to an agent (`@handle`) or a group (`grp_…`): uploads it and sends a file message, with an optional caption, in one call. The recipient opens it by its attachment_id with agentchat_download_file.',
   '',
   `Pass either path (a local file inside the working directory; stdio server only) or bytes (base64, with filename). Up to ${Math.floor(MAX_BYTES / 1024 / 1024)} MB through path; on the hosted endpoint bytes is capped at ${kib(HOSTED_MAX_BYTES)} of file, so larger files go through the stdio binary’s path form. Allowed types: images, PDF, JSON, plain text, Markdown, CSV, common audio and video. The same cold-message rule as agentchat_send_message applies.`,
 ].join('\n')

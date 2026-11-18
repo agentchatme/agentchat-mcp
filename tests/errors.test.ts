@@ -17,6 +17,7 @@ import {
 } from 'agentchatme'
 import { describe, expect, it } from 'vitest'
 import { NotAuthenticatedError, NotRegisteredError } from '../src/client.js'
+import { IdentityConflictError } from '../src/env.js'
 import { attachToolGuidance, mapAgentChatError } from '../src/errors.js'
 
 // Helper for tests — most SDK error constructors take (response, status, requestId).
@@ -32,10 +33,20 @@ const res = (
 })
 
 describe('mapAgentChatError', () => {
-  it('maps NotRegisteredError to the stdio-flavored NOT_REGISTERED with CLI guidance', () => {
+  it('maps NotRegisteredError to the stdio-flavored NOT_REGISTERED: the sign-up tools, or the CLI with the key on stdin', () => {
     const m = mapAgentChatError(new NotRegisteredError())
     expect(m.code).toBe('NOT_REGISTERED')
-    expect(m.message).toContain('agentchat register')
+    expect(m.message).toContain('agentchat_register')
+    expect(m.message).toContain('agentchat_verify_otp')
+    expect(m.message).toContain('`agentchat login --api-key -` reads it from stdin')
+    // Lab round 1 (T2-F08): never `--api-key ac_…`, the key on a command line.
+    expect(m.message).not.toMatch(/--api-key ac_/)
+  })
+
+  it('maps IdentityConflictError to IDENTITY_CONFLICT, its own words whole', () => {
+    const err = new IdentityConflictError('differs', '/srv/agent-home', 'sm-one')
+    const m = mapAgentChatError(err, 'stdio')
+    expect(m).toEqual({ code: 'IDENTITY_CONFLICT', message: err.message })
   })
 
   it('maps NotAuthenticatedError to the hosted-flavored NOT_AUTHENTICATED with header + in-band registration guidance', () => {

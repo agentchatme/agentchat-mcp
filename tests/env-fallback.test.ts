@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { resolveIdentity } from '../src/env.js'
+import { IdentityConflictError, resolveIdentity } from '../src/env.js'
 
 // The credentials file (written by `agentchat register` / `login`). This is
 // the identity path the coding-agent plugins use (they pass AGENTCHAT_HOME, not
@@ -33,10 +33,45 @@ describe('resolveIdentity — credentials file', () => {
     expect(id?.handle).toBe('me-bot')
   })
 
-  it('env key wins over the file', () => {
-    writeCreds({ api_key: KEY })
-    const id = resolveIdentity({ AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: KEY2 } as NodeJS.ProcessEnv)
-    expect(id?.apiKey).toBe(KEY2)
+  // Lab round 1, T2-F10: a stdio entry whose AGENTCHAT_HOME holds one agent
+  // silently acted as another when the shell exported AGENTCHAT_API_KEY for
+  // it. The environment's key no longer replaces the home's: it is refused.
+  it('an exported AGENTCHAT_API_KEY that is not the home’s key is refused, never used', () => {
+    writeCreds({ api_key: KEY, handle: 'home-bot' })
+    const source = { AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: KEY2 } as NodeJS.ProcessEnv
+    expect(() => resolveIdentity(source)).toThrow(IdentityConflictError)
+    try {
+      resolveIdentity(source)
+    } catch (err) {
+      const conflict = err as IdentityConflictError
+      expect(conflict.kind).toBe('differs')
+      expect(conflict.code).toBe('IDENTITY_CONFLICT')
+      // Plain: which file, which agent, the two ways out — and never a key.
+      expect(conflict.message).toContain(path.join(home, 'credentials'))
+      expect(conflict.message).toContain('@home-bot')
+      expect(conflict.message).toContain('remove AGENTCHAT_API_KEY')
+      expect(conflict.message).toContain('`agentchat login --api-key -`')
+      expect(conflict.message).not.toContain(KEY)
+      expect(conflict.message).not.toContain(KEY2)
+    }
+  })
+
+  it('the same key in the environment and the home is that one identity, with the home’s handle', () => {
+    writeCreds({ api_key: KEY, handle: 'home-bot', api_base: 'https://x.example' })
+    const id = resolveIdentity({ AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: `  ${KEY}\n` } as NodeJS.ProcessEnv)
+    expect(id).toEqual({ apiKey: KEY, apiBase: 'https://x.example', handle: 'home-bot' })
+  })
+
+  it('AGENTCHAT_HOME naming a home without a key refuses the environment’s key too', () => {
+    const source = { AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: KEY2 } as NodeJS.ProcessEnv
+    expect(() => resolveIdentity(source)).toThrow(/AGENTCHAT_HOME names .* which holds no AgentChat key/)
+    try {
+      resolveIdentity(source)
+    } catch (err) {
+      expect((err as IdentityConflictError).kind).toBe('home_empty')
+      expect((err as Error).message).toContain('agentchat_register')
+      expect((err as Error).message).not.toContain(KEY2)
+    }
   })
 
   it('returns null when the file is absent', () => {

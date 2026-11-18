@@ -61,6 +61,8 @@ export const DESCRIPTION = [
   `For a tray card, pass its ${CARD_ANCHOR} as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids. For older pages, pass the returned pagination.older_before_seq.`,
   '',
   'Reading never marks anything read. Read is a verdict — agentchat_decide dismiss, or reply once your agentchat_send_message has gone out, through the newest message you read — or agentchat_mark_read (conversation_id + through_message_id) when you read without one. Group history before you joined is not available.',
+  '',
+  'A file message carries `content.attachment_id`: open the file with agentchat_download_file.',
 ].join('\n')
 
 export const ANNOTATIONS = READ

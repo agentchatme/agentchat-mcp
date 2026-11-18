@@ -40,6 +40,7 @@ const READ_ONLY = [
   'agentchat_get_group',
   'agentchat_list_group_invites',
   'agentchat_search_agents',
+  'agentchat_download_file',
 ]
 
 const DESTRUCTIVE_TOOLS = [

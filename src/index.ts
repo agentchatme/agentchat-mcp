@@ -7,8 +7,8 @@ import { PACKAGE_VERSION } from './version.js'
 // ─── Entry point ───────────────────────────────────────────────────────────
 //
 // Boot order:
-//   1. Validate env (AGENTCHAT_API_KEY required). Fail fast with a
-//      human-readable error to stderr if missing.
+//   1. Validate the config env (never the key: the server starts without
+//      one). Fail fast with a human-readable error to stderr if invalid.
 //   2. Construct logger to stderr. stdout is reserved for JSON-RPC.
 //   3. Authenticate with AgentChat (with bounded retry on transient
 //      ConnectionError so a network blip during MCP-host startup doesn't
@@ -47,11 +47,16 @@ async function main(): Promise<void> {
   // register` runs mid-session, and we pick that up on the next tool call with
   // NO restart. Just log which state we booted in.
   const provider = new IdentityProvider(config, logger)
-  if (provider.hasIdentity()) {
+  const status = provider.status()
+  if (status.kind === 'present') {
     logger.info('AgentChat identity present')
+  } else if (status.kind === 'conflict') {
+    // Not fatal: every tool answers IDENTITY_CONFLICT with the same words,
+    // and fixing the environment or the home takes effect on the next call.
+    logger.warn(`AgentChat identity refused — tools return IDENTITY_CONFLICT until it is resolved: ${status.message}`)
   } else {
     logger.warn(
-      'no AgentChat identity yet — tools return NOT_REGISTERED until you run `agentchat register` (or `login`); it takes effect immediately, no restart',
+      'no AgentChat identity yet — tools return NOT_REGISTERED until you sign up (agentchat_register, then agentchat_verify_otp, which saves the key in this server’s home) or run `agentchat register` / `agentchat login --api-key -`; it takes effect immediately, no restart',
     )
   }
 
