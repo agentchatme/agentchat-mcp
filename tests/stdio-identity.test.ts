@@ -205,7 +205,7 @@ describe('T2-F01: the stdio server’s sign-up saves the key itself and never sh
     }
   })
 
-  it('works while the identity is refused, and says the saved key now meets the environment’s key', async () => {
+  it('saves into an empty home while the shell exports another agent’s key, and says the two now conflict', async () => {
     // AGENTCHAT_HOME names an empty home, and the shell exports another agent's key.
     vi.stubEnv('AGENTCHAT_API_KEY', KEY_ENV)
     const s = await stdio(verified)
@@ -219,7 +219,43 @@ describe('T2-F01: the stdio server’s sign-up saves the key itself and never sh
       expect(String(answer['warning'])).toContain('IDENTITY_CONFLICT')
       // The verify call itself carried no key.
       expect(s.calls.map(authOf)).toEqual([null])
+      // And the next keyed call is refused, as the warning said.
+      expect((await s.call('agentchat_get_my_status')).text).toMatch(/^Error: IDENTITY_CONFLICT/)
     } finally {
+      await s.close()
+    }
+  })
+
+  it('the sign-up pair still works during a conflict', async () => {
+    writeHomeCreds({ api_key: KEY_HOME, handle: 'sm-one' })
+    vi.stubEnv('AGENTCHAT_API_KEY', KEY_ENV)
+    const s = await stdio((call) =>
+      pathOf(call) === '/v1/register'
+        ? json(200, { pending_id: 'pnd_1', next_step: 'verify', status: 'pending', code_length: 6, message: 'We sent a code.' })
+        : json(404, { code: 'NOT_FOUND', message: 'unexpected' }),
+    )
+    try {
+      const result = await s.call('agentchat_register', { email: 'a@b.example', handle: 'new-bot' })
+      expect(result.isError, result.text).toBe(false)
+      expect(s.calls.map(authOf)).toEqual([null])
+    } finally {
+      await s.close()
+    }
+  })
+
+  it('a save that throws hands the key back instead of losing it', async () => {
+    const s = await stdio(verified)
+    try {
+      vi.spyOn(s.provider, 'saveKey').mockImplementation(() => {
+        throw new Error('disk on fire')
+      })
+      const result = await s.call('agentchat_verify_otp', { pending_id: 'pnd_1', code: '123456' })
+      expect(result.isError, result.text).toBe(false)
+      const answer = JSON.parse(result.text) as Record<string, unknown>
+      expect(answer['api_key']).toBe(KEY_NEW)
+      expect(String(answer['not_saved'])).toContain('saving it failed (disk on fire)')
+    } finally {
+      vi.restoreAllMocks()
       await s.close()
     }
   })
@@ -245,6 +281,18 @@ describe('saveCredentials', () => {
     const other = saveCredentials(source(), { apiKey: KEY_HOME, handle: 'other-bot' })
     expect(other).toMatchObject({ saved: false })
     expect(JSON.parse(fs.readFileSync(path.join(home, 'credentials'), 'utf8'))).toEqual({ api_key: KEY_NEW, handle: 'new-bot' })
+  })
+
+  it('removes a stale temp file a killed save left (it holds a key), never a fresh one or a stranger', () => {
+    fs.mkdirSync(home, { recursive: true })
+    const stale = path.join(home, 'credentials.123.abcdefabcdef.tmp')
+    const fresh = path.join(home, 'credentials.456.0123456789ab.tmp')
+    const other = path.join(home, 'credentials.backup')
+    for (const f of [stale, fresh, other]) fs.writeFileSync(f, 'x')
+    const old = new Date(Date.now() - 5 * 60_000)
+    fs.utimesSync(stale, old, old)
+    expect(saveCredentials(source(), { apiKey: KEY_NEW, handle: 'new-bot' })).toMatchObject({ saved: true })
+    expect(fs.readdirSync(home).sort()).toEqual(['credentials', 'credentials.456.0123456789ab.tmp', 'credentials.backup'])
   })
 
   it('leaves an unreadable or malformed file alone', () => {

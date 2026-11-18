@@ -47,12 +47,19 @@ function countedBody(chunks: Uint8Array[]): { body: ReadableStream<Uint8Array>; 
   return { body, pulled: () => pulled }
 }
 
+/** The signed URL the API hands out the second time it is asked: what a link must be. */
+const FRESH = `${SIGNED}&n=2`
+
 function network(store: (call: FetchCall) => Response, api?: (call: FetchCall) => Response | undefined) {
+  let asked = 0
   return fetchStub((call) => {
     if (call.url.startsWith('https://store.test/')) return store(call)
     const own = api?.(call)
     if (own) return own
-    if (pathOf(call) === '/v1/attachments/att_1') return new Response(null, { status: 302, headers: { location: SIGNED } })
+    if (pathOf(call) === '/v1/attachments/att_1') {
+      asked += 1
+      return new Response(null, { status: 302, headers: { location: asked === 1 ? SIGNED : `${SIGNED}&n=${asked}` } })
+    }
     return json(404, { code: 'NOT_FOUND', message: `unexpected ${call.method} ${call.url}` })
   })
 }
@@ -102,8 +109,8 @@ describe('agentchat_download_file: what the model gets', () => {
     const net = network(() => new Response('<svg onload="x()"/>', { headers: { 'content-type': 'image/png' } }))
     const { blocks, facts } = await download(net)
     expect(blocks).toHaveLength(1)
-    expect(facts).toMatchObject({ shown: 'link', download_url: SIGNED })
-    expect(String(facts!['note'])).toContain('not a PNG, JPEG, GIF or WebP image')
+    expect(facts).toMatchObject({ shown: 'link', download_url: FRESH })
+    expect(String(facts!['note'])).toContain('not a whole PNG, JPEG, GIF or WebP image of at most 8000 px a side')
   })
 
   it('an image over the inline bound by its Content-Length is a link, and not a byte is read', async () => {
@@ -111,10 +118,27 @@ describe('agentchat_download_file: what the model gets', () => {
     const big = downloadFile.IMAGE_INLINE_MAX_BYTES + 1
     const net = network(() => new Response(counted.body, { headers: { 'content-type': 'image/png', 'content-length': String(big) } }))
     const { facts } = await download(net)
-    expect(facts).toMatchObject({ shown: 'link', size: big, download_url: SIGNED })
+    expect(facts).toMatchObject({ shown: 'link', size: big, download_url: FRESH })
     expect(String(facts!['note'])).toContain(`this one is ${big} bytes`)
     expect(String(facts!['note'])).toContain('needs no API key')
     expect(counted.pulled()).toBe(0)
+    // The link is a fresh one, never the URL already fetched; both asks carried the key, the store none.
+    expect(net.calls.map((c) => [c.url.startsWith('https://store.test/') ? 'store' : 'api', c.headers.get('authorization')])).toEqual([
+      ['api', `Bearer ${KEY}`],
+      ['store', null],
+      ['api', `Bearer ${KEY}`],
+    ])
+  })
+
+  it('when asking for a fresh link fails, the first one is handed over', async () => {
+    let asked = 0
+    const net = fetchStub((call) => {
+      if (call.url.startsWith('https://store.test/')) return new Response('%PDF-1.7', { headers: { 'content-type': 'application/pdf' } })
+      asked += 1
+      return asked === 1 ? new Response(null, { status: 302, headers: { location: SIGNED } }) : json(503, { code: 'STORAGE_UNAVAILABLE', message: 'later' })
+    })
+    const { facts } = await download(net)
+    expect(facts).toMatchObject({ shown: 'link', download_url: SIGNED })
   })
 
   it('an image without a length is read only up to the bound, then sent as a link', async () => {
@@ -144,7 +168,7 @@ describe('agentchat_download_file: what the model gets', () => {
     const net = network(() => new Response(text, { headers: { 'content-type': 'text/plain' } }))
     const { blocks, facts } = await download(net)
     expect(blocks[1]).toEqual({ type: 'text', text: head })
-    expect(facts).toMatchObject({ shown: 'text_start', shown_bytes: head.length, download_url: SIGNED })
+    expect(facts).toMatchObject({ shown: 'text_start', shown_bytes: head.length, download_url: FRESH })
     expect(facts!['sha256']).toBeUndefined()
   })
 
@@ -161,11 +185,93 @@ describe('agentchat_download_file: what the model gets', () => {
       const counted = countedBody([new Uint8Array(1024)])
       const net = network(() => new Response(counted.body, { headers: { 'content-type': type, 'content-length': '1024' } }))
       const { facts } = await download(net)
-      expect(facts, type).toMatchObject({ shown: 'link', content_type: type, size: 1024, download_url: SIGNED })
+      expect(facts, type).toMatchObject({ shown: 'link', content_type: type, size: 1024, download_url: FRESH })
       expect(String(facts!['note'])).toContain('a few minutes')
       expect(String(facts!['note'])).toContain('never add one')
       expect(counted.pulled(), type).toBe(0)
     }
+  })
+})
+
+// ─── Images a host can hand its model ──────────────────────────────────────
+//
+// Claude answers 400 to an image it cannot read, and the broken image then
+// stays in the conversation, failing every later turn: so a peer's file is
+// handed over as an image only when its structure holds up.
+
+const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+/** A baseline JPEG's structure: SOI, a 1×1 frame header, a scan, EOI. */
+const JPEG = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+  0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+  0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd2, 0xcf, 0x20,
+  0xff, 0xd9,
+])
+/** A lossless WebP's structure (VP8L), 2×3. */
+function webp(width: number, height: number): Buffer {
+  const bits = ((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14)
+  const data = Buffer.from([0x2f, bits & 0xff, (bits >>> 8) & 0xff, (bits >>> 16) & 0xff, (bits >>> 24) & 0xff, 0x00, 0x00, 0x00])
+  const chunk = Buffer.concat([Buffer.from('VP8L'), Buffer.from([data.length, 0, 0, 0]), data])
+  const body = Buffer.concat([Buffer.from('WEBP'), chunk])
+  const size = Buffer.alloc(4)
+  size.writeUInt32LE(body.length)
+  return Buffer.concat([Buffer.from('RIFF'), size, body])
+}
+/** The 1×1 PNG with its header claiming another size (the CRC is not checked). */
+function pngClaiming(width: number, height: number): Buffer {
+  const copy = Buffer.from(PNG)
+  copy.writeUInt32BE(width, 16)
+  copy.writeUInt32BE(height, 20)
+  return copy
+}
+
+describe('agentchat_download_file: only a whole image is an image', () => {
+  it('inspectImage reads the size from each format’s header', () => {
+    expect(downloadFile.inspectImage(PNG)).toEqual({ mime: 'image/png', width: 1, height: 1 })
+    expect(downloadFile.inspectImage(GIF)).toEqual({ mime: 'image/gif', width: 1, height: 1 })
+    expect(downloadFile.inspectImage(JPEG)).toEqual({ mime: 'image/jpeg', width: 1, height: 1 })
+    expect(downloadFile.inspectImage(webp(2, 3))).toEqual({ mime: 'image/webp', width: 2, height: 3 })
+  })
+
+  it('a signature followed by junk is not an image, in any format', () => {
+    const junk = Buffer.from('not an image at all, just the right first bytes')
+    for (const head of [PNG.subarray(0, 8), Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('GIF89a'), Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBP')]) {
+      expect(downloadFile.inspectImage(Buffer.concat([head, junk])), head.toString('hex')).toBeNull()
+    }
+    // Cut short: the end of the file is missing.
+    expect(downloadFile.inspectImage(PNG.subarray(0, PNG.length - 4))).toBeNull()
+    expect(downloadFile.inspectImage(JPEG.subarray(0, JPEG.length - 2))).toBeNull()
+    expect(downloadFile.inspectImage(GIF.subarray(0, GIF.length - 1))).toBeNull()
+    expect(downloadFile.inspectImage(webp(2, 3).subarray(0, 24))).toBeNull()
+  })
+
+  it('an image larger than a model takes on a side is not an image here', () => {
+    expect(downloadFile.inspectImage(pngClaiming(8000, 8000))).toMatchObject({ width: 8000, height: 8000 })
+    expect(downloadFile.inspectImage(pngClaiming(9000, 9000))).toBeNull()
+    expect(downloadFile.inspectImage(pngClaiming(1, 8001))).toBeNull()
+    expect(downloadFile.inspectImage(pngClaiming(0, 1))).toBeNull()
+    expect(downloadFile.inspectImage(webp(8001, 1))).toBeNull()
+  })
+
+  it('through the tool: a GIF, a JPEG and a WebP are images; a PNG claiming 9000 px a side is a link', async () => {
+    for (const [bytes, mime] of [[GIF, 'image/gif'], [JPEG, 'image/jpeg'], [webp(2, 3), 'image/webp']] as const) {
+      const net = network(() => new Response(bytes, { headers: { 'content-type': mime } }))
+      const { blocks, facts } = await download(net)
+      expect(blocks[1], mime).toEqual({ type: 'image', data: bytes.toString('base64'), mimeType: mime })
+      expect(facts, mime).toMatchObject({ shown: 'image', content_type: mime })
+    }
+    const huge = network(() => new Response(pngClaiming(9000, 9000), { headers: { 'content-type': 'image/png' } }))
+    const { blocks, facts } = await download(huge)
+    expect(blocks).toHaveLength(1)
+    expect(facts).toMatchObject({ shown: 'link' })
+  })
+
+  it('a file of no useful type whose first bytes are no image signature is not read past them', async () => {
+    const counted = countedBody(Array.from({ length: 64 }, () => new Uint8Array(64 * 1024).fill(0x41)))
+    const net = network(() => new Response(counted.body, { headers: { 'content-type': 'application/octet-stream' } }))
+    const { facts } = await download(net)
+    expect(facts).toMatchObject({ shown: 'link' })
+    expect(counted.pulled()).toBe(64 * 1024)
   })
 })
 

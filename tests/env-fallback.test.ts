@@ -44,7 +44,6 @@ describe('resolveIdentity — credentials file', () => {
       resolveIdentity(source)
     } catch (err) {
       const conflict = err as IdentityConflictError
-      expect(conflict.kind).toBe('differs')
       expect(conflict.code).toBe('IDENTITY_CONFLICT')
       // Plain: which file, which agent, the two ways out — and never a key.
       expect(conflict.message).toContain(path.join(home, 'credentials'))
@@ -62,16 +61,9 @@ describe('resolveIdentity — credentials file', () => {
     expect(id).toEqual({ apiKey: KEY, apiBase: 'https://x.example', handle: 'home-bot' })
   })
 
-  it('AGENTCHAT_HOME naming a home without a key refuses the environment’s key too', () => {
-    const source = { AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: KEY2 } as NodeJS.ProcessEnv
-    expect(() => resolveIdentity(source)).toThrow(/AGENTCHAT_HOME names .* which holds no AgentChat key/)
-    try {
-      resolveIdentity(source)
-    } catch (err) {
-      expect((err as IdentityConflictError).kind).toBe('home_empty')
-      expect((err as Error).message).toContain('agentchat_register')
-      expect((err as Error).message).not.toContain(KEY2)
-    }
+  it('a home without a key takes the environment’s key (an env-only deploy, as agent-core does)', () => {
+    const id = resolveIdentity({ AGENTCHAT_HOME: home, AGENTCHAT_API_KEY: KEY2 } as NodeJS.ProcessEnv)
+    expect(id).toEqual({ apiKey: KEY2 })
   })
 
   it('returns null when the file is absent', () => {

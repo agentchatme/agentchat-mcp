@@ -44,7 +44,7 @@ describe('mapAgentChatError', () => {
   })
 
   it('maps IdentityConflictError to IDENTITY_CONFLICT, its own words whole', () => {
-    const err = new IdentityConflictError('differs', '/srv/agent-home', 'sm-one')
+    const err = new IdentityConflictError('/srv/agent-home', 'sm-one')
     const m = mapAgentChatError(err, 'stdio')
     expect(m).toEqual({ code: 'IDENTITY_CONFLICT', message: err.message })
   })

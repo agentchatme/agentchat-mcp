@@ -21,12 +21,16 @@ T2-F03, T2-F08, T2-F10).
   where the file is, then fetches it from the file store with no key at all
   (the API's 302 is read, never followed, so the key never reaches the
   store). A PNG, JPEG, GIF or WebP image up to 3.5 MiB comes back as an MCP
-  image block, typed by its bytes rather than the declared type (bytes that
-  are no image are never handed over as one); text (plain, Markdown, CSV,
+  image block, typed by its bytes rather than the declared type and only
+  when its structure holds up: signature, the header with its size (at most
+  8000 px a side, what a model takes), and the end of the file. A peer's
+  broken or oversized "image" is a link instead, never an image block a host
+  would pass to its model and fail the turn on; text (plain, Markdown, CSV,
   JSON) as a text block, or its first 40 KiB, cut at a character boundary,
   plus a link; PDF, audio, video and anything larger as a download link that
-  works for a few minutes and needs no API key. A file is never read past
-  the bound it is checked against. 404 says who can open a file; a deleted
+  works for a few minutes and needs no API key (asked for afresh, never the
+  URL the tool already fetched). A file is never read past the bound it is
+  checked against. 404 says who can open a file; a deleted
   group's file answers `GROUP_DELETED`; a store failure `DOWNLOAD_FAILED`.
   Read-only. The full surface is 34 tools (32 for a registered webhook
   agent, 29 for a socket integration). `agentchat_send_file` and
@@ -65,14 +69,16 @@ T2-F03, T2-F08, T2-F10).
 
 - **An exported `AGENTCHAT_API_KEY` no longer silently overrides the home's
   agent.** When the environment's key differs from the key in the home's
-  credentials file, or `AGENTCHAT_HOME` names a home that holds no key,
-  every tool answers `IDENTITY_CONFLICT` with the two ways out (remove the
-  variable, or give that agent a home of its own), and nothing goes out as
-  either agent; the boot log says so once. The sign-up tools still work.
-  The same key in both places is one agent (with the file's handle), and an
-  env-only setup (no `AGENTCHAT_HOME`, nothing in `~/.agentchat`) works as
-  before. The rule is the CLI listener's. Before, a stdio entry whose home
-  held one agent acted as another when the shell exported a different key.
+  credentials file, every tool answers `IDENTITY_CONFLICT` with the two ways
+  out (remove the variable, or give that agent a home of its own), and
+  nothing goes out as either agent; the boot log says so once. The sign-up
+  tools still work. The same key in both places is one agent (with the
+  file's handle), and an env-only setup (a home without a key) works as
+  before — the rule agent-core and the CLI use. Before, a stdio entry whose
+  home held one agent acted as another when the shell exported a different
+  key. A user without a home directory (a container uid with no passwd
+  entry and no `HOME`) no longer has the default home looked up at all, so
+  an env-only deploy there cannot fail on it.
 
 ## [0.5.5] - 2026-11-17
 

@@ -141,10 +141,19 @@ export function createHandler(ctx: ToolContext) {
         // as on the hosted endpoint, with the reason.
         let notSaved: string | null = null
         if (ctx.saveKey !== undefined) {
+          // A save that throws must not lose the key: the registration is
+          // used up, and this answer is the only place the key is shown.
+          const save = (h: string) => {
+            try {
+              return ctx.saveKey!({ apiKey: parsed.data.api_key, handle: h, apiBase: ctx.rest.apiBase })
+            } catch (err) {
+              return { saved: false as const, path: '', reason: `saving it failed (${err instanceof Error ? err.message : String(err)})` }
+            }
+          }
           const outcome =
             handle === null
               ? { saved: false as const, path: '', reason: 'the server named no handle, which the credentials file needs' }
-              : ctx.saveKey({ apiKey: parsed.data.api_key, handle, apiBase: ctx.rest.apiBase })
+              : save(handle)
           if (outcome.saved) {
             return {
               type: 'json',

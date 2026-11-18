@@ -123,7 +123,7 @@ export class IdentityProvider implements IdentitySource {
       if (!(err instanceof IdentityConflictError)) throw err
       if (this.loggedConflict !== err.message) {
         this.loggedConflict = err.message
-        this.logger.warn({ kind: err.kind, home: err.home }, 'AgentChat identity refused: AGENTCHAT_API_KEY does not match the home')
+        this.logger.warn({ home: err.home }, 'AgentChat identity refused: AGENTCHAT_API_KEY is not the key the home holds')
       }
       return { id: null, conflict: err }
     }
