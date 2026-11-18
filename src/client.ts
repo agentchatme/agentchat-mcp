@@ -1,6 +1,14 @@
 import { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
-import { resolveIdentity, type Config } from './env.js'
+import {
+  IdentityConflictError,
+  resolveIdentity,
+  saveCredentials,
+  type Config,
+  type Identity,
+  type NewCredentials,
+  type SaveCredentialsResult,
+} from './env.js'
 import { withMcpClientIdentity } from './client-identity.js'
 import type { RestContext } from './tools/_types.js'
 import { PACKAGE_VERSION } from './version.js'
@@ -52,10 +60,18 @@ export interface IdentitySource {
   getRest(): RestContext
 }
 
+/** What the stdio server finds at boot, for its first log line. */
+export type IdentityStatus =
+  | { kind: 'present' }
+  | { kind: 'absent' }
+  | { kind: 'conflict'; message: string }
+
 export class IdentityProvider implements IdentitySource {
   private identitySignature: string | null = null
   private client: AgentChatClient | null = null
   private handle = '?'
+  /** The last refusal, so it is logged once rather than on every call. */
+  private loggedConflict: string | null = null
 
   constructor(
     private readonly config: IdentityConfig,
@@ -80,15 +96,46 @@ export class IdentityProvider implements IdentitySource {
 
   /** For a friendly boot log — is an identity resolvable right now? */
   hasIdentity(): boolean {
-    return resolveIdentity() !== null
+    return this.status().kind === 'present'
+  }
+
+  /** The identity situation right now: present, absent, or refused (and why). */
+  status(): IdentityStatus {
+    try {
+      return resolveIdentity() === null ? { kind: 'absent' } : { kind: 'present' }
+    } catch (err) {
+      if (err instanceof IdentityConflictError) return { kind: 'conflict', message: err.message }
+      throw err
+    }
+  }
+
+  /**
+   * The identity now, or null when there is none or it is refused. A refusal
+   * (IdentityConflictError) is returned as `conflict` for the caller that
+   * must surface it; it is logged once per distinct situation.
+   */
+  private resolve(): { id: Identity | null; conflict: IdentityConflictError | null } {
+    try {
+      const id = resolveIdentity()
+      this.loggedConflict = null
+      return { id, conflict: null }
+    } catch (err) {
+      if (!(err instanceof IdentityConflictError)) throw err
+      if (this.loggedConflict !== err.message) {
+        this.loggedConflict = err.message
+        this.logger.warn({ home: err.home }, 'AgentChat identity refused: AGENTCHAT_API_KEY is not the key the home holds')
+      }
+      return { id: null, conflict: err }
+    }
   }
 
   private refresh(): void {
-    const id = resolveIdentity()
+    const { id, conflict } = this.resolve()
     if (!id) {
       this.identitySignature = null
       this.client = null
       this.handle = '?'
+      if (conflict) throw conflict
       return
     }
     const apiBase = id.apiBase ?? this.config.AGENTCHAT_API_BASE
@@ -130,7 +177,13 @@ export class IdentityProvider implements IdentitySource {
   }
 
   getSelfHandle(): string {
-    this.refresh()
+    try {
+      this.refresh()
+    } catch (err) {
+      // A refused identity has no handle; the tool that needs the client
+      // surfaces the refusal itself.
+      if (!(err instanceof IdentityConflictError)) throw err
+    }
     return this.handle
   }
 
@@ -138,17 +191,37 @@ export class IdentityProvider implements IdentitySource {
    * The CURRENT identity as plain values, resolved freshly like the client:
    * the identity's api_base (or the configured default) plus its key, or a
    * key-less view of the default base when no identity exists yet — that's
-   * what lets agentchat_register run before any sign-in.
+   * what lets agentchat_register run before any sign-in. A refused identity
+   * (IdentityConflictError) is key-less here too: the sign-up pair still
+   * works, and every call that needs the key reaches `getClientOrThrow`,
+   * which throws the refusal.
    */
   getRest(): RestContext {
-    const id = resolveIdentity()
+    const { id } = this.resolve()
     return {
       apiBase: id?.apiBase ?? this.config.AGENTCHAT_API_BASE,
       apiKey: id?.apiKey ?? null,
       fetchImpl: this.buildFetch(),
     }
   }
+
+  /**
+   * Save a key this server's own sign-up minted into its home's credentials
+   * file (env.ts saveCredentials: owner-only, never replacing a key), and
+   * say whether the environment's AGENTCHAT_API_KEY would then refuse it.
+   */
+  saveKey(creds: NewCredentials): SaveKeyResult {
+    const result = saveCredentials(process.env, creds)
+    if (!result.saved) return result
+    const status = this.status()
+    return { ...result, conflict: status.kind === 'conflict' ? status.message : null }
+  }
 }
+
+/** saveCredentials' answer, plus the refusal (its message) the saved key now meets, if any. */
+export type SaveKeyResult =
+  | (Extract<SaveCredentialsResult, { saved: true }> & { conflict: string | null })
+  | Extract<SaveCredentialsResult, { saved: false }>
 
 // ─── Fixed identity (hosted core) ───────────────────────────────────────────
 //

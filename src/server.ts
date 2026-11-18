@@ -89,6 +89,9 @@ export function buildServer(
     // core/transport split — always-on integrations set this per process.
     turnKey: () => process.env['AGENTCHAT_TURN_IDEMPOTENCY_KEY']?.trim(),
     mode: 'stdio',
+    // agentchat_verify_otp saves the key it minted into this server's home,
+    // so the key never has to pass through the model (env.ts saveCredentials).
+    saveKey: (creds) => provider.saveKey(creds),
     logger,
     semaphore,
     inflight,

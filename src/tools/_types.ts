@@ -1,6 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { AgentChatClient } from 'agentchatme'
 import type { Logger } from 'pino'
+import type { SaveKeyResult } from '../client.js'
+import type { NewCredentials } from '../env.js'
 import type { ServerMode, ToolNamer } from '../instructions.js'
 import type { Semaphore } from '../semaphore.js'
 
@@ -71,6 +73,15 @@ export interface ToolContext {
    * names.
    */
   nameTool?: ToolNamer
+  /**
+   * Save a key this session's own sign-up minted where the session's tools
+   * read it, so it never passes through the model: the stdio composition
+   * writes its home's credentials file (owner-only, never replacing a key).
+   * Absent on the hosted composition, which touches no filesystem: there
+   * agentchat_verify_otp hands the key to the caller, for its MCP client's
+   * Authorization header.
+   */
+  saveKey?: (creds: NewCredentials) => SaveKeyResult
 }
 
 export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void

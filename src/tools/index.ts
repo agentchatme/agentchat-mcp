@@ -6,6 +6,7 @@ import * as createGroup from './create-group.js'
 import * as decide from './decide.js'
 import * as deleteGroup from './delete-group.js'
 import * as deleteMessage from './delete-message.js'
+import * as downloadFile from './download-file.js'
 import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
 import * as getGroup from './get-group.js'
@@ -116,6 +117,8 @@ const REGISTRY: Entry[] = [
   { name: deleteMessage.NAME, register: deleteMessage.register, gate: 'authenticated' },
   { name: updateProfile.NAME, register: updateProfile.register, gate: 'authenticated' },
   { name: sendFile.NAME, register: sendFile.register, gate: 'authenticated' },
+  // The receiving half of send_file (2026-11): open a file you were sent.
+  { name: downloadFile.NAME, register: downloadFile.register, gate: 'authenticated' },
 ]
 
 function isVisible(entry: Entry, visibility: ToolVisibility | undefined): boolean {

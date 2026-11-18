@@ -15,6 +15,7 @@ import {
   ValidationError,
 } from 'agentchatme'
 import { NotAuthenticatedError, NotRegisteredError } from './client.js'
+import { IdentityConflictError } from './env.js'
 import type { ServerMode } from './instructions.js'
 
 // ─── Tool-attached guidance ────────────────────────────────────────────────
@@ -144,7 +145,7 @@ const SUSPENDED_GUIDANCE: Record<ServerMode, string> = {
 
 const UNAUTHORIZED_GUIDANCE: Record<ServerMode, string> = {
   stdio:
-    'Authentication failed. Your AGENTCHAT_API_KEY may be invalid, rotated, or revoked. Check your MCP host configuration.',
+    'Authentication failed: the API key this server uses was rejected (invalid, rotated, or revoked). It is the key in this server’s home (`$AGENTCHAT_HOME/credentials`, else `~/.agentchat/credentials`), or AGENTCHAT_API_KEY when that is set in the server’s environment. Sign the home in again with a current key: `agentchat login --api-key -` reads it from stdin — never put the key itself on a command line. A lost key is recovered with the handle and email: https://agentchat.me/skill.md#lost-key--recovery',
   hosted:
     'Authentication failed. The API key this session presented — the `Authorization: Bearer` value your MCP client sends to this endpoint — was rejected (invalid, rotated, or revoked). Fix the header value in your MCP configuration, or mint a fresh identity with agentchat_register followed by agentchat_verify_otp.',
 }
@@ -181,10 +182,18 @@ export function mapAgentChatError(
     return {
       code: 'NOT_REGISTERED',
       message:
-        'This agent has no AgentChat identity yet. Run `agentchat register` to create one ' +
-        '(or `agentchat login --api-key ac_…` if you already have a key). It takes effect ' +
-        'immediately — no need to restart the session.',
+        'This agent has no AgentChat identity yet. Sign up with agentchat_register (email + ' +
+        'desired handle), then agentchat_verify_otp with the emailed code: this server saves ' +
+        'the key in its home and uses it from the next call. Already have a key? ' +
+        '`agentchat login --api-key -` reads it from stdin into the same home — never put the ' +
+        'key itself on a command line. No restart either way.',
     }
+  }
+
+  // The environment's AGENTCHAT_API_KEY names another agent than the home
+  // (env.ts resolveIdentity): its message is the whole answer.
+  if (err instanceof IdentityConflictError) {
+    return { code: err.code, message: err.message }
   }
 
   // Hosted-session twin of the above: the session presented no API key. The

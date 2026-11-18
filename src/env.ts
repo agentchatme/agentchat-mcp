@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -55,6 +56,27 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
 }
 
 // ─── Identity resolution (re-read every call) ────────────────────────────────
+//
+// Two places can name the agent this server acts as: the home's
+// `credentials` file (AGENTCHAT_HOME, else ~/.agentchat — what
+// `agentchat register` / `login` and this server's own agentchat_verify_otp
+// write) and an AGENTCHAT_API_KEY in the server's environment. The
+// environment is easy to inherit by accident: a key exported in the shell
+// that started the MCP host reaches every stdio server it spawns. So the
+// environment's key never silently replaces the agent a home names:
+//
+//   * no AGENTCHAT_API_KEY             → the home's key, or no identity yet
+//   * the home holds the same key      → that identity (with the file's handle)
+//   * the home holds a different key   → refused: IdentityConflictError
+//   * the home holds no key            → the environment's key (an env-only
+//     deploy, as before)
+//
+// The same rule as agent-core's resolveIdentity and the CLI's env guard
+// (agentchat-cli src/guards.ts): a home's key is never overridden by the
+// environment; an empty home takes the environment's key.
+//
+// A refusal is not an error of the call: every tool answers IDENTITY_CONFLICT
+// with the two ways out, and the sign-up pair still works (it needs no key).
 
 export interface Identity {
   apiKey: string
@@ -72,12 +94,34 @@ interface CredentialsFile {
 
 const MIN_KEY_LEN = 20
 
-function readCredentialsFile(source: NodeJS.ProcessEnv): CredentialsFile | null {
-  const home = source['AGENTCHAT_HOME']?.trim()
-    ? path.resolve(source['AGENTCHAT_HOME']!.trim())
-    : path.join(os.homedir(), '.agentchat')
+/** The default identity home, as the CLI and the coding-agent integrations name it. */
+export const DEFAULT_HOME_DIRNAME = '.agentchat'
+
+/**
+ * The home this server reads its identity from, and whether AGENTCHAT_HOME
+ * named it. `home` is null when AGENTCHAT_HOME is unset and the user has no
+ * home directory (`os.homedir()` throws for a uid without a passwd entry and
+ * no HOME, as in some containers): there is then no default home, and an
+ * env-only deploy still works.
+ */
+export function identityHome(source: NodeJS.ProcessEnv = process.env): { home: string | null; explicit: boolean } {
+  const named = source['AGENTCHAT_HOME']?.trim()
+  if (named) return { home: path.resolve(named), explicit: true }
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(home, 'credentials'), 'utf-8'))
+    return { home: path.join(os.homedir(), DEFAULT_HOME_DIRNAME), explicit: false }
+  } catch {
+    return { home: null, explicit: false }
+  }
+}
+
+export function credentialsPathOf(home: string): string {
+  return path.join(home, 'credentials')
+}
+
+function readCredentialsFile(home: string | null): CredentialsFile | null {
+  if (home === null) return null
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(credentialsPathOf(home), 'utf-8'))
     if (parsed && typeof parsed === 'object') return parsed as CredentialsFile
   } catch {
     // absent or unreadable — no identity from the file
@@ -85,26 +129,232 @@ function readCredentialsFile(source: NodeJS.ProcessEnv): CredentialsFile | null 
   return null
 }
 
+function usableKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const key = value.trim()
+  return key.length >= MIN_KEY_LEN ? key : null
+}
+
+/** The environment's API key, trimmed, or null when it is absent or too short to be one. */
+export function envApiKey(source: NodeJS.ProcessEnv = process.env): string | null {
+  return usableKey(source['AGENTCHAT_API_KEY'])
+}
+
 /**
- * Resolve the CURRENT identity, freshly, each time it's called: an explicit
- * AGENTCHAT_API_KEY env wins; otherwise the credentials file written by
- * `agentchat register` / `login` (via AGENTCHAT_HOME or ~/.agentchat). Returns
- * null when there's no usable identity yet — the caller surfaces that as a
- * "register first" tool error, not a crash.
+ * The environment's AGENTCHAT_API_KEY is not the key the home holds: two
+ * agents, and the server will not pick one silently. The message is the
+ * whole answer a tool gives (IDENTITY_CONFLICT): what is wrong, and the two
+ * ways out. It never contains a key.
+ */
+export class IdentityConflictError extends Error {
+  readonly code = 'IDENTITY_CONFLICT'
+
+  constructor(
+    readonly home: string,
+    readonly homeHandle: string | null,
+  ) {
+    super(conflictMessage(home, homeHandle))
+    this.name = 'IdentityConflictError'
+  }
+}
+
+function conflictMessage(home: string, handle: string | null): string {
+  const file = credentialsPathOf(home)
+  const who = handle ? `@${handle.replace(/^@/, '')}` : 'the agent that file names'
+  return (
+    `This server’s environment has AGENTCHAT_API_KEY, and it is not the key in ${file}: they are two different agents, and this server will not pick one silently. ` +
+    `To act as ${who}, remove AGENTCHAT_API_KEY from the environment your MCP host starts this server with (its env settings for this server, or the shell the host was started from). ` +
+    `To act as the agent of that environment key instead, give it a home of its own: set AGENTCHAT_HOME to a new folder, sign in there (\`agentchat login --api-key -\` reads the key from stdin), then remove AGENTCHAT_API_KEY. ` +
+    'The next call picks up the change; no restart.'
+  )
+}
+
+/**
+ * Resolve the CURRENT identity, freshly, each time it's called (see the
+ * table above). Returns null when there's no usable identity yet — the
+ * caller surfaces that as a "register first" tool error, not a crash — and
+ * throws IdentityConflictError when the environment's key is not the one the
+ * home holds.
  */
 export function resolveIdentity(source: NodeJS.ProcessEnv = process.env): Identity | null {
-  const envKey = source['AGENTCHAT_API_KEY']
-  if (envKey && envKey.length >= MIN_KEY_LEN) {
-    const apiBase = source['AGENTCHAT_API_BASE']
-    return { apiKey: envKey, ...(apiBase ? { apiBase } : {}) }
+  const envKey = envApiKey(source)
+  const envBase = source['AGENTCHAT_API_BASE']
+  const { home } = identityHome(source)
+  const file = readCredentialsFile(home)
+  const fileKey = usableKey(file?.api_key)
+  const fileHandle = typeof file?.handle === 'string' && file.handle.length > 0 ? file.handle : null
+
+  if (envKey !== null) {
+    if (fileKey !== null && home !== null) {
+      if (fileKey !== envKey) throw new IdentityConflictError(home, fileHandle)
+      // The same agent both ways: as before, the environment's base wins.
+      const apiBase = envBase || file?.api_base
+      return {
+        apiKey: envKey,
+        ...(apiBase ? { apiBase } : {}),
+        ...(fileHandle ? { handle: fileHandle } : {}),
+      }
+    }
+    return { apiKey: envKey, ...(envBase ? { apiBase: envBase } : {}) }
   }
-  const file = readCredentialsFile(source)
-  if (file?.api_key && file.api_key.length >= MIN_KEY_LEN) {
+  if (fileKey !== null) {
     return {
-      apiKey: file.api_key,
-      ...(file.api_base ? { apiBase: file.api_base } : {}),
-      ...(file.handle ? { handle: file.handle } : {}),
+      apiKey: fileKey,
+      ...(file?.api_base ? { apiBase: file.api_base } : {}),
+      ...(fileHandle ? { handle: fileHandle } : {}),
     }
   }
   return null
+}
+
+// ─── Saving a minted key (the stdio server's own sign-up) ───────────────────
+//
+// agentchat_verify_otp on the stdio server writes the key it minted straight
+// into the home's credentials file, so the key never has to pass through
+// the model, a command line or an environment variable. The file is the
+// shape the CLI and the coding-agent integrations read (agent-core's
+// Credentials: api_key, handle, api_base?, created_at?), owner-only (0600),
+// in a home created owner-only (0700).
+//
+// It never replaces a key: a home that already holds one (another agent's,
+// or a file it cannot read) is left exactly as it is, and the caller hands
+// the key back instead. The file is written beside its final name and then
+// hard-linked into place, which fails if a file appeared there meanwhile, so
+// two concurrent sign-ups cannot overwrite each other either. A temp file a
+// killed process left behind (it holds a key) is removed by the next save
+// once it is a minute old.
+
+export type SaveCredentialsResult =
+  | { saved: true; path: string; alreadyThere: boolean }
+  | { saved: false; path: string; reason: string }
+
+export interface NewCredentials {
+  apiKey: string
+  handle: string
+  /** Written only when it is not the default production base. */
+  apiBase?: string
+}
+
+const DEFAULT_API_BASE = 'https://api.agentchat.me'
+
+/** Beside `credentials` while it is written: `credentials.<pid>.<12 hex>.tmp`. */
+const TEMP_NAME = /^credentials\.\d+\.[0-9a-f]{12}\.tmp$/
+/** Older than this, a temp file belongs to no save in progress. */
+const STALE_TEMP_MS = 60_000
+
+function errnoOf(err: unknown): string | undefined {
+  return (err as NodeJS.ErrnoException | null)?.code
+}
+
+/** Remove the temp files of saves that never finished (each holds a key). */
+function sweepStaleTemps(home: string): void {
+  let names: string[]
+  try {
+    names = fs.readdirSync(home)
+  } catch {
+    return
+  }
+  const now = Date.now()
+  for (const name of names) {
+    if (!TEMP_NAME.test(name)) continue
+    const file = path.join(home, name)
+    try {
+      const st = fs.lstatSync(file)
+      const mine = typeof process.getuid !== 'function' || st.uid === process.getuid()
+      if (st.isFile() && mine && now - st.mtimeMs > STALE_TEMP_MS) fs.unlinkSync(file)
+    } catch {
+      // gone already, or not ours to remove
+    }
+  }
+}
+
+export function saveCredentials(
+  source: NodeJS.ProcessEnv,
+  creds: NewCredentials,
+): SaveCredentialsResult {
+  const { home } = identityHome(source)
+  if (home === null) {
+    return { saved: false, path: '', reason: 'this server has no home directory and AGENTCHAT_HOME is not set, so there is nowhere to save it' }
+  }
+  const target = credentialsPathOf(home)
+  const existing = (() => {
+    try {
+      return fs.readFileSync(target, 'utf-8')
+    } catch (err) {
+      return errnoOf(err) === 'ENOENT' ? null : err
+    }
+  })()
+  if (existing instanceof Error) {
+    return { saved: false, path: target, reason: `${target} exists but could not be read (${errnoOf(existing) ?? existing.message}), so it was left as it is` }
+  }
+  if (typeof existing === 'string') {
+    let held: CredentialsFile | null = null
+    try {
+      held = JSON.parse(existing) as CredentialsFile
+    } catch {
+      held = null
+    }
+    if (usableKey(held?.api_key) === creds.apiKey) return { saved: true, path: target, alreadyThere: true }
+    const who = typeof held?.handle === 'string' && held.handle.length > 0 ? ` (@${held.handle.replace(/^@/, '')})` : ''
+    return { saved: false, path: target, reason: `${target} already holds another agent’s key${who}; it was left as it is` }
+  }
+
+  const base = creds.apiBase?.replace(/\/+$/, '')
+  const body =
+    JSON.stringify(
+      {
+        api_key: creds.apiKey,
+        handle: creds.handle.replace(/^@/, ''),
+        ...(base && base !== DEFAULT_API_BASE ? { api_base: base } : {}),
+        created_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + '\n'
+  const temp = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 })
+    sweepStaleTemps(home)
+    const fd = fs.openSync(temp, 'wx', 0o600)
+    try {
+      fs.writeFileSync(fd, body)
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+    try {
+      fs.linkSync(temp, target)
+    } catch (err) {
+      if (errnoOf(err) === 'EEXIST') {
+        return { saved: false, path: target, reason: `${target} appeared while saving (another sign-in); it was left as it is` }
+      }
+      // A file system without hard links: copy, still refusing to replace.
+      // A copy that fails part-way leaves a part of this very body: removed,
+      // so the next save is not refused by a broken file of its own making.
+      try {
+        fs.copyFileSync(temp, target, fs.constants.COPYFILE_EXCL)
+        fs.chmodSync(target, 0o600)
+      } catch (copyErr) {
+        if (errnoOf(copyErr) !== 'EEXIST') {
+          try {
+            const left = fs.readFileSync(target, 'utf-8')
+            if (body.startsWith(left)) fs.unlinkSync(target)
+          } catch {
+            // nothing was created
+          }
+        }
+        throw copyErr
+      }
+    }
+    return { saved: true, path: target, alreadyThere: false }
+  } catch (err) {
+    const why = errnoOf(err) === 'EEXIST' ? 'a file appeared there while saving' : (errnoOf(err) ?? (err instanceof Error ? err.message : String(err)))
+    return { saved: false, path: target, reason: `the key could not be saved in ${target} (${why})` }
+  } finally {
+    try {
+      fs.unlinkSync(temp)
+    } catch {
+      // never created, or already gone
+    }
+  }
 }

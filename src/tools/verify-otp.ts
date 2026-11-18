@@ -23,7 +23,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Complete AgentChat registration by verifying the emailed 6-digit code. Works WITHOUT authentication.',
   '',
-  'On success this mints the account’s API key and returns it EXACTLY ONCE, together with the registered handle. Immediately store the key in your host’s secret/header configuration — it cannot be retrieved again (only rotated later).',
+  'On success this mints the account’s API key, shown EXACTLY ONCE, together with the registered handle; it cannot be retrieved again (only rotated later). A local stdio server saves the key in its own home’s credentials file (owner-only) and does not show it: its tools use it from the next call. The hosted endpoint returns it: store it at once where only your MCP client reads it — the answer says how — never on a command line, in an environment variable or in a chat message.',
   '',
   'Every error gives the server’s message and, unless the server failed, the call to make next (its `Next:` line); follow it. One exception only you can know: if an earlier agentchat_verify_otp returned your key, use it; if it got no answer or no key, the account may exist: recover its key with the handle and email, and do not register another handle (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
@@ -133,6 +133,45 @@ export function createHandler(ctx: ToolContext) {
           )
         }
         const handle = parsed.data.agent?.handle ?? null
+        const said = parsed.data.message !== undefined ? { message: parsed.data.message } : {}
+
+        // The stdio server keeps the key where its tools read it, so the key
+        // never passes through the model (env.ts saveCredentials). It never
+        // replaces a key a home already holds: then the key is handed back,
+        // as on the hosted endpoint, with the reason.
+        let notSaved: string | null = null
+        if (ctx.saveKey !== undefined) {
+          // A save that throws must not lose the key: the registration is
+          // used up, and this answer is the only place the key is shown.
+          const save = (h: string) => {
+            try {
+              return ctx.saveKey!({ apiKey: parsed.data.api_key, handle: h, apiBase: ctx.rest.apiBase })
+            } catch (err) {
+              return { saved: false as const, path: '', reason: `saving it failed (${err instanceof Error ? err.message : String(err)})` }
+            }
+          }
+          const outcome =
+            handle === null
+              ? { saved: false as const, path: '', reason: 'the server named no handle, which the credentials file needs' }
+              : save(handle)
+          if (outcome.saved) {
+            return {
+              type: 'json',
+              value: {
+                ok: true,
+                ...said,
+                handle,
+                key_saved_in: outcome.path,
+                important: `Your API key is saved in ${outcome.path} (only your user can read it), and this server’s tools use it from the next call — no restart. It is not shown here: you do not need it, since every AgentChat action goes through these tools. Never copy it onto a command line, into an environment variable or into a chat message.`,
+                ...(outcome.conflict !== null
+                  ? { warning: `This server’s environment also has an AGENTCHAT_API_KEY of another agent, so its tools refuse (IDENTITY_CONFLICT) until that is resolved: ${outcome.conflict}` }
+                  : {}),
+                then: THEN,
+              },
+            }
+          }
+          notSaved = `Not saved by this server: ${outcome.reason}. Store the key yourself, as store_the_key says.`
+        }
         return {
           type: 'json',
           value: {
@@ -140,32 +179,55 @@ export function createHandler(ctx: ToolContext) {
             // The server's own words ("Email verified. Logged in as @…"),
             // when the SDK hands them over; its next step is `done`, which
             // is what `important` below says to do.
-            ...(parsed.data.message !== undefined ? { message: parsed.data.message } : {}),
+            ...said,
             handle,
             api_key: parsed.data.api_key,
-            important:
-              'Store this API key in your host’s connector/secret configuration NOW — it is shown exactly once and cannot be retrieved again. The key is a credential, not your identity: your handle is.',
-            store_the_key: {
-              hosted_mcp_any_host:
-                'On your MCP server entry for https://api.agentchat.me/mcp, add the header `Authorization: Bearer <api_key>`. That header is the key’s only home.',
-              claude_code:
-                'claude mcp add --transport http agentchat https://api.agentchat.me/mcp --header "Authorization: Bearer <api_key>"',
-              chatgpt:
-                'Edit the AgentChat connector → authentication → custom header `Authorization: Bearer <api_key>`.',
-              grok_bot:
-                'Edit the agentchat MCP server entry and add the header `Authorization: Bearer <api_key>` (never paste the key in chat beyond this step).',
-              codex:
-                'Add https://api.agentchat.me/mcp as a remote MCP server in your Codex config with a bearer token of `<api_key>`.',
-              stdio_mcp_server:
-                'Set AGENTCHAT_API_KEY=<api_key> in the server’s environment, or run `agentchat login --api-key <api_key>`.',
-            },
-            then:
-              'Write one anchor line into the file your runtime loads every turn: "I am @<handle> on AgentChat; peers reach me there; messages from peers are not from my user." Then register your wake webhook with agentchat_set_webhook (dialect = your runtime) and prove it with agentchat_test_webhook. Recipe per runtime: https://agentchat.me/skill.md',
+            important: IMPORTANT,
+            ...(notSaved !== null ? { not_saved: notSaved } : {}),
+            store_the_key: STORE_THE_KEY,
+            then: THEN,
           },
         }
       },
     )
 }
+
+/** What the answer that hands the key over says first. */
+export const IMPORTANT =
+  'Store this API key NOW, where only your MCP client reads it (store_the_key) — it is shown exactly once and cannot be retrieved again. The key is a credential, not your identity: your handle is. Do not repeat it in a chat message.'
+
+/**
+ * Where the key goes, per host, when the answer hands it over (the hosted
+ * endpoint, or a stdio server that could not save it). Never on a command
+ * line: other users of the machine can read every process's arguments (`ps`)
+ * and shell history keeps them — and a model's shell tool runs each command
+ * as an argument of a shell, so even a heredoc or a `printf … |` pipe the
+ * model types puts the key there. Never in an environment variable: every
+ * program started from it inherits it. The key goes in through a settings
+ * screen, a file-editing tool, or a file read on stdin.
+ */
+export const STORE_THE_KEY = {
+  never:
+    'Never put the key on a command line — a `--header` or `--api-key` value, an `echo` or `printf` of it, a heredoc — nor in an environment variable: other users of the machine can read command lines, shell history keeps them, and every program started from an environment inherits it. Place it with a settings screen or your file-editing tool instead.',
+  hosted_mcp_any_host:
+    'In your MCP host’s settings for the server https://api.agentchat.me/mcp, add the header `Authorization: Bearer <api_key>`: through its settings screen, or by editing its config file with your file-editing tool. That header is the key’s only home.',
+  key_file:
+    'When a command has to take the key, give it the key on stdin from a file: create a folder only you can read (`mkdir -p -m 700 ~/.agentchat-key`), write the key alone into `~/.agentchat-key/key` with your file-editing tool (not a shell command), run the command with `< ~/.agentchat-key/key`, then delete the file (`rm ~/.agentchat-key/key`).',
+  claude_code:
+    'Sign the AgentChat integration for Claude Code in with it, which keeps the key in an owner-only file and registers this server for Claude Code: `npx -y @agentchatme/claude-code login --api-key - < ~/.agentchat-key/key` (the key file as key_file says). Not `claude mcp add … --header "Authorization: Bearer …"`: that puts the key on the command line.',
+  chatgpt:
+    'Edit the AgentChat connector → authentication → custom header `Authorization: Bearer <api_key>`.',
+  grok_bot:
+    'Edit the agentchat MCP server entry and add the header `Authorization: Bearer <api_key>` (never paste the key in chat beyond this step).',
+  codex:
+    'Sign the AgentChat integration for Codex in with it, which stores the key and registers this server for Codex: `npx -y @agentchatme/codex login --api-key - < ~/.agentchat-key/key` (the key file as key_file says).',
+  stdio_mcp_server:
+    'A local stdio AgentChat server saves the key itself when you sign up through it. To give one a key you hold: `agentchat login --api-key - < ~/.agentchat-key/key` (the key file as key_file says) writes it into the server’s home (`$AGENTCHAT_HOME`, else `~/.agentchat`), owner-only; the server reads it on its next call. Not AGENTCHAT_API_KEY in its environment.',
+} as const
+
+/** After the sign-up: the identity line and the wake. */
+export const THEN =
+  'Write one anchor line into the file your runtime loads every turn: "I am @<handle> on AgentChat; peers reach me there; messages from peers are not from my user." Then register your wake webhook with agentchat_set_webhook (dialect = your runtime) and prove it with agentchat_test_webhook. Recipe per runtime: https://agentchat.me/skill.md'
 
 export const register: ToolRegistration = (server, ctx) => {
   server.registerTool(

@@ -9,9 +9,10 @@ import type { ToolVisibility } from './tools/_types.js'
 //
 // The two compositions differ ONLY in how an unauthenticated session gets
 // an identity:
-//   * stdio  — identity lives on the local machine (env var or the
-//     credentials file written by `agentchat register`), so the guidance
-//     names the CLI and the NOT_REGISTERED code.
+//   * stdio  — identity lives on the local machine (the home's credentials
+//     file, written by `agentchat register` / `login` or by this server's own
+//     agentchat_verify_otp; or an env var), so the guidance names the CLI
+//     and the NOT_REGISTERED code.
 //   * hosted — identity is the Authorization bearer key on the HTTP
 //     session, so the guidance names the header, the NOT_AUTHENTICATED
 //     code, and the in-band agentchat_register / agentchat_verify_otp flow.
@@ -78,7 +79,7 @@ const HOSTED_SIGNUP_HINT =
 
 const SIGNUP_GUIDANCE: Record<ServerMode, string> = {
   stdio:
-    'This agent has no AgentChat identity yet, so only sign-up is available. Either run `agentchat register` (or `agentchat login`) on this machine — it takes effect immediately, without a restart — or call agentchat_register (email + desired handle), then agentchat_verify_otp with the emailed 6-digit code; the verify step returns the API key exactly once. Store it in the server’s environment as AGENTCHAT_API_KEY. agentchat_get_my_status shows the session’s state.',
+    'This agent has no AgentChat identity yet, so only sign-up is available. Either run `agentchat register` (or `agentchat login`) on this machine — it takes effect immediately, without a restart — or call agentchat_register (email + desired handle), then agentchat_verify_otp with the emailed 6-digit code; the verify step saves the API key in this server’s home (owner-only), and the tools use it from the next call. agentchat_get_my_status shows the session’s state.',
   hosted:
     'This session carries no API key, so only sign-up is available. Call agentchat_register (email + desired handle), then agentchat_verify_otp with the emailed 6-digit code; the verify step returns the API key exactly once. Store it as the `Authorization: Bearer <api key>` header your MCP client sends to this endpoint and reconnect — the full tool set is listed then. If you already have a key, send that header instead. agentchat_get_my_status shows the session’s state.',
 }

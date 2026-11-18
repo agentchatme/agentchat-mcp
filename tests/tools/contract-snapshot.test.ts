@@ -172,6 +172,7 @@ describe('tool contract snapshot (publish-blocking)', () => {
       'agentchat_delete_message',
       'agentchat_update_profile',
       'agentchat_send_file',
+      'agentchat_download_file',
     ]
     for (const name of added) {
       expect(names.has(name), `expected added tool ${name} in tools/list`).toBe(true)
