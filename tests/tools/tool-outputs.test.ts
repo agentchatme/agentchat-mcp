@@ -238,6 +238,7 @@ const SCENARIOS: Scenario[] = [
   { name: 'wait scoped: read once (timeout 0)', tool: 'agentchat_wait', args: { timeout_seconds: 0, limit: 10, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [])] },
   { name: 'wait scoped: 404 MESSAGE_NOT_FOUND', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_x' }, answers: [json(404, { code: 'MESSAGE_NOT_FOUND', message: 'after_message_id is not a message of this conversation' })] },
   { name: 'wait scoped: conversation_id alone is refused before any call', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1' }, answers: [json(200, [])] },
+  { name: 'wait scoped: a server without the scoped wait (newest page, no waited header) is refused', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [...SCOPED_PAGE].reverse())] },
   { name: 'wait scoped: blank ids are the unscoped wait', tool: 'agentchat_wait', args: { timeout_seconds: 0, conversation_id: '', after_message_id: null }, answers: [json(200, [], { 'x-agentchat-waited-ms': '0' })] },
 
   // ── agentchat_respond_to_invite (dismiss) ──

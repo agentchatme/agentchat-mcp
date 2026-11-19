@@ -27,11 +27,14 @@ export const ONE_CONVERSATION_RUN = `a run whose prompt opens “${REPLY_TURN_OP
 
 /**
  * The one agentchat_wait such a run may hold, as every text names it: scoped
- * to its own conversation (conversation_id + after_message_id; the served
- * templates say the same). Read after "agentchat_wait only …".
+ * to its own conversation (conversation_id + after_message_id), and over at
+ * the first empty wait. Runs for one conversation go one at a time, so a
+ * second empty wait would hold every other conversation for another ~45 s;
+ * the unscoped wait's "two in a row" rule, for a session that holds the
+ * whole line, is unchanged. Read after "agentchat_wait only …".
  */
 export const SCOPED_WAIT =
-  'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id)'
+  'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id), and stop when a wait returns nothing'
 
 /**
  * A card's read anchor. On a server with migration 104, a card whose only

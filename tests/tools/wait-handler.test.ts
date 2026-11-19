@@ -14,8 +14,10 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // (6) the time budget composes under the 60 s host budgets, (7) ack retry +
 // honest failure reporting, (8) blank arguments mean the defaults, (9) the
 // scoped wait (conversation_id + after_message_id, both or neither): one
-// long-poll of that conversation, no ack, the same deadline and result shape,
-// (10) a message hidden from you is marked could_not_process: true.
+// long-poll of that conversation, no ack, the same deadline and result shape
+// plus next_after_message_id, an old server's plain answer refused, the
+// caller's handle resolved before its own messages are left out, (10) a
+// message hidden from you is marked could_not_process: true.
 
 type FetchCall = {
   url: string
@@ -534,9 +536,12 @@ describe('agentchat_wait handler', () => {
     it('answers in the unscoped shape: only the others’ messages, acked = what the fetch marked delivered', async () => {
       const { impl } = fetchStub(() => json(200, PAGE, { 'x-agentchat-waited-ms': '2100' }))
       const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+      // The unscoped shape, plus the cursor for the next call.
       expect(Object.keys(payload).sort()).toEqual(
-        ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next'].sort(),
+        ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next_after_message_id', 'next'].sort(),
       )
+      // The last row served, the caller's own included.
+      expect(payload['next_after_message_id']).toBe('msg_7')
       expect(payload).toMatchObject({ you: '@me', outcome: 'messages', waited_ms: 2100, count: 1, acked: 1, has_more: false })
       expect(payload['conversations']).toEqual([
         {
@@ -557,20 +562,135 @@ describe('agentchat_wait handler', () => {
         },
       ])
       expect(payload['next']).toBe(waitTool.NEXT.scopedMessages)
-      expect(payload['next']).toContain('agentchat_wait again with this conversation_id and the newest message_id as after_message_id')
+      expect(payload['next']).toContain('agentchat_wait again with this conversation_id and next_after_message_id as after_message_id')
     })
 
-    it('nothing from the others: the timeout outcome, with the scoped next step', async () => {
+    it('nothing from the others: the timeout outcome, and one empty scoped wait means stop', async () => {
       const { impl } = fetchStub(() => json(200, [], { 'x-agentchat-waited-ms': '30000' }))
       const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
       expect(payload).toMatchObject({ outcome: 'timeout', waited_ms: 30000, count: 0, acked: 0, has_more: false, conversations: [] })
+      // Nothing served: the cursor stays where it was.
+      expect(payload['next_after_message_id']).toBe('msg_5')
       expect(payload['next']).toBe(waitTool.NEXT.scopedTimeout)
+      expect(waitTool.NEXT.scopedTimeout).toBe('Nothing new arrived in this conversation: stop — the next message wakes you.')
+    })
+
+    it('only the caller’s own messages, under a page that is not full: nothing new, stop', async () => {
+      const { impl } = fetchStub(() => json(200, [PAGE[0]], { 'x-agentchat-waited-ms': '30000' }))
+      const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+      expect(payload).toMatchObject({ outcome: 'timeout', count: 0, has_more: false, next_after_message_id: 'msg_6' })
+      expect(payload['next']).toBe(waitTool.NEXT.scopedTimeout)
+    })
+
+    it('a full page of the caller’s own messages moves the cursor on instead of stranding the model', async () => {
+      const own = [5, 6, 7].map((seq) => ({ ...PAGE[0]!, id: `msg_own_${seq}`, seq: seq + 10 }))
+      const { impl } = fetchStub(() => json(200, own))
+      const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 3, ...scoped }))
+      expect(payload).toMatchObject({ outcome: 'timeout', count: 0, has_more: true, next_after_message_id: 'msg_own_7' })
+      expect(payload['next']).toBe(waitTool.NEXT.scopedOwnOnly)
+      expect(payload['next']).toContain('next_after_message_id as after_message_id')
     })
 
     it('has_more counts the page as served, own messages included', async () => {
       const { impl } = fetchStub(() => json(200, PAGE))
       const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 2, ...scoped }))
-      expect(payload).toMatchObject({ count: 1, has_more: true })
+      expect(payload).toMatchObject({ count: 1, has_more: true, next_after_message_id: 'msg_7' })
+    })
+
+    describe('a server without the scoped wait (it answers the newest page, newest first)', () => {
+      const NEWEST_FIRST = [
+        { ...PAGE[1]!, id: 'msg_9', seq: 9 },
+        { ...PAGE[1]!, id: 'msg_8', seq: 8 },
+      ]
+      const refused = (result: { isError?: boolean; content: unknown[] }) => {
+        expect(result.isError).toBe(true)
+        expect(firstText(result)).toBe(`Error: SCOPED_WAIT_UNSUPPORTED\n\n${waitTool.SCOPED_WAIT_UNSUPPORTED_TEXT}`)
+        expect(firstText(result)).toContain('This server cannot wait on one conversation')
+        expect(firstText(result)).toContain('stop')
+      }
+
+      it('a wait answered without X-AgentChat-Waited-Ms is refused, never shown as new messages', async () => {
+        const { impl, calls } = fetchStub(() => json(200, [PAGE[1]]))
+        refused(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+        expect(calls).toHaveLength(1)
+      })
+
+      it('the cursor’s own message in the page is refused (a read once, so no header is asked for)', async () => {
+        const { impl } = fetchStub(() => json(200, [{ ...PAGE[1]!, id: 'msg_5', seq: 5 }]))
+        refused(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 50, ...scoped }))
+      })
+
+      it('seqs that do not strictly ascend are refused', async () => {
+        const { impl } = fetchStub(() => json(200, NEWEST_FIRST))
+        refused(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 50, ...scoped }))
+        const { impl: same } = fetchStub(() => json(200, [{ ...PAGE[1]!, id: 'msg_a', seq: 9 }, { ...PAGE[1]!, id: 'msg_b', seq: 9 }]))
+        refused(await waitTool.createHandler(makeCtx(same))({ timeout_seconds: 0, limit: 50, ...scoped }))
+      })
+
+      it('servedWithoutScopedWait: each signal alone, and a scoped answer passes', () => {
+        const rows = [{ id: 'msg_6', seq: 6 }, { id: 'msg_7', seq: 7 }, { id: 'msg_x' }]
+        expect(waitTool.servedWithoutScopedWait(rows, 'msg_5', true)).toBe(false)
+        expect(waitTool.servedWithoutScopedWait(rows, 'msg_5', null)).toBe(false)
+        expect(waitTool.servedWithoutScopedWait([], 'msg_5', true)).toBe(false)
+        expect(waitTool.servedWithoutScopedWait([], 'msg_5', false)).toBe(true)
+        expect(waitTool.servedWithoutScopedWait(rows, 'msg_7', true)).toBe(true)
+        expect(waitTool.servedWithoutScopedWait([{ id: 'msg_7', seq: 7 }, { id: 'msg_6', seq: 6 }], 'msg_1', null)).toBe(true)
+      })
+    })
+
+    describe('the caller’s handle, before its own messages are left out', () => {
+      const isMe = (call: FetchCall) => new URL(call.url).pathname === '/v1/agents/me'
+      /** A stdio identity from an environment key: '?' until its handle is known. */
+      const unknownHandleCtx = (impl: typeof fetch) => ({ ...makeCtx(impl), selfHandle: '?' })
+
+      it('an unknown handle is asked for once, first, and then own messages are left out', async () => {
+        const { impl, calls } = fetchStub((call) =>
+          isMe(call) ? json(200, { handle: 'me', display_name: null }) : json(200, PAGE, { 'x-agentchat-waited-ms': '10' }),
+        )
+        const ctx = unknownHandleCtx(impl)
+        const handler = waitTool.createHandler(ctx)
+        const first = payloadOf(await handler({ timeout_seconds: 5, limit: 50, ...scoped }))
+        expect(calls.map((call) => new URL(call.url).pathname)).toEqual(['/v1/agents/me', '/v1/messages/conv_1'])
+        expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
+        expect(first).toMatchObject({ you: '@me', count: 1 })
+        const ids = (first['conversations'] as Array<{ messages: Array<{ message_id: string }> }>)[0]!.messages.map((m) => m.message_id)
+        expect(ids).toEqual(['msg_7'])
+        // Cached for the session: the next call asks nothing more.
+        await handler({ timeout_seconds: 5, limit: 50, ...scoped })
+        expect(calls.filter(isMe)).toHaveLength(1)
+        // A new key (a login mid-session) is asked for again.
+        ctx.rest.apiKey = 'ac_live_ffffffffffffffffffffffffffffffff'
+        await handler({ timeout_seconds: 5, limit: 50, ...scoped })
+        expect(calls.filter(isMe)).toHaveLength(2)
+      })
+
+      it('a known handle asks nothing', async () => {
+        const { impl, calls } = fetchStub(() => json(200, [], { 'x-agentchat-waited-ms': '10' }))
+        await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 5, limit: 50, ...scoped })
+        expect(calls.filter(isMe)).toHaveLength(0)
+      })
+
+      it('when the handle cannot be had, nothing is fetched (and so nothing is marked delivered)', async () => {
+        const { impl, calls } = fetchStub((call) => (isMe(call) ? json(503, { code: 'INTERNAL_ERROR', message: 'down' }) : json(200, PAGE)))
+        const result = await waitTool.createHandler(unknownHandleCtx(impl))({ timeout_seconds: 5, limit: 50, ...scoped })
+        expect(result.isError).toBe(true)
+        expect(firstText(result)).toContain('SERVER_ERROR')
+        expect(calls.map((call) => new URL(call.url).pathname)).toEqual(['/v1/agents/me'])
+      })
+
+      it('an answer without a handle is an error, not a guess', async () => {
+        const { impl, calls } = fetchStub((call) => (isMe(call) ? json(200, {}) : json(200, PAGE)))
+        const result = await waitTool.createHandler(unknownHandleCtx(impl))({ timeout_seconds: 5, limit: 50, ...scoped })
+        expect(result.isError).toBe(true)
+        expect(firstText(result)).toContain('answered without a handle')
+        expect(calls.filter(isScoped)).toHaveLength(0)
+      })
+
+      it('the unscoped wait never asks (the sync carries no own messages)', async () => {
+        const { impl, calls } = fetchStub(() => json(200, []))
+        await waitTool.createHandler(unknownHandleCtx(impl))({ timeout_seconds: 0, limit: 50 })
+        expect(calls.filter(isMe)).toHaveLength(0)
+      })
     })
 
     it('timeout_seconds: 0 reads once: no wait_ms, still after the cursor', async () => {
@@ -654,7 +774,7 @@ describe('agentchat_wait handler', () => {
 
       it('anchored at entry: time queued on the semaphore trims the park sent to the server', async () => {
         vi.useFakeTimers()
-        const { impl, calls } = fetchStub(() => json(200, []))
+        const { impl, calls } = fetchStub(() => json(200, [], { 'x-agentchat-waited-ms': '30000' }))
         const semaphore = new Semaphore(1)
         await semaphore.acquire()
         const pending = waitTool.createHandler(makeCtx(impl, KEY, semaphore))({ timeout_seconds: 45, limit: 50, ...scoped })

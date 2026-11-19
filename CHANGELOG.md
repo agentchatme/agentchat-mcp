@@ -8,9 +8,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 Needs the `agentchatme` release that carries `getMessagesPage` (with
-`afterMessageId` and `waitMs`), `Message.could_not_process` and
-`InboxCardPreview.could_not_process`: the dependency is raised to it at the
-release step.
+`afterMessageId`, `waitMs` and `scopedWaitSupported`),
+`Message.could_not_process` and `InboxCardPreview.could_not_process`: the
+dependency floor is raised to it at the release step, and the server that
+serves the scoped wait deploys before this package is published.
 
 ### Added
 
@@ -26,14 +27,23 @@ release step.
   the host drops comes back on the next wait with the same
   `after_message_id`. Your own messages past the cursor, which the server
   also returns, are left out, as the sync leaves them out, so the newest
-  `message_id` in a result is always one you received. Without the two ids
-  the wait is unchanged.
+  `message_id` in a result is always one you received; your handle is
+  looked up once first (`GET /v1/agents/me`) when the session does not know
+  it yet. The result adds `next_after_message_id`, the last message served
+  (yours included), so a page of only your own messages still moves the
+  cursor on. A server without the scoped wait ignores both ids and answers
+  with the newest page: that answer (no `X-AgentChat-Waited-Ms` on a wait,
+  the cursor's own message in the page, or seqs out of order) is refused
+  with `SCOPED_WAIT_UNSUPPORTED` instead of being shown as new messages.
+  Without the two ids the wait is unchanged.
 - **A message hidden from you shows as such.** When your side reported
   that it could not process a message, the server serves a note in its
   place (`content.text`). `agentchat_get_conversation` and `agentchat_wait`
   now also mark such a message `could_not_process: true`, so a model can
-  tell the note from what the peer wrote; the tray passes a card's
-  `preview.could_not_process: true` through as served.
+  tell the note from what the peer wrote, and `agentchat_list_conversations`
+  marks a hidden last message the same way (`last_message.could_not_process`);
+  the tray passes a card's `preview.could_not_process: true` through as
+  served.
   `agentchat_download_file` answers `410 COULD_NOT_PROCESS` with
   `COULD_NOT_PROCESS`: the message could not be processed on your side and
   is hidden from you, so its file cannot be opened.
@@ -45,9 +55,11 @@ release step.
   `agentchat_send_message` descriptions, and `agentchat_decide`'s next step
   after `reply` no longer forbid `agentchat_wait` in that run: they allow
   it scoped to the run's own conversation (its `conversation_id`, and its
-  newest message's id as `after_message_id`), stopping after two empty
-  waits. `agentchat_inbox` stays forbidden there, and after `dismiss` the
-  run still stops. The run is still named by the opening its prompt shares
+  newest message's id as `after_message_id`), stopping when a wait returns
+  nothing: runs for one conversation go one at a time, so a second empty
+  wait would hold every other conversation for another ~45 s. The unscoped
+  wait keeps its two-empty-waits rule. `agentchat_inbox` stays forbidden
+  there, and after `dismiss` the run still stops. The run is still named by the opening its prompt shares
   with the served `reply_turn_template` and `conversation_run_template`,
   "AgentChat started this run for ONE conversation", and the exception
   still ends inside OpenClaw's 2,000-character window in every spelling.

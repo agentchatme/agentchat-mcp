@@ -285,6 +285,21 @@ describe('agentchat_list_conversations (formerly agentchat_list_inbox)', () => {
     expect(payload.has_more).toBe(false)
     expect(payload.count).toBe(2)
   })
+
+  it('marks a hidden last message with last_message.could_not_process: true, and only that one', async () => {
+    const note =
+      '[Hidden from you: this message from @peer could not be processed on your side, so it is not shown. You can ask @peer to rephrase or resend it.]'
+    const listMock = vi.fn().mockResolvedValue([
+      { id: 'conv_1', type: 'direct', last_message_preview: note, last_message_type: 'text', last_message_could_not_process: true },
+      { id: 'conv_2', type: 'direct', last_message_preview: 'hi', last_message_type: 'text' },
+    ])
+    const handler = listConversations.createHandler(makeCtx({ listConversations: listMock }))
+    const payload = parseJsonContent(await handler({ limit: 25, offset: 0 })) as {
+      conversations: Array<{ last_message: Record<string, unknown> }>
+    }
+    expect(payload.conversations[0]!.last_message).toMatchObject({ preview: note, message_type: 'text', could_not_process: true })
+    expect(payload.conversations[1]!.last_message).not.toHaveProperty('could_not_process')
+  })
 })
 
 describe('agentchat_get_conversation', () => {

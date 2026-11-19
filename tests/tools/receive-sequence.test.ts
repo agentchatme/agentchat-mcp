@@ -504,9 +504,9 @@ describe('a run AgentChat started for ONE conversation', () => {
     expect(decide.NEXT.defer).not.toMatch(PULLS_BACK)
   })
 
-  it('the scoped wait is named the same way everywhere: that run’s conversation_id, its newest message_id as after_message_id', () => {
+  it('the scoped wait is named the same way everywhere: that run’s conversation_id, its newest message_id as after_message_id, stop at the first empty wait', () => {
     expect(SCOPED_WAIT).toBe(
-      'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id)',
+      'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id), and stop when a wait returns nothing',
     )
   })
 

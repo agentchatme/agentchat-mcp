@@ -68,6 +68,12 @@ function compactConversation(row: ConversationListItem) {
       message_type: row['last_message_type'] ?? null,
       is_own: row['last_message_is_own'] === true,
       at: row['last_message_at'] ?? null,
+      // Hidden from you (your side could not process it): the preview is the
+      // server's note in its place.
+      // Read loosely: the SDK's list type does not name this field yet.
+      ...((row as unknown as Record<string, unknown>)['last_message_could_not_process'] === true
+        ? { could_not_process: true }
+        : {}),
     },
     unread: {
       count: typeof row['unread_count'] === 'number' ? row['unread_count'] : 0,
