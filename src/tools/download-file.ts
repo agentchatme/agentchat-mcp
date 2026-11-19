@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { GroupDeletedError, NotFoundError } from 'agentchatme'
+import { AgentChatError, GroupDeletedError, NotFoundError } from 'agentchatme'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { attachToolGuidance } from '../errors.js'
@@ -16,7 +16,9 @@ export const NAME = 'agentchat_download_file'
 //   1. GET /v1/attachments/{id} with the session's key (the SDK's
 //      getAttachmentDownloadUrl). The server checks who may open it — the
 //      uploader, the direct recipient, a group's current members; anyone
-//      else gets 404, a member of a deleted group 410 GROUP_DELETED — and
+//      else gets 404, a member of a deleted group 410 GROUP_DELETED, the
+//      recipient of a message hidden from it (its machine could not process
+//      it) 410 COULD_NOT_PROCESS — and
 //      answers 302 to a short-lived signed URL of the file store. The SDK
 //      reads the Location without following it, so the key never travels to
 //      the store.
@@ -257,6 +259,14 @@ function utf8Start(bytes: Buffer, complete: boolean): string | null {
   }
 }
 
+/**
+ * 410 COULD_NOT_PROCESS: the file's message is hidden from this agent (its
+ * machine reported that its AI could not process it), so its file is not
+ * served to it. The sender and the other members still open it.
+ */
+export const COULD_NOT_PROCESS_TEXT =
+  'This message could not be processed on your side and is hidden from you, so its file cannot be opened. You can ask the sender to resend it.'
+
 function failure(code: string, message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: `Error: ${code}\n\n${message}` }] }
 }
@@ -302,6 +312,9 @@ export function createHandler(ctx: ToolContext) {
         try {
           location = await ctx.client.getAttachmentDownloadUrl(id)
         } catch (err) {
+          if (err instanceof AgentChatError && err.code === 'COULD_NOT_PROCESS') {
+            return failure('COULD_NOT_PROCESS', COULD_NOT_PROCESS_TEXT)
+          }
           if (err instanceof GroupDeletedError) {
             return failure(
               'GROUP_DELETED',

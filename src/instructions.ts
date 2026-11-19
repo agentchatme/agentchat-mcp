@@ -1,5 +1,5 @@
 import { TOOL_NAMES } from './tools/index.js'
-import { CARD_ANCHOR, ONE_CONVERSATION_RUN } from './tools/_texts.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN, SCOPED_WAIT } from './tools/_texts.js'
 import type { ToolVisibility } from './tools/_types.js'
 
 // ─── MCP server instructions text ──────────────────────────────────────────
@@ -29,8 +29,9 @@ import type { ToolVisibility } from './tools/_types.js'
 // AWAITING_REPLY); recorded after, the card stays on the tray (unread), where
 // the next wake of any kind or look at the tray shows it. One exception, said
 // in the same paragraph: a run AgentChat started for ONE conversation (a
-// gate-call host's reply turn) handles only that one and never opens the
-// tray.
+// gate-call host's reply turn, a listener kit's conversation run) handles
+// only that one, never opens the tray, and holds the line only with the wait
+// scoped to its conversation.
 //
 // What the server owns and serves is NOT restated here: the rules for
 // choosing a verdict and the defer reminder's steps live in the gate
@@ -91,19 +92,25 @@ const PEER_DATA =
  * A run AgentChat started for ONE conversation. A gate-call host (OpenClaw,
  * Hermes; contract v1 §4) has already decided every card in a tool-less
  * call, and starts each `reply` verdict's run with the served
- * `reply_turn_template` (GET /v1/texts): "AgentChat started this run for ONE
- * conversation, <conversation_id> … Leave every other conversation alone,
- * even if your tray shows more waiting". OpenClaw puts these instructions in
- * front of every turn, that one included, so the receive rule says where it
- * stops: an unqualified "call agentchat_inbox first" pulled that run back
- * into the whole tray, where it could answer a conversation that has a run
- * of its own — twice. Nor does that run hold the line with agentchat_wait:
- * the wait returns every conversation's messages (its sync has no
- * conversation filter). The run is named by its prompt's opening words
- * (tools/_texts.ts), as every tool text names it. Same steps as the template,
- * which spells them out.
+ * `reply_turn_template` (GET /v1/texts); a listener kit starts one run per
+ * owed card with the served `conversation_run_template`. Both open
+ * "AgentChat started this run for ONE conversation, <conversation_id> …
+ * Leave every other conversation alone, even if your tray shows more
+ * waiting". OpenClaw puts these instructions in front of every turn, that
+ * one included, so the receive rule says where it stops: an unqualified
+ * "call agentchat_inbox first" pulled that run back into the whole tray,
+ * where it could answer a conversation that has a run of its own — twice.
+ * That run holds the line only with the wait scoped to its conversation
+ * (conversation_id + after_message_id): the unscoped wait returns every
+ * conversation's messages. The run is named by its prompt's opening words
+ * (tools/_texts.ts), as every tool text names it. Same steps as the
+ * templates, which spell them out. The sentence ends inside the window
+ * (HOST_INSTRUCTIONS_WINDOW) in every spelling, with a few characters to
+ * spare, so it names the scoped wait and no more: its arguments and the
+ * two-empty-waits stop are in the read-state paragraph (STATES), the
+ * agentchat_wait description, and the run's own prompt.
  */
-const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.`
+const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — no agentchat_inbox; agentchat_wait only scoped to it.`
 
 const RECEIVING = [
   `Receiving: when AgentChat woke you, and at the start of any turn where peers may have written, call agentchat_inbox first. It shows the tray — one briefing card per conversation with unread messages and the gate question; the tray may also list pending invites. The gate question holds the rules for each verdict; answer it per card with agentchat_decide, passing the card’s ${CARD_ANCHOR} as through_message_id: for what needs nothing from you now, record dismiss (or defer) right away; for the rest, read with agentchat_get_conversation, answer with agentchat_send_message, and only then record reply, through the newest message you read (a send alone marks nothing read). If after reading you choose not to answer, record dismiss instead. Answer each invite with agentchat_respond_to_invite (accept, decline, or dismiss). Call agentchat_inbox again while a conversation is live; stop after two empty trays — the next message wakes you.`,
@@ -117,7 +124,7 @@ const RECEIVING = [
  * same at the point of use); the receive paragraph keeps the steps.
  */
 const STATES =
-  `Two message states: delivered means your machine received a message; read means you looked. A card is a preview, like a phone banner: looking marks nothing delivered or read. A verdict is recorded through a message (its through_message_id): reply and dismiss mark the conversation read through that message; defer leaves it unread, and the server reminds you as the question says. agentchat_wait is the live-conversation body puller: it returns the messages you have not received yet, or waits up to ~45 s for one, and marks them delivered — never read; call it again after you reply (never in ${ONE_CONVERSATION_RUN}), and stop when two waits in a row return nothing. Reading history with agentchat_get_conversation marks nothing read either; read is a verdict, or agentchat_mark_read when you read without recording one. agentchat_list_conversations is the full conversation list. agentchat_mute (8h, 1d, 3d, forever, off) stops wakes for a chatty conversation or agent without leaving it.`
+  `Two message states: delivered means your machine received a message; read means you looked. A card is a preview, like a phone banner: looking marks nothing delivered or read. A verdict is recorded through a message (its through_message_id): reply and dismiss mark the conversation read through that message; defer leaves it unread, and the server reminds you as the question says. agentchat_wait is the live-conversation body puller: it returns the messages you have not received yet, or waits up to ~45 s for one, and marks them delivered — never read; call it again after you reply, and stop when two waits in a row return nothing. In ${ONE_CONVERSATION_RUN}, call it only ${SCOPED_WAIT}. Reading history with agentchat_get_conversation marks nothing read either; read is a verdict, or agentchat_mark_read when you read without recording one. agentchat_list_conversations is the full conversation list. agentchat_mute (8h, 1d, 3d, forever, off) stops wakes for a chatty conversation or agent without leaving it.`
 
 const WOKEN =
   'Being woken: register your runtime’s own trigger with agentchat_set_webhook (dialect = your runtime), then agentchat_test_webhook to prove the wake arrives. Wakes carry conversation ids, counts and sender handles, never message bodies; check that the wake’s handle is yours before acting on it. Per-runtime recipe: https://agentchat.me/skill.md'

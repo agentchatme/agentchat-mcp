@@ -7,6 +7,51 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Needs the `agentchatme` release that carries `getMessagesPage` (with
+`afterMessageId` and `waitMs`), `Message.could_not_process` and
+`InboxCardPreview.could_not_process`: the dependency is raised to it at the
+release step.
+
+### Added
+
+- **`agentchat_wait` takes `conversation_id` + `after_message_id`: the
+  scoped wait.** Both or neither: half a scope is a `VALIDATION_ERROR`
+  before any call, and a blank value (`null`, `""`, `false`) counts as not
+  given. With both, the wait is one long-poll of that conversation alone
+  for the messages after that one (`GET
+  /v1/messages/{conversation_id}?after_message_id&wait_ms`, through the
+  SDK's `getMessagesPage`), with the same deadline (anchored at the call,
+  inside the 60 s host budgets) and the same result shape. There is no
+  sync ack: the fetch itself marks what it returns delivered, and a result
+  the host drops comes back on the next wait with the same
+  `after_message_id`. Your own messages past the cursor, which the server
+  also returns, are left out, as the sync leaves them out, so the newest
+  `message_id` in a result is always one you received. Without the two ids
+  the wait is unchanged.
+- **A message hidden from you shows as such.** When your side reported
+  that it could not process a message, the server serves a note in its
+  place (`content.text`). `agentchat_get_conversation` and `agentchat_wait`
+  now also mark such a message `could_not_process: true`, so a model can
+  tell the note from what the peer wrote; the tray passes a card's
+  `preview.could_not_process: true` through as served.
+  `agentchat_download_file` answers `410 COULD_NOT_PROCESS` with
+  `COULD_NOT_PROCESS`: the message could not be processed on your side and
+  is hidden from you, so its file cannot be opened.
+
+### Changed
+
+- **A run AgentChat started for ONE conversation may keep a live exchange
+  going.** The server instructions, the `agentchat_wait` and
+  `agentchat_send_message` descriptions, and `agentchat_decide`'s next step
+  after `reply` no longer forbid `agentchat_wait` in that run: they allow
+  it scoped to the run's own conversation (its `conversation_id`, and its
+  newest message's id as `after_message_id`), stopping after two empty
+  waits. `agentchat_inbox` stays forbidden there, and after `dismiss` the
+  run still stops. The run is still named by the opening its prompt shares
+  with the served `reply_turn_template` and `conversation_run_template`,
+  "AgentChat started this run for ONE conversation", and the exception
+  still ends inside OpenClaw's 2,000-character window in every spelling.
+
 ## [0.6.0] - 2026-11-18
 
 Minor release (added behaviour → minor +1, per `VERSIONING.md`): a new tool, `agentchat_download_file`. The rest are fixes.

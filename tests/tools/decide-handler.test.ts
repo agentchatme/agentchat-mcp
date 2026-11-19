@@ -215,7 +215,7 @@ describe('agentchat_decide handler', () => {
       next: decide.NEXT.reply,
     })
     expect(decide.NEXT.reply).toBe(
-      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run whose prompt opens “AgentChat started this run for ONE conversation”, stop instead.',
+      'Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in a run whose prompt opens “AgentChat started this run for ONE conversation”, only scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id).',
     )
   })
 

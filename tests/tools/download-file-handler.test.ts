@@ -303,6 +303,22 @@ describe('agentchat_download_file: refusals say what happened', () => {
     expect(text).toContain('can no longer be opened')
   })
 
+  it('410 COULD_NOT_PROCESS: the message is hidden from you, so its file is not served; no store call', async () => {
+    const net = network(
+      () => new Response('never fetched'),
+      (call) =>
+        pathOf(call) === '/v1/attachments/att_1'
+          ? json(410, { code: 'COULD_NOT_PROCESS', message: 'This message is hidden from you' })
+          : undefined,
+    )
+    const { result } = await download(net)
+    expect(result.isError).toBe(true)
+    const text = (result.content as Array<{ text: string }>)[0]!.text
+    expect(text).toBe(`Error: COULD_NOT_PROCESS\n\n${downloadFile.COULD_NOT_PROCESS_TEXT}`)
+    expect(text).toContain('could not be processed on your side and is hidden from you')
+    expect(net.calls).toHaveLength(1)
+  })
+
   it('a store refusal is DOWNLOAD_FAILED, with the way on', async () => {
     const net = network(() => new Response('expired', { status: 400 }))
     const { result } = await download(net)
