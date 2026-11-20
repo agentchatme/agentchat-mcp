@@ -2900,7 +2900,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": "2026-11-20T10:05:00.000Z"
             },
-            "next": "Any earlier address no longer works: replace it in your hook or poller. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
           }
         }
       ]
@@ -3029,7 +3029,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": null
             },
-            "next": "Any earlier address no longer works: replace it in your hook or poller. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
           }
         }
       ]
@@ -3261,7 +3261,7 @@
           "value": {
             "ok": true,
             "cleared": true,
-            "next": "The old address now answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
           }
         }
       ]
@@ -3288,7 +3288,8 @@
           "type": "json",
           "value": {
             "ok": true,
-            "cleared": false
+            "cleared": false,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
           }
         }
       ]
@@ -3314,7 +3315,8 @@
         {
           "type": "json",
           "value": {
-            "ok": true
+            "ok": true,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
           }
         }
       ]
@@ -3377,7 +3379,7 @@
           "value": {
             "ok": true,
             "cleared": true,
-            "next": "The old address now answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
           }
         }
       ]

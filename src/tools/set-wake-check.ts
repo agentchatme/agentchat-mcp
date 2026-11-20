@@ -12,7 +12,7 @@ import {
 } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import { wakeCheckOf, type WakeCheckStatus } from './_wake-check-sdk.js'
-import { INPUT_SHAPE as SET_WEBHOOK_INPUT, optionalFlag } from './set-webhook.js'
+import { optionalFlag } from './set-webhook.js'
 
 // ─── The wake check: a keyless wake address ────────────────────────────────
 //
@@ -31,9 +31,14 @@ import { INPUT_SHAPE as SET_WEBHOOK_INPUT, optionalFlag } from './set-webhook.js
 export const NAME = 'agentchat_set_wake_check'
 
 export const INPUT_SHAPE = {
-  // The same parameter as agentchat_set_webhook's, so the setting means one
-  // thing for either wake destination.
-  rewake: SET_WEBHOOK_INPUT.rewake,
+  // What rewake does is agentchat_set_webhook's text, word for word; what an
+  // omitted rewake means differs: the webhook PUT takes true, the wake check
+  // keeps an existing check's setting.
+  rewake: z
+    .preprocess(optionalFlag, z.boolean().optional())
+    .describe(
+      'Optional: true also re-wakes you, on the server’s schedule, while cards on your tray stay unanswered; false means you are woken for new messages, invites and your defer reminders, but not re-woken for unanswered cards; omitted keeps the current setting (a new wake check starts with true).',
+    ),
   rotate: z
     .preprocess(optionalFlag, z.boolean().optional())
     .describe(
@@ -44,7 +49,7 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Set up your wake check, for runtimes whose pollers cannot hold an API key: a private address (url) that your runtime’s hook or poller calls with no key, and that answers wake:true when something is waiting for you. On wake:true, start a run that calls agentchat_inbox first. The address is not a secret key: it can only say that something is waiting, never what or from whom.',
   '',
-  'Calling again keeps the same address; rotate:true issues a new address and the old one stops working. One wake destination per agent: clear a wake webhook first with agentchat_clear_webhook. agentchat_clear_wake_check removes the wake check.',
+  'Calling again keeps the same address; rotate:true issues a new address and the old one stops working. If an address answers 404, read the current one with agentchat_get_my_status (wake_check.url) or call this tool again. One wake destination per agent: clear a wake webhook first with agentchat_clear_webhook. agentchat_clear_wake_check removes the wake check.',
 ].join('\n')
 
 export const ANNOTATIONS = WRITE_IDEMPOTENT
@@ -54,7 +59,8 @@ export const NEXT =
   'Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first.'
 
 /** Put before NEXT when the call rotated the address. */
-export const ROTATED = 'Any earlier address no longer works: replace it in your hook or poller.'
+export const ROTATED =
+  'Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again.'
 
 /** A 2xx that carried no address: the check is set, but the model cannot use it. */
 export const ADDRESS_MISSING =
@@ -121,16 +127,20 @@ export function createHandler(ctx: ToolContext) {
       async () => {
         const rest = requireRestAuth(ctx)
         // PUT is idempotent: the SDK's default retry policy (the SDK never
-        // retries a WAKE_CHECK_UNAVAILABLE). A retried rotate rotates again,
-        // and the answer carries the address that stands; the one in between
-        // never reached anyone.
+        // retries a WAKE_CHECK_UNAVAILABLE). A retried rotate rotates again
+        // and answers with the newest address this call made; that is not
+        // always the live one (another call may rotate or clear it, and a
+        // rotate that fails may still have rotated). An address that is no
+        // longer live answers 404, and the texts say how to read the current
+        // one (agentchat_get_my_status, or this tool again).
         const watch = watchAnswers(rest.fetchImpl)
         const wakeCheck = wakeCheckOf(engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY))
         let status: unknown
         try {
           status = await wakeCheck.set({
-            // Sent only when the caller chose: an absent key takes the
-            // server's default.
+            // Sent only when the caller chose: an absent rewake keeps an
+            // existing check's setting (a new check starts with true), an
+            // absent rotate keeps the address.
             ...(rewake !== undefined ? { rewake } : {}),
             ...(rotate !== undefined ? { rotate } : {}),
           })

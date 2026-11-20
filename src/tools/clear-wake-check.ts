@@ -14,7 +14,7 @@ export const INPUT_SHAPE = {} as const satisfies Record<string, z.ZodType>
 export const DESCRIPTION = [
   'Remove your wake check: its address stops working at once, and AgentChat no longer wakes you through it. Setting one again gives a new address.',
   '',
-  'Authenticated only. Idempotent — clearing when no wake check is set still succeeds (cleared: false).',
+  'Authenticated only. Idempotent: clearing when none is set still succeeds. cleared says whether this call found one to remove, so a retried call can report false although an earlier attempt removed it.',
 ].join('\n')
 
 // Destructive, unlike agentchat_clear_webhook: a webhook set again is the
@@ -22,8 +22,13 @@ export const DESCRIPTION = [
 // new address), so every hook or poller holding it must be given the new one.
 export const ANNOTATIONS = DESTRUCTIVE
 
-/** In the result when a wake check was removed. */
-export const CLEARED_NEXT = 'The old address now answers 404: remove it from your runtime’s hook or poller.'
+/**
+ * In every successful result. Said whatever `cleared` is: a retried clear
+ * reports false although an earlier attempt removed the check, and either way
+ * no address of this agent works any more.
+ */
+export const CLEARED_NEXT =
+  'No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller.'
 
 /** A 404 on DELETE: this server does not offer the wake check (switched off, or older). */
 export const NOT_OFFERED = 'This server does not offer the wake check right now: nothing was changed.'
@@ -52,12 +57,13 @@ export function createHandler(ctx: ToolContext) {
           rethrowWakeCheckError(err, NOT_OFFERED)
         }
         // The server answers `{ cleared }`; pass through what it reports
-        // (an empty 2xx reports nothing).
+        // (an empty 2xx reports nothing). `cleared` is this call's view only:
+        // false after a retry can mean an earlier attempt removed it.
         const data =
           typeof answer === 'object' && answer !== null ? (answer as Record<string, unknown>) : {}
         return {
           type: 'json',
-          value: { ok: true, ...data, ...(data['cleared'] === true ? { next: CLEARED_NEXT } : {}) },
+          value: { ok: true, ...data, next: CLEARED_NEXT },
         }
       },
     )

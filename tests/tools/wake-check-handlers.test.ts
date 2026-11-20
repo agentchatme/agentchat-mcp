@@ -106,7 +106,7 @@ describe('agentchat_set_wake_check handler', () => {
     expect(payloadOf(await setWakeCheck.createHandler(makeRealCtx(impl))({}))['wake_check']).toEqual(answer)
   })
 
-  it('input schema: two optional booleans; blanks mean unset, "true"/"false" the booleans; rewake is agentchat_set_webhook’s parameter', () => {
+  it('input schema: two optional booleans; blanks mean unset, "true"/"false" the booleans; an omitted rewake keeps the setting', () => {
     const shape = z.object(setWakeCheck.INPUT_SHAPE)
     for (const name of ['rewake', 'rotate'] as const) {
       const parse = (value: unknown) => shape.parse({ [name]: value })[name]
@@ -126,8 +126,16 @@ describe('agentchat_set_wake_check handler', () => {
     expect(Object.keys(props).sort()).toEqual(['rewake', 'rotate'])
     expect(emitted['required'] ?? []).toEqual([])
     expect(props['rotate']).toMatchObject({ type: 'boolean' })
-    const webhook = z.toJSONSchema(z.object(setWebhook.INPUT_SHAPE), { target: 'draft-7', io: 'input' })
-    expect(props['rewake']).toEqual((webhook['properties'] as Record<string, unknown>)['rewake'])
+    expect(props['rewake']).toMatchObject({ type: 'boolean' })
+    // What rewake does is the webhook's text; what omitting it means is not
+    // (the webhook PUT takes true, the wake check keeps the current setting).
+    const rewake = String(props['rewake']!['description'])
+    expect(rewake.split(/(?<=[.!?])\s/).length).toBe(1)
+    expect(rewake).toContain(
+      'true also re-wakes you, on the server’s schedule, while cards on your tray stay unanswered; false means you are woken for new messages, invites and your defer reminders, but not re-woken for unanswered cards',
+    )
+    expect(rewake).toContain('omitted keeps the current setting (a new wake check starts with true)')
+    expect(rewake).not.toContain('default when omitted')
     // The rotate text says a rotate is a new address, in one sentence.
     const rotate = String(props['rotate']!['description'])
     expect(rotate.split(/(?<=[.!?])\s/).length).toBe(1)
@@ -246,6 +254,8 @@ describe('agentchat_set_wake_check handler', () => {
     expect(text).toContain('The address is not a secret key: it can only say that something is waiting')
     expect(text).toContain('On wake:true, start a run that calls agentchat_inbox first')
     expect(text).toContain('rotate:true issues a new address and the old one stops working')
+    expect(text).toContain('If an address answers 404, read the current one with agentchat_get_my_status (wake_check.url) or call this tool again')
+    expect(setWakeCheck.ROTATED).toContain('read the current one with agentchat_get_my_status (wake_check.url)')
     expect(text).toContain('agentchat_clear_webhook')
     expect(text).toContain('agentchat_clear_wake_check')
     expect(text.length).toBeLessThanOrEqual(800)
@@ -254,7 +264,7 @@ describe('agentchat_set_wake_check handler', () => {
 })
 
 describe('agentchat_clear_wake_check handler', () => {
-  it('DELETEs /v1/agents/me/wake-check with the key; when one was removed, says to take the address out of the poller', async () => {
+  it('DELETEs /v1/agents/me/wake-check with the key, and says to take the address out of the poller', async () => {
     const { impl, calls } = fetchStub(() => json(200, { cleared: true }))
     const result = await clearWakeCheck.createHandler(makeRealCtx(impl))({})
     expect(result.isError).toBeFalsy()
@@ -265,14 +275,22 @@ describe('agentchat_clear_wake_check handler', () => {
     expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
   })
 
-  it('nothing to clear is a success (cleared: false), with nothing more to do', async () => {
+  it('cleared: false is a success too, with the same next step: a retried clear can report false after an earlier attempt removed it', async () => {
     const { impl } = fetchStub(() => json(200, { cleared: false }))
-    expect(payloadOf(await clearWakeCheck.createHandler(makeRealCtx(impl))({}))).toEqual({ ok: true, cleared: false })
+    expect(payloadOf(await clearWakeCheck.createHandler(makeRealCtx(impl))({}))).toEqual({
+      ok: true,
+      cleared: false,
+      next: clearWakeCheck.CLEARED_NEXT,
+    })
+    expect(clearWakeCheck.DESCRIPTION).toContain('a retried call can report false although an earlier attempt removed it')
   })
 
-  it('an empty 2xx reports nothing beyond ok', async () => {
+  it('an empty 2xx reports nothing beyond ok and the next step', async () => {
     const { impl } = fetchStub(() => empty(204))
-    expect(payloadOf(await clearWakeCheck.createHandler(makeRealCtx(impl))({}))).toEqual({ ok: true })
+    expect(payloadOf(await clearWakeCheck.createHandler(makeRealCtx(impl))({}))).toEqual({
+      ok: true,
+      next: clearWakeCheck.CLEARED_NEXT,
+    })
   })
 
   it('a 404 (switched off, or a server without the route) says it is not offered and nothing changed', async () => {

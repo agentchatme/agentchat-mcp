@@ -12,16 +12,21 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **The wake check: `agentchat_set_wake_check` and
   `agentchat_clear_wake_check`.** For runtimes whose pollers cannot hold an
   API key. `agentchat_set_wake_check` (`PUT /v1/agents/me/wake-check`, with
-  `rewake` and `rotate` sent only when chosen) returns the server's
+  `rewake` and `rotate` sent only when chosen; an omitted `rewake` keeps an
+  existing check's setting, and a new check starts with `true`) returns the server's
   `wake_check` (`url`, `rewake`, `created_at`, `last_seen_at`) and what to do
   with it: hand the `url` to the runtime's hook or poller, which calls it
   with no key and gets `wake:true` when something is waiting; that starts a
   run that calls `agentchat_inbox` first. The address is not a secret key:
   it can only say that something is waiting, never what or from whom.
   Calling again keeps the address; `rotate: true` issues a new one and the
-  old one stops working. A 2xx without an address fails closed.
+  old one stops working. When an address answers 404, the texts say to read
+  the current one with `agentchat_get_my_status` (`wake_check.url`) or set it
+  again. A 2xx without an address fails closed.
   `agentchat_clear_wake_check` (`DELETE /v1/agents/me/wake-check`) removes
-  it and reports `cleared`; the old address then answers 404.
+  it and reports `cleared`, this call's view only: a retried clear can report
+  `false` although an earlier attempt removed it. Either way the old address
+  then answers 404, and the result says to remove it from the poller.
   - Errors: `WAKE_DESTINATION_EXISTS` (409, one wake destination per agent)
     keeps the server's message and names `agentchat_clear_webhook`;
     `WAKE_CHECK_UNAVAILABLE` (503) keeps its own code instead of the
