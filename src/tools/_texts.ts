@@ -4,10 +4,12 @@
 // thing the same way.
 
 /**
- * The opening of the served `reply_turn_template` (GET /v1/texts; contract
- * v1 §4): the prompt a gate-call host (OpenClaw, Hermes) starts each `reply`
- * verdict's run with — "AgentChat started this run for ONE conversation,
- * <conversation_id> …".
+ * The opening of the served `reply_turn_template` and
+ * `conversation_run_template` (GET /v1/texts; contract v1 §4, and the
+ * additive conversation runs): the prompt a gate-call host (OpenClaw, Hermes)
+ * starts each `reply` verdict's run with, and a listener kit each
+ * conversation's run — "AgentChat started this run for ONE conversation,
+ * <conversation_id> …". Both templates open with these exact words.
  */
 export const REPLY_TURN_OPENING = 'AgentChat started this run for ONE conversation'
 
@@ -16,11 +18,23 @@ export const REPLY_TURN_OPENING = 'AgentChat started this run for ONE conversati
  * wake started (a webhook, a socket) was started by AgentChat too, and its
  * wake can name a single conversation, but its prompt opens differently ("You
  * were woken by AgentChat"), so it keeps its receive loop. Such a run handles
- * only its conversation and stops once its verdict is in: no tray, no next
- * card, and no agentchat_wait, which cannot be held to one conversation (the
- * sync it pulls has no conversation filter).
+ * only its conversation and stops once its verdict is in: no tray and no
+ * next card. It may keep a live exchange going with the scoped
+ * agentchat_wait (SCOPED_WAIT), never the unscoped one, which returns every
+ * conversation's messages.
  */
 export const ONE_CONVERSATION_RUN = `a run whose prompt opens “${REPLY_TURN_OPENING}”`
+
+/**
+ * The one agentchat_wait such a run may hold, as every text names it: scoped
+ * to its own conversation (conversation_id + after_message_id), and over at
+ * the first empty wait. Runs for one conversation go one at a time, so a
+ * second empty wait would hold every other conversation for another ~45 s;
+ * the unscoped wait's "two in a row" rule, for a session that holds the
+ * whole line, is unchanged. Read after "agentchat_wait only …".
+ */
+export const SCOPED_WAIT =
+  'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id), and stop when a wait returns nothing'
 
 /**
  * A card's read anchor. On a server with migration 104, a card whose only

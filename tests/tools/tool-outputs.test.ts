@@ -152,6 +152,47 @@ const SYNC_ROWS = [
   },
 ]
 
+/** GET /v1/messages/{conversation_id} past a cursor, as served: the caller's own answer, a peer's reply, and a message hidden from the caller. */
+const SCOPED_PAGE = [
+  {
+    id: 'msg_5',
+    conversation_id: 'conv_1',
+    sender: 'me',
+    type: 'text',
+    seq: 5,
+    created_at: '2026-11-19T00:00:01.000Z',
+    content: { text: 'my answer' },
+    metadata: {},
+    context: { sender: { handle: 'me', kind: 'agent' }, conversation: { type: 'direct' }, mentions: [] },
+    status: 'delivered',
+  },
+  {
+    id: 'msg_6',
+    conversation_id: 'conv_1',
+    sender: 'peer-one',
+    type: 'text',
+    seq: 6,
+    created_at: '2026-11-19T00:00:02.000Z',
+    content: { text: 'and one more' },
+    metadata: { reply_to: 'msg_5' },
+    context: { sender: { handle: 'peer-one', display_name: 'Peer One', kind: 'agent' }, conversation: { type: 'direct' }, mentions: [] },
+    status: 'delivered',
+  },
+  {
+    id: 'msg_7',
+    conversation_id: 'conv_1',
+    sender: 'peer-one',
+    type: 'text',
+    seq: 7,
+    created_at: '2026-11-19T00:00:03.000Z',
+    content: { text: '[Hidden from you: this message from @peer-one could not be processed on your side, so it is not shown. You can ask @peer-one to rephrase or resend it.]' },
+    metadata: {},
+    could_not_process: { at: '2026-11-19T00:00:09.000Z', original_type: 'file' },
+    context: { sender: { handle: 'peer-one', display_name: 'Peer One', kind: 'agent' }, conversation: { type: 'direct' }, mentions: [] },
+    status: 'delivered',
+  },
+]
+
 const WAKE_WEBHOOK = {
   url: 'https://hooks.example.com/wake',
   dialect: 'openclaw',
@@ -191,6 +232,14 @@ const SCENARIOS: Scenario[] = [
   { name: 'wait: poll body cut mid-read', tool: 'agentchat_wait', args: { timeout_seconds: 0 }, answers: [cutOff(200, '[{"id":"msg_1"')] },
   { name: 'wait: 429 RATE_LIMITED on the poll', tool: 'agentchat_wait', args: { timeout_seconds: 0 }, answers: [json(429, { code: 'RATE_LIMITED', message: 'one at a time' }, { 'retry-after': '2' })] },
   { name: 'wait: 503 on the poll is one attempt', tool: 'agentchat_wait', args: { timeout_seconds: 0 }, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'down' })] },
+  { name: 'wait: a hidden message in the sync batch', tool: 'agentchat_wait', args: { timeout_seconds: 0 }, answers: [json(200, [{ ...SCOPED_PAGE[2], delivery_id: 'del_7' }], { 'x-agentchat-waited-ms': '0' }), json(200, { acked: 1 })] },
+  { name: 'wait scoped: peer reply and a hidden message, own answer left out, no ack', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_4' }, answers: [json(200, SCOPED_PAGE, { 'x-agentchat-waited-ms': '640' })] },
+  { name: 'wait scoped: nothing arrived', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '30000' })] },
+  { name: 'wait scoped: read once (timeout 0)', tool: 'agentchat_wait', args: { timeout_seconds: 0, limit: 10, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [])] },
+  { name: 'wait scoped: 404 MESSAGE_NOT_FOUND', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_x' }, answers: [json(404, { code: 'MESSAGE_NOT_FOUND', message: 'after_message_id is not a message of this conversation' })] },
+  { name: 'wait scoped: conversation_id alone is refused before any call', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1' }, answers: [json(200, [])] },
+  { name: 'wait scoped: a server without the scoped wait (newest page, no waited header) is refused', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [...SCOPED_PAGE].reverse())] },
+  { name: 'wait scoped: blank ids are the unscoped wait', tool: 'agentchat_wait', args: { timeout_seconds: 0, conversation_id: '', after_message_id: null }, answers: [json(200, [], { 'x-agentchat-waited-ms': '0' })] },
 
   // ── agentchat_respond_to_invite (dismiss) ──
   { name: 'dismiss: dismissed', tool: 'agentchat_respond_to_invite', args: { invite_id: 'inv/1', response: 'dismiss' }, answers: [json(200, { dismissed: true })] },

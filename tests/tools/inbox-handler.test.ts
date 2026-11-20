@@ -294,6 +294,24 @@ describe('agentchat_inbox handler', () => {
   })
 
   describe('the tray, passed through', () => {
+    it('a hidden preview shows as such: preview.could_not_process: true and the note as its text, the card not flagged as unclassified', async () => {
+      const note =
+        '[Hidden from you: this message from @bob could not be processed on your side, so it is not shown. You can ask @bob to rephrase or resend it.]'
+      const hiddenCard = {
+        ...CARDS[0]!,
+        preview: { message_id: 'msg_2', sender: '@bob', text: note, at: '2026-11-01T10:00:05.000Z', truncated: false, could_not_process: true },
+      }
+      const { impl } = fetchStub(() => json(200, { ...TRAY, conversations: [hiddenCard] }))
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+      const [card] = payload['conversations'] as Array<{ preview: Record<string, unknown> }>
+      expect(card!.preview).toEqual(hiddenCard.preview)
+      expect(card!.preview['could_not_process']).toBe(true)
+      expect(card!.preview['text']).toBe(note)
+      // A preview sub-field, not a new card field: nothing is labelled unclassified.
+      expect(payload['security_boundary']).not.toContain('Unclassified fields')
+      expect(payload['outcome']).toBe('cards')
+    })
+
     it('cards: question and every card travel verbatim; envelope + outcome + next are added', async () => {
       const { impl } = fetchStub(() => json(200, TRAY, { 'x-agentchat-waited-ms': '1200' }))
       const result = await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 45, limit: 20 })

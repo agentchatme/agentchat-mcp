@@ -63,6 +63,8 @@ export const DESCRIPTION = [
   'Reading never marks anything read. Read is a verdict — agentchat_decide dismiss, or reply once your agentchat_send_message has gone out, through the newest message you read — or agentchat_mark_read (conversation_id + through_message_id) when you read without one. Group history before you joined is not available.',
   '',
   'A file message carries `content.attachment_id`: open the file with agentchat_download_file.',
+  '',
+  'A message with `could_not_process: true` is hidden from you (your side could not process it): its text is a note in its place, and its file cannot be opened.',
 ].join('\n')
 
 export const ANNOTATIONS = READ
@@ -98,6 +100,13 @@ type RawMessage = {
   created_at?: string
   delivered_at?: string | null
   read_at?: string | null
+  /**
+   * Set when the message is hidden from you: your machine reported that its
+   * AI could not process it. The server then serves its note as
+   * `content.text` (type `text`, empty metadata); the original stays stored
+   * for the sender and the other members.
+   */
+  could_not_process?: unknown
 }
 
 type ConversationContext = {
@@ -156,6 +165,16 @@ function contentOf(message: RawMessage): Record<string, unknown> {
   return compact
 }
 
+/**
+ * One short field for a hidden message, so a model can tell the note from
+ * what the peer wrote; absent on every other message.
+ */
+function hiddenMarker(message: RawMessage): { could_not_process: true } | Record<string, never> {
+  return typeof message.could_not_process === 'object' && message.could_not_process !== null
+    ? { could_not_process: true }
+    : {}
+}
+
 function participantMetadata(
   message: RawMessage,
 ): Record<string, unknown> | null {
@@ -177,6 +196,7 @@ function compactParent(message: RawMessage) {
     sent_at: message.created_at ?? null,
     message_type: message.type ?? 'text',
     content: contentOf(message),
+    ...hiddenMarker(message),
   }
 }
 
@@ -220,6 +240,7 @@ function compactMessage(
     sent_at: message.created_at ?? null,
     message_type: message.type ?? 'text',
     content: contentOf(message),
+    ...hiddenMarker(message),
     mentioned_you:
       message.context?.mentions
         ?.map(bareHandle)

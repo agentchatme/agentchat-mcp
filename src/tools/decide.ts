@@ -3,7 +3,7 @@ import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, NO_RETRY, requireRestAuth, rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
-import { CARD_ANCHOR, ONE_CONVERSATION_RUN } from './_texts.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN, SCOPED_WAIT } from './_texts.js'
 
 export const NAME = 'agentchat_decide'
 
@@ -117,14 +117,16 @@ export const RECORDED_WITHOUT_ROW_NOTE =
 
 /**
  * The one line that tells the model what follows each verdict. A run
- * AgentChat started for ONE conversation (a gate-call host's reply turn) stops
- * once that conversation's verdict is in: no next card, no tray, and no
- * agentchat_wait, which cannot be held to one conversation (the sync it pulls
- * has no conversation filter) and would hand it every conversation's messages.
+ * AgentChat started for ONE conversation (a gate-call host's reply turn, a
+ * listener kit's conversation run) stops once that conversation's verdict is
+ * in: no next card and no tray. After `reply` it may keep the exchange live,
+ * but only with the wait scoped to its conversation (conversation_id +
+ * after_message_id): the unscoped wait would hand it every conversation's
+ * messages. After `dismiss` it stops.
  */
 export const NEXT: Record<Decision, string> = {
   reply:
-    `Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in ${ONE_CONVERSATION_RUN}, stop instead.`,
+    `Read through through_message_id. If your answer is not sent yet, send it now with agentchat_send_message (record reply after the send next time). Then agentchat_wait to keep the exchange live; in ${ONE_CONVERSATION_RUN}, only ${SCOPED_WAIT}.`,
   dismiss:
     `Done with this conversation: it is read through through_message_id and needs nothing from you. Next card, or agentchat_inbox again if you expect more; in ${ONE_CONVERSATION_RUN}, stop instead.`,
   defer:

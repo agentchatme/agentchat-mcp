@@ -9,7 +9,7 @@ import {
 } from '../../src/instructions.js'
 import * as decide from '../../src/tools/decide.js'
 import * as inbox from '../../src/tools/inbox.js'
-import { CARD_ANCHOR, ONE_CONVERSATION_RUN, REPLY_TURN_OPENING } from '../../src/tools/_texts.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN, REPLY_TURN_OPENING, SCOPED_WAIT } from '../../src/tools/_texts.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
 import * as testWebhook from '../../src/tools/test-webhook.js'
 import { buildMcpServer } from '../../src/lib.js'
@@ -319,23 +319,25 @@ describe('one receive sequence across every text', () => {
 //
 // A gate-call host (OpenClaw, Hermes; contract v1 §4) has already decided
 // every card in a tool-less call, and starts each `reply` verdict's run with
-// the served `reply_turn_template` (GET /v1/texts): "AgentChat started this
-// run for ONE conversation, <conversation_id> … Leave every other
-// conversation alone, even if your tray shows more waiting". Hosts such as
-// OpenClaw put the server instructions in front of every turn, that one
-// included, so an unqualified "at the start of any turn … call
-// agentchat_inbox first" pulled the run back into triaging the whole tray —
-// where it could answer a conversation that has a run of its own, twice.
-// The same holds for agentchat_wait: it returns every conversation's
-// messages (the sync it pulls has no conversation filter), so that run never
-// holds the line with it; and for a verdict's "next card". Every sentence
+// the served `reply_turn_template` (GET /v1/texts); a listener kit starts one
+// run per owed card with the served `conversation_run_template`. Both open
+// "AgentChat started this run for ONE conversation, <conversation_id> …
+// Leave every other conversation alone, even if your tray shows more
+// waiting". Hosts such as OpenClaw put the server instructions in front of
+// every turn, that one included, so an unqualified "at the start of any turn
+// … call agentchat_inbox first" pulled the run back into triaging the whole
+// tray — where it could answer a conversation that has a run of its own,
+// twice. The same holds for the unscoped agentchat_wait, which returns every
+// conversation's messages, and for a verdict's "next card". That run may hold
+// the line only with the wait scoped to its own conversation
+// (conversation_id + after_message_id; contract v1, additive). Every sentence
 // such a run can read that points back to the tray, the wait or a next card
-// carries the exception — in that run, stop once the conversation's verdict
-// is in — naming the run by its prompt's opening words: a run a wake started
-// was started by AgentChat too, and may name a single conversation, but its
-// prompt opens differently, and it keeps its receive loop.
+// carries the exception — in that run, no tray, no next card, and the wait
+// only scoped — naming the run by its prompt's opening words: a run a wake
+// started was started by AgentChat too, and may name a single conversation,
+// but its prompt opens differently, and it keeps its receive loop.
 
-const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — do not call agentchat_inbox or agentchat_wait.`
+const ONE_CONVERSATION_EXCEPTION = `Exception: in ${ONE_CONVERSATION_RUN}, handle only that one: open it, answer if needed, record its verdict, and stop — no agentchat_inbox; agentchat_wait only scoped to it.`
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -385,12 +387,13 @@ function sentencesOf(paragraph: string): string[] {
  * when its paragraph carries an "Exception: …" sentence naming the run (the
  * instructions' receive paragraph); or, inside a tool's own description or
  * parameter text, when it points only at that tool and the description's
- * first paragraph says the run never calls it ("Not in …" / "Never in …").
+ * first paragraph gives the run's rule for it ("Not in …" / "Never in …":
+ * never called; "In …": called only one way, as agentchat_wait's scoped form).
  */
 function ungovernedPointers(text: string, own?: { tool: string; description: string }): string[] {
   const excludesOwnTool =
     own !== undefined &&
-    sentencesOf(own.description.split(/\n\s*\n/)[0]!).some((sentence) => /^(?:Not|Never) in /.test(sentence) && NAMES_THE_RUN.test(sentence))
+    sentencesOf(own.description.split(/\n\s*\n/)[0]!).some((sentence) => /^(?:(?:Not|Never) in|In) /.test(sentence) && NAMES_THE_RUN.test(sentence))
   const found: string[] = []
   for (const paragraph of text.split(/\n\s*\n/)) {
     const sentences = sentencesOf(paragraph)
@@ -488,21 +491,63 @@ describe('a run AgentChat started for ONE conversation', () => {
     ), firstParagraph).toBe(true)
   })
 
-  it('agentchat_decide: after reply or dismiss, that run stops (no wait, no next card, no tray)', () => {
-    // agentchat_wait cannot be held to one conversation, so the hint is "stop".
-    const stop = `; in ${ONE_CONVERSATION_RUN}, stop instead.`
-    expect(decide.NEXT.reply.endsWith(`Then agentchat_wait to keep the exchange live${stop}`), decide.NEXT.reply).toBe(true)
-    expect(decide.NEXT.dismiss.endsWith(`Next card, or agentchat_inbox again if you expect more${stop}`), decide.NEXT.dismiss).toBe(true)
+  it('agentchat_decide: after reply that run keeps it live only with the scoped wait; after dismiss it stops (no next card, no tray)', () => {
+    expect(
+      decide.NEXT.reply.endsWith(`Then agentchat_wait to keep the exchange live; in ${ONE_CONVERSATION_RUN}, only ${SCOPED_WAIT}.`),
+      decide.NEXT.reply,
+    ).toBe(true)
+    expect(
+      decide.NEXT.dismiss.endsWith(`Next card, or agentchat_inbox again if you expect more; in ${ONE_CONVERSATION_RUN}, stop instead.`),
+      decide.NEXT.dismiss,
+    ).toBe(true)
     // defer points nowhere: "Nothing else to do now."
     expect(decide.NEXT.defer).not.toMatch(PULLS_BACK)
   })
 
-  it('agentchat_wait says that run never calls it, right after its look-at-the-tray line', async () => {
+  it('the scoped wait is named the same way everywhere: that run’s conversation_id, its newest message_id as after_message_id, stop at the first empty wait', () => {
+    expect(SCOPED_WAIT).toBe(
+      'scoped to that run’s conversation (its conversation_id, and its newest message_id as after_message_id), and stop when a wait returns nothing',
+    )
+  })
+
+  it('agentchat_wait says that run calls it only scoped, right after its look-at-the-tray line', async () => {
     const descriptions = await listDescriptions()
     const firstParagraph = descriptions.get('agentchat_wait')!.split('\n\n')[0]!
     expect(firstParagraph).toContain(
-      `When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. Never in ${ONE_CONVERSATION_RUN}: this returns every conversation’s messages, and that run handles only its own.`,
+      `With conversation_id + after_message_id it waits on that one conversation alone. When woken, look at the tray with agentchat_inbox FIRST and decide per card with agentchat_decide; use this tool to hold the line while a conversation is live. In ${ONE_CONVERSATION_RUN}, call it only ${SCOPED_WAIT}.`,
     )
+  })
+
+  it('no text forbids that run the scoped wait, and every text that gives it the wait says scoped', async () => {
+    const texts: Array<[string, string]> = []
+    for (const tool of await listedTools({ registered: true, webhookTools: false })) {
+      texts.push([tool.name, tool.description], ...tool.parameters.map((text) => [`${tool.name} parameter`, text] as [string, string]))
+    }
+    texts.push(...Object.entries(decide.NEXT).map(([verdict, next]) => [`agentchat_decide next (${verdict})`, next] as [string, string]))
+    for (const [spelling, namer] of NAMERS) {
+      for (const mode of ['stdio', 'hosted'] as const) {
+        texts.push([`instructions/${mode}/${spelling}`, buildInstructions(mode, 29, { registered: true, webhookTools: false }, namer)])
+      }
+    }
+    const wait = new RegExp(spelled('agentchat_wait'))
+    const unscoped: string[] = []
+    let named = 0
+    for (const [name, text] of texts) {
+      // The old rule, in any form: the run never calls agentchat_wait.
+      expect(text, name).not.toMatch(new RegExp(`(?:inbox|${spelled('agentchat_inbox')}) or ${spelled('agentchat_wait')}`))
+      expect(text, name).not.toMatch(/Never in a run whose prompt opens/)
+      for (const paragraph of text.split(/\n\s*\n/)) {
+        for (const sentence of sentencesOf(paragraph)) {
+          if (!NAMES_THE_RUN.test(sentence) || !(wait.test(sentence) || /\bcall it\b/.test(sentence))) continue
+          named += 1
+          if (!/\bscoped\b/.test(sentence)) unscoped.push(`${name}: ${sentence}`)
+        }
+      }
+    }
+    expect(unscoped).toEqual([])
+    // instructions ×6 (exception and read-state), agentchat_wait, its
+    // conversation_id parameter, agentchat_send_message, agentchat_decide reply.
+    expect(named).toBeGreaterThanOrEqual(10)
   })
 
   it('no sentence such a run can read points it back to the tray, the wait or a next card without the exception', async () => {

@@ -285,6 +285,21 @@ describe('agentchat_list_conversations (formerly agentchat_list_inbox)', () => {
     expect(payload.has_more).toBe(false)
     expect(payload.count).toBe(2)
   })
+
+  it('marks a hidden last message with last_message.could_not_process: true, and only that one', async () => {
+    const note =
+      '[Hidden from you: this message from @peer could not be processed on your side, so it is not shown. You can ask @peer to rephrase or resend it.]'
+    const listMock = vi.fn().mockResolvedValue([
+      { id: 'conv_1', type: 'direct', last_message_preview: note, last_message_type: 'text', last_message_could_not_process: true },
+      { id: 'conv_2', type: 'direct', last_message_preview: 'hi', last_message_type: 'text' },
+    ])
+    const handler = listConversations.createHandler(makeCtx({ listConversations: listMock }))
+    const payload = parseJsonContent(await handler({ limit: 25, offset: 0 })) as {
+      conversations: Array<{ last_message: Record<string, unknown> }>
+    }
+    expect(payload.conversations[0]!.last_message).toMatchObject({ preview: note, message_type: 'text', could_not_process: true })
+    expect(payload.conversations[1]!.last_message).not.toHaveProperty('could_not_process')
+  })
 })
 
 describe('agentchat_get_conversation', () => {
@@ -561,6 +576,66 @@ describe('agentchat_get_conversation', () => {
     expect(
       (result.content[0] as { type: 'text'; text: string }).text,
     ).toContain('anchored history support is required')
+  })
+
+  it('marks a message hidden from you with could_not_process: true, its note as the text, also as a reply parent', async () => {
+    const note =
+      '[Hidden from you: this message from @peer could not be processed on your side, so it is not shown. You can ask @peer to rephrase or resend it.]'
+    const hidden = {
+      id: 'msg_hidden',
+      conversation_id: 'conv_x',
+      sender: 'peer',
+      seq: 7,
+      // The server serves the note in the original's place: type text, the
+      // note as content.text, empty metadata.
+      type: 'text',
+      content: { text: note },
+      metadata: {},
+      status: 'delivered',
+      created_at: '2026-11-19T10:00:00.000Z',
+      could_not_process: { at: '2026-11-19T10:05:00.000Z', original_type: 'file' },
+    }
+    const reply = {
+      id: 'msg_reply',
+      conversation_id: 'conv_x',
+      sender: 'peer',
+      seq: 8,
+      type: 'text',
+      content: { text: 'did you get it?' },
+      metadata: { reply_to: 'msg_hidden' },
+      status: 'delivered',
+      created_at: '2026-11-19T10:01:00.000Z',
+    }
+    const getMessagesMock = vi.fn().mockResolvedValue([reply, hidden])
+    const handler = getConversation.createHandler(
+      makeCtx({ getMessages: getMessagesMock }),
+    )
+    const result = await handler({ conversation_id: 'conv_x', limit: 30 })
+    expect(result.isError).toBeFalsy()
+    const value = parseJsonContent(result) as {
+      messages: Array<Record<string, unknown>>
+    }
+    const [first, second] = value.messages
+    expect(first).toMatchObject({
+      message_id: 'msg_hidden',
+      message_type: 'text',
+      content: { text: note },
+      could_not_process: true,
+    })
+    // One short field: not the server's object.
+    expect(first!['could_not_process']).toBe(true)
+    // A message that is not hidden carries no such field.
+    expect(second).not.toHaveProperty('could_not_process')
+    expect(second!['reply_to']).toMatchObject({
+      message_id: 'msg_hidden',
+      parent: { message_id: 'msg_hidden', content: { text: note }, could_not_process: true },
+    })
+  })
+
+  it('says what could_not_process means', () => {
+    expect(getConversation.DESCRIPTION).toContain(
+      'A message with `could_not_process: true` is hidden from you (your side could not process it): its text is a note in its place, and its file cannot be opened.',
+    )
   })
 
 })
