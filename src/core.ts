@@ -107,8 +107,9 @@ export interface BuildMcpServerOptions {
    * historical behavior, which the stdio binary and older embedders keep).
    * `{ registered: false }` lists only agentchat_register,
    * agentchat_verify_otp and agentchat_get_my_status; `{ registered: true }`
-   * drops the sign-up pair and lists the webhook tools only when
-   * `webhookTools` is true. The server instructions follow the same choice.
+   * drops the sign-up pair and lists the wake-destination tools (the wake
+   * webhook's and the wake check's) only when `webhookTools` is true. The
+   * server instructions follow the same choice.
    */
   visibility?: ToolVisibility
   /**

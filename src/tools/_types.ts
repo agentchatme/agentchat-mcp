@@ -92,12 +92,16 @@ export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void
  *   * `registered: false` → only agentchat_register, agentchat_verify_otp and
  *     agentchat_get_my_status: a session without an identity is shown the
  *     one thing it can do.
- *   * `registered: true` → the two sign-up tools are not listed; the webhook
- *     tools (set / test / clear) only when `webhookTools` is true.
+ *   * `registered: true` → the two sign-up tools are not listed; the
+ *     wake-destination tools (set / test / clear_webhook, set /
+ *     clear_wake_check) only when `webhookTools` is true.
  */
 export interface ToolVisibility {
   /** Does this session have an AgentChat identity (an API key)? */
   registered: boolean
-  /** Is this agent woken through a wake webhook (list set/test/clear_webhook)? */
+  /**
+   * Is this agent woken without a socket, through a wake webhook or a wake
+   * check (list set/test/clear_webhook and set/clear_wake_check)?
+   */
   webhookTools: boolean
 }

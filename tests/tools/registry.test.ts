@@ -71,6 +71,8 @@ const EXPECTED_TOOL_NAMES = [
   'agentchat_update_profile',
   'agentchat_send_file',
   'agentchat_download_file',
+  'agentchat_set_wake_check',
+  'agentchat_clear_wake_check',
 ]
 
 describe('registerAllTools', () => {
@@ -79,8 +81,9 @@ describe('registerAllTools', () => {
     const registered = registerAllTools(server, ctx())
     // 18 pre-hosted-core tools − 2 (accept + reject merged into respond_to_invite)
     // + register/verify_otp/set_webhook/clear_webhook + wait/test_webhook
-    // + decide + inbox + the 8 Phase 4 tools + download_file.
-    expect(TOOL_COUNT).toBe(34)
+    // + decide + inbox + the 8 Phase 4 tools + download_file
+    // + set/clear_wake_check.
+    expect(TOOL_COUNT).toBe(36)
     expect(TOOL_NAMES).toEqual(EXPECTED_TOOL_NAMES)
     expect(registered).toEqual(EXPECTED_TOOL_NAMES)
   })
@@ -98,7 +101,7 @@ describe('registerAllTools', () => {
     }
     // Aliases are registered (callable) but never counted as listed tools.
     const server = new McpServer({ name: 'test', version: '0.0.0' })
-    expect(registerAllTools(server, ctx())).toHaveLength(34)
+    expect(registerAllTools(server, ctx())).toHaveLength(36)
   })
 
   it('every registration has a unique tool name', () => {
@@ -113,7 +116,7 @@ describe('registerAllTools', () => {
   describe('visibility', () => {
     it('absent: everything, as before (the stdio binary and older embedders)', () => {
       expect(visibleToolNames()).toEqual(EXPECTED_TOOL_NAMES)
-      expect(visibleToolNames(undefined)).toHaveLength(34)
+      expect(visibleToolNames(undefined)).toHaveLength(36)
     })
 
     it('unregistered: only the sign-up pair and get_my_status, whatever webhookTools says', () => {
@@ -124,7 +127,7 @@ describe('registerAllTools', () => {
       expect(registerAllTools(server, ctx(), { registered: false, webhookTools: true })).toEqual(expected)
     })
 
-    it('registered without webhook tools: no sign-up pair, no webhook tools — 29 tools', () => {
+    it('registered without webhook tools: no sign-up pair, no webhook or wake-check tools — 29 tools', () => {
       const names = visibleToolNames({ registered: true, webhookTools: false })
       expect(names).toHaveLength(29)
       for (const hidden of [...SIGNUP_TOOL_NAMES, ...WEBHOOK_TOOL_NAMES]) {
@@ -138,13 +141,15 @@ describe('registerAllTools', () => {
       expect(names).toEqual(EXPECTED_TOOL_NAMES.filter((n) => names.includes(n)))
     })
 
-    it('registered with webhook tools: adds exactly set/test/clear_webhook — 32 tools', () => {
+    it('registered with webhook tools: adds exactly set/test/clear_webhook and set/clear_wake_check — 34 tools', () => {
       const names = visibleToolNames({ registered: true, webhookTools: true })
-      expect(names).toHaveLength(32)
+      expect(names).toHaveLength(34)
       expect(WEBHOOK_TOOL_NAMES).toEqual([
         'agentchat_set_webhook',
         'agentchat_clear_webhook',
         'agentchat_test_webhook',
+        'agentchat_set_wake_check',
+        'agentchat_clear_wake_check',
       ])
       for (const shown of WEBHOOK_TOOL_NAMES) expect(names).toContain(shown)
       for (const hidden of SIGNUP_TOOL_NAMES) expect(names).not.toContain(hidden)

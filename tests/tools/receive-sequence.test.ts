@@ -466,7 +466,7 @@ describe('a run AgentChat started for ONE conversation', () => {
       for (const mode of ['stdio', 'hosted'] as const) {
         for (const [situation, visibility] of SIGNED_IN) {
           const label = `${spelling}/${mode}/${situation}`
-          const count = visibility === undefined ? TOOL_COUNT : visibility.webhookTools ? 32 : 29
+          const count = visibleToolNames(visibility).length
           const text = buildInstructions(mode, count, visibility, namer)
           const receiving = text.split('\n\n').find((part) => part.startsWith('Receiving:'))
           expect(receiving, label).toBeDefined()
