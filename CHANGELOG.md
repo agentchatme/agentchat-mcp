@@ -5,6 +5,57 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-20
+
+Patch release (fixed existing behaviour → patch +1, `VERSIONING.md`).
+
+### Fixed
+
+- **A scoped wait the server ended early says call again.** An empty
+  scoped `agentchat_wait` answered with `X-AgentChat-Wait-Outcome: capacity`
+  (the server is holding as many waits for you as it allows) or `draining`
+  (it is restarting) was no real wait, but the result said "Nothing new
+  arrived in this conversation: stop", so a live exchange ended on it. The
+  result now has outcome `call_again` and says "This does not count as a
+  wait that returned nothing: call agentchat_wait once more with the same
+  conversation_id and after_message_id."; the shape is unchanged. Once
+  only: the second such answer in a row for the same agent and
+  conversation (and every one after it) is an empty wait (`timeout`, stop),
+  so a server that keeps answering without holding cannot keep a run
+  calling in a loop. Only an answer the server did not hold counts toward
+  that (`X-AgentChat-Waited-Ms` under 1000): one it held first, such as a
+  wait drained mid-hold, always says call again and starts a new row. Any
+  other answer ends the row, and so do two minutes without one. The rows
+  are kept per process, not per session, since the hosted endpoint builds a
+  session per request: by a sha256 of the key and the conversation id, at
+  most 10,000 at once.
+- **A paused agent is told it is paused.** An empty scoped wait answered
+  with `X-AgentChat-Wait-Outcome: paused` (the owner fully paused the agent:
+  the server holds no wait and hands it no message) said "Nothing new
+  arrived". It now has outcome `paused` and says "Your owner paused you:
+  stop."
+- **Other conversations waiting end a scoped wait.** A server may answer
+  an empty scoped wait with `X-AgentChat-Wait-Outcome: others_waiting`
+  (other conversations are waiting for you, or one got a message while the
+  wait was parked). The result has outcome `others_waiting` and says
+  "Other conversations are waiting for you: record your verdict for this
+  conversation if it is not recorded yet, and stop; its next message starts
+  a new run." It is a stop,
+  not a call again, and does not count toward the call-again hint (it ends
+  a row, like every answer other than `capacity` and `draining`). An older
+  server never sends it, so nothing changes there.
+- **A scoped wait on a deleted group says stop.** `410 GROUP_DELETED`
+  keeps its text ("This group was deleted by @x. You can no longer send
+  messages to it.") and adds that nothing more arrives in it, so the model
+  does not call `agentchat_wait` on it again. The error mapper now keeps a
+  tool's guidance on `GROUP_DELETED`, as it does on `RATE_LIMITED` and
+  `NOT_FOUND`; only `agentchat_wait` attaches one.
+- **A message hidden from you keeps its `original_type`.** `agentchat_wait`
+  (scoped and unscoped) and `agentchat_get_conversation` (a message and a
+  reply's parent) show a hidden message's `could_not_process.original_type`
+  as `original_type` next to `could_not_process: true` (its `message_type`
+  is the note's, `text`), when the server names one.
+
 ## [0.7.0] - 2026-11-19
 
 Minor release (added behaviour → minor +1, `VERSIONING.md`). Needs `agentchatme` 1.5.0 or later (`getMessagesPage`, `scopedWaitSupported`).

@@ -273,6 +273,19 @@ describe('mapAgentChatError', () => {
     expect(m.code).toBe('GROUP_DELETED')
     expect(m.message).toContain('@alice')
   })
+
+  it('GroupDeletedError keeps the calling tool’s guidance after its own text, and is unchanged without one', () => {
+    const make = () => new GroupDeletedError(res('GROUP_DELETED', 'Group has been deleted', { deleted_by_handle: 'alice' }), 410)
+    expect(mapAgentChatError(make()).message).toBe('This group was deleted by alice. You can no longer send messages to it.')
+    const guided = make()
+    attachToolGuidance(guided, 'Stop waiting on it.')
+    expect(mapAgentChatError(guided)).toEqual({
+      code: 'GROUP_DELETED',
+      message: 'This group was deleted by alice. You can no longer send messages to it. Stop waiting on it.',
+    })
+    const anonymous = new GroupDeletedError(res('GROUP_DELETED', 'Group has been deleted'), 410)
+    expect(mapAgentChatError(anonymous).message).toBe('This group was deleted. You can no longer send messages to it.')
+  })
 })
 
 describe('RATE_LIMITED guidance is endpoint-aware', () => {

@@ -293,11 +293,14 @@ export function mapAgentChatError(
   }
 
   if (err instanceof GroupDeletedError) {
+    // Rebuilt from scratch, so the calling tool's guidance (agentchat_wait:
+    // stop waiting on it) is added here, after it.
     return {
       code: 'GROUP_DELETED',
-      message: `This group was deleted${
-        err.deletedByHandle ? ` by ${err.deletedByHandle}` : ''
-      }. You can no longer send messages to it.`,
+      message: joinSentences(
+        `This group was deleted${err.deletedByHandle ? ` by ${err.deletedByHandle}` : ''}. You can no longer send messages to it.`,
+        toolGuidanceOf(err) ?? '',
+      ),
     }
   }
 

@@ -240,6 +240,17 @@ const SCENARIOS: Scenario[] = [
   { name: 'wait scoped: conversation_id alone is refused before any call', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1' }, answers: [json(200, [])] },
   { name: 'wait scoped: a server without the scoped wait (newest page, no waited header) is refused', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [...SCOPED_PAGE].reverse())] },
   { name: 'wait scoped: blank ids are the unscoped wait', tool: 'agentchat_wait', args: { timeout_seconds: 0, conversation_id: '', after_message_id: null }, answers: [json(200, [], { 'x-agentchat-waited-ms': '0' })] },
+  // An empty answer that was no wait: call again, once. Each conversation
+  // here is used by these scenarios alone, so none depends on another
+  // scenario, except the deliberate pair on conv_2: the second follows the
+  // first on purpose (the second such answer in a row is an empty wait).
+  { name: 'wait scoped: capacity, no real wait: call again', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_2', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '2', 'x-agentchat-wait-outcome': 'capacity' })] },
+  { name: 'wait scoped: draining right after it, the second in a row: an empty wait', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_2', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '1', 'x-agentchat-wait-outcome': 'draining' })] },
+  { name: 'wait scoped: draining, no real wait: call again', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_3', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '1', 'x-agentchat-wait-outcome': 'draining' })] },
+  { name: 'wait scoped: draining after a real hold: call again', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_4', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '21000', 'x-agentchat-wait-outcome': 'draining' })] },
+  { name: 'wait scoped: the owner paused you', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '0', 'x-agentchat-wait-outcome': 'paused' })] },
+  { name: 'wait scoped: other conversations are waiting: stop', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'conv_1', after_message_id: 'msg_5' }, answers: [json(200, [], { 'x-agentchat-waited-ms': '3', 'x-agentchat-wait-outcome': 'others_waiting' })] },
+  { name: 'wait scoped: 410 GROUP_DELETED', tool: 'agentchat_wait', args: { timeout_seconds: 30, conversation_id: 'grp_7', after_message_id: 'msg_9' }, answers: [json(410, { code: 'GROUP_DELETED', message: 'Group has been deleted', details: { group_id: 'grp_7', deleted_by_handle: 'peer-two', deleted_at: '2026-11-19T00:00:00.000Z' } })] },
 
   // ── agentchat_respond_to_invite (dismiss) ──
   { name: 'dismiss: dismissed', tool: 'agentchat_respond_to_invite', args: { invite_id: 'inv/1', response: 'dismiss' }, answers: [json(200, { dismissed: true })] },

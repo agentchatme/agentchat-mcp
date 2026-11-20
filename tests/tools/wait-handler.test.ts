@@ -1,6 +1,6 @@
 import { type AgentChatClient } from 'agentchatme'
 import pino from 'pino'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { NotRegisteredError } from '../../src/client.js'
 import { Semaphore } from '../../src/semaphore.js'
@@ -16,8 +16,10 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // scoped wait (conversation_id + after_message_id, both or neither): one
 // long-poll of that conversation, no ack, the same deadline and result shape
 // plus next_after_message_id, an old server's plain answer refused, the
-// caller's handle resolved before its own messages are left out, (10) a
-// message hidden from you is marked could_not_process: true.
+// caller's handle resolved before its own messages are left out, an empty
+// answer the server held no wait for says call again (once in a row), an
+// owner's pause says stop, a deleted group says stop, (10) a message hidden
+// from you is marked could_not_process: true, with its original_type.
 
 type FetchCall = {
   url: string
@@ -145,6 +147,9 @@ const ROWS = [
 ]
 
 describe('agentchat_wait handler', () => {
+  beforeEach(() => {
+    waitTool.resetNoWaitRows()
+  })
   afterEach(() => {
     vi.useRealTimers()
   })
@@ -597,6 +602,221 @@ describe('agentchat_wait handler', () => {
       expect(payload).toMatchObject({ count: 1, has_more: true, next_after_message_id: 'msg_7' })
     })
 
+    describe('an empty answer that was no wait (X-AgentChat-Wait-Outcome: capacity, draining)', () => {
+      const SHAPE = ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next_after_message_id', 'next'].sort()
+      const noWait = (outcome: string) => json(200, [], { 'x-agentchat-waited-ms': '4', 'x-agentchat-wait-outcome': outcome })
+      /** One scoped wait answered by `answer`, in a fresh session (the hosted endpoint builds one per request). */
+      const waitOnce = async (answer: () => Response, args: Record<string, unknown> = scoped, apiKey: string = KEY) => {
+        const { impl } = fetchStub(answer)
+        return payloadOf(await waitTool.createHandler(makeCtx(impl, apiKey))({ timeout_seconds: 30, limit: 50, ...args }))
+      }
+      const expectCallAgain = (payload: Record<string, unknown>) => {
+        expect(Object.keys(payload).sort()).toEqual(SHAPE)
+        expect(payload).toMatchObject({ outcome: 'call_again', waited_ms: 4, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedCallAgain)
+        expect(payload['next']).toContain(
+          'This does not count as a wait that returned nothing: call agentchat_wait once more with the same conversation_id and after_message_id.',
+        )
+        expect(payload['next']).toContain('call agentchat_wait once more with the same conversation_id and after_message_id')
+      }
+      const expectEmpty = (payload: Record<string, unknown>) => {
+        expect(Object.keys(payload).sort()).toEqual(SHAPE)
+        expect(payload).toMatchObject({ outcome: 'timeout', count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedTimeout)
+      }
+
+      for (const outcome of ['capacity', 'draining', ' Capacity ']) {
+        it(`${JSON.stringify(outcome)}: same shape, outcome "call_again", call again with the same ids, not stop`, async () => {
+          expectCallAgain(await waitOnce(() => noWait(outcome)))
+        })
+      }
+
+      it('the hint is given once: the second such answer in a row, and every one after it, is an empty wait', async () => {
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+        // A new session each call, as the hosted endpoint builds them: the row is still seen.
+        expectEmpty(await waitOnce(() => noWait('draining')))
+        expectEmpty(await waitOnce(() => noWait('capacity')))
+      })
+
+      it('any other answer ends the row: a real empty wait, messages, a pause, or others waiting', async () => {
+        const between = [
+          () => json(200, [], { 'x-agentchat-waited-ms': '30000' }),
+          () => json(200, PAGE, { 'x-agentchat-waited-ms': '20' }),
+          () => json(200, [], { 'x-agentchat-waited-ms': '0', 'x-agentchat-wait-outcome': 'paused' }),
+          () => json(200, [], { 'x-agentchat-waited-ms': '3', 'x-agentchat-wait-outcome': 'others_waiting' }),
+        ]
+        for (const answer of between) {
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          await waitOnce(answer)
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          waitTool.resetNoWaitRows()
+        }
+      })
+
+      it('a refusal or a cancellation neither starts nor ends a row', async () => {
+        const refusedBy = async (answer: () => Response) => {
+          const { impl } = fetchStub(answer)
+          expect((await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped })).isError).toBe(true)
+        }
+        await refusedBy(() => json(503, { code: 'INTERNAL_ERROR', message: 'down' }))
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+        await refusedBy(() => json(429, { code: 'RATE_LIMITED', message: 'Too many requests' }, { 'retry-after': '1' }))
+        const ac = new AbortController()
+        ac.abort()
+        await waitTool.createHandler(makeCtx(fetchStub(() => noWait('capacity')).impl))({ timeout_seconds: 30, limit: 50, ...scoped }, { signal: ac.signal })
+        expectEmpty(await waitOnce(() => noWait('capacity')))
+      })
+
+      it('a row is one agent in one conversation', async () => {
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+        // Another conversation of the same agent: a row of its own.
+        const other = await waitOnce(() => noWait('capacity'), { conversation_id: 'conv_2', after_message_id: 'msg_5' })
+        expect(other).toMatchObject({ outcome: 'call_again' })
+        // Another agent in the same conversation: a row of its own.
+        expectCallAgain(await waitOnce(() => noWait('capacity'), scoped, 'ac_live_ffffffffffffffffffffffffffffffff'))
+        // The after_message_id may move on (an answer was sent in between): still the same row.
+        expect(await waitOnce(() => noWait('draining'), { ...scoped, after_message_id: 'msg_9' })).toMatchObject({ outcome: 'timeout', next_after_message_id: 'msg_9' })
+      })
+
+      it(`a no-wait answer more than ${waitTool.CALL_AGAIN_WINDOW_MS / 1000} s after the last one starts a new row`, async () => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(new Date('2026-11-20T10:00:00.000Z'))
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+        vi.setSystemTime(Date.now() + waitTool.CALL_AGAIN_WINDOW_MS)
+        expectEmpty(await waitOnce(() => noWait('capacity')))
+        vi.setSystemTime(Date.now() + waitTool.CALL_AGAIN_WINDOW_MS + 1)
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+      })
+
+      it('a page with messages is shown whatever the header says', async () => {
+        const payload = await waitOnce(() => json(200, PAGE, { 'x-agentchat-waited-ms': '20', 'x-agentchat-wait-outcome': 'capacity' }))
+        expect(payload).toMatchObject({ outcome: 'messages', count: 1, next_after_message_id: 'msg_7' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedMessages)
+        // …and it is no first of a row.
+        expectCallAgain(await waitOnce(() => noWait('capacity')))
+      })
+
+      describe('an answer the server held first (X-AgentChat-Waited-Ms of 1000 or more)', () => {
+        const held = (outcome: string, waited: string) =>
+          () => json(200, [], { 'x-agentchat-waited-ms': waited, 'x-agentchat-wait-outcome': outcome })
+        const callAgainAfterHold = (payload: Record<string, unknown>, waited: number) => {
+          expect(payload).toMatchObject({ outcome: 'call_again', waited_ms: waited, count: 0, next_after_message_id: 'msg_5' })
+          expect(payload['next']).toBe(waitTool.NEXT.scopedCallAgain)
+        }
+
+        it('a draining after a real hold says call again even right after a no-wait answer, and starts a new row', async () => {
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          // Held 21 s, then drained: not the second of that row.
+          callAgainAfterHold(await waitOnce(held('draining', '21000')), 21000)
+          // It started a new row: a no-wait answer next is its second.
+          expectEmpty(await waitOnce(() => noWait('capacity')))
+        })
+
+        it('held answers never count toward the once-in-a-row: each says call again', async () => {
+          for (const [outcome, waited] of [['draining', '1000'], ['capacity', '30000'], ['draining', '44999']] as const) {
+            callAgainAfterHold(await waitOnce(held(outcome, waited)), Number(waited))
+          }
+        })
+
+        it('under 1000 ms is a no-wait answer: 999 counts toward the row', async () => {
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          expect(await waitOnce(held('draining', '999'))).toMatchObject({ outcome: 'timeout', waited_ms: 999, next: waitTool.NEXT.scopedTimeout })
+          waitTool.resetNoWaitRows()
+          expect(await waitOnce(held('capacity', '999'))).toMatchObject({ outcome: 'call_again', waited_ms: 999 })
+          expect(await waitOnce(held('draining', '0'))).toMatchObject({ outcome: 'timeout', waited_ms: 0 })
+        })
+
+        it('pins the threshold', () => {
+          expect(waitTool.HELD_WAIT_MS).toBe(1_000)
+          const now = Date.now()
+          expect(waitTool.firstNoWaitInRow('row-h', now)).toBe(true)
+          expect(waitTool.firstNoWaitInRow('row-h', now, true)).toBe(true)
+          expect(waitTool.firstNoWaitInRow('row-h', now)).toBe(false)
+        })
+      })
+
+      it('an outcome the tool does not know is an empty wait', async () => {
+        expectEmpty(await waitOnce(() => noWait('something-new')))
+      })
+
+      it('the rows are bounded: past the cap the oldest is forgotten first', () => {
+        const now = Date.now()
+        expect(waitTool.CALL_AGAIN_MAX_ROWS).toBe(10_000)
+        expect(waitTool.CALL_AGAIN_WINDOW_MS).toBe(120_000)
+        expect(waitTool.firstNoWaitInRow('row-0', now)).toBe(true)
+        expect(waitTool.firstNoWaitInRow('row-1', now)).toBe(true)
+        // row-0 answered again: now the newest.
+        expect(waitTool.firstNoWaitInRow('row-0', now)).toBe(false)
+        for (let i = 2; i <= waitTool.CALL_AGAIN_MAX_ROWS; i += 1) waitTool.firstNoWaitInRow(`row-${i}`, now)
+        // One past the cap: row-1, the oldest, was forgotten; row-0 was not.
+        expect(waitTool.firstNoWaitInRow('row-0', now)).toBe(false)
+        expect(waitTool.firstNoWaitInRow('row-1', now)).toBe(true)
+        // That made room by forgetting row-2, now the oldest.
+        expect(waitTool.firstNoWaitInRow('row-3', now)).toBe(false)
+        expect(waitTool.firstNoWaitInRow('row-2', now)).toBe(true)
+      })
+    })
+
+    describe('an owner’s full pause (X-AgentChat-Wait-Outcome: paused)', () => {
+      const PAUSED = () => json(200, [], { 'x-agentchat-waited-ms': '0', 'x-agentchat-wait-outcome': 'paused' })
+
+      it('says plainly that the owner paused you: stop, in the same shape', async () => {
+        const { impl, calls } = fetchStub(PAUSED)
+        const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+        expect(calls).toHaveLength(1)
+        expect(Object.keys(payload).sort()).toEqual(
+          ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next_after_message_id', 'next'].sort(),
+        )
+        expect(payload).toMatchObject({ outcome: 'paused', waited_ms: 0, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedPaused)
+        expect(payload['next']).toMatch(/^Your owner paused you: stop\./)
+        expect(payload['next']).not.toContain('Nothing new arrived')
+      })
+
+      it('every time: a pause is not a no-wait row', async () => {
+        for (let i = 0; i < 3; i += 1) {
+          const { impl } = fetchStub(PAUSED)
+          expect(payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))).toMatchObject({ outcome: 'paused' })
+        }
+      })
+    })
+
+    describe('other conversations waiting (X-AgentChat-Wait-Outcome: others_waiting)', () => {
+      const OTHERS = () => json(200, [], { 'x-agentchat-waited-ms': '3', 'x-agentchat-wait-outcome': 'others_waiting' })
+      const waitOnce = async (answer: () => Response) => {
+        const { impl } = fetchStub(answer)
+        return payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+      }
+
+      it('says record your verdict and stop, in the same shape: a stop, not a call again', async () => {
+        const payload = await waitOnce(OTHERS)
+        expect(Object.keys(payload).sort()).toEqual(
+          ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next_after_message_id', 'next'].sort(),
+        )
+        expect(payload).toMatchObject({ outcome: 'others_waiting', waited_ms: 3, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedOthersWaiting)
+        expect(payload['next']).toBe(
+          'Other conversations are waiting for you: record your verdict for this conversation if it is not recorded yet, and stop; its next message starts a new run.',
+        )
+        expect(payload['next']).not.toContain('call agentchat_wait')
+      })
+
+      it('every time, and it does not count toward the call-again hint', async () => {
+        for (let i = 0; i < 3; i += 1) expect(await waitOnce(OTHERS)).toMatchObject({ outcome: 'others_waiting' })
+        // Not a no-wait answer: the capacity after it is still the first of its row.
+        expect(await waitOnce(() => json(200, [], { 'x-agentchat-waited-ms': '4', 'x-agentchat-wait-outcome': 'capacity' }))).toMatchObject({ outcome: 'call_again' })
+        // And it ends a row: the capacity after it is again the first.
+        expect(await waitOnce(OTHERS)).toMatchObject({ outcome: 'others_waiting' })
+        expect(await waitOnce(() => json(200, [], { 'x-agentchat-waited-ms': '4', 'x-agentchat-wait-outcome': 'capacity' }))).toMatchObject({ outcome: 'call_again' })
+      })
+
+      it('a page with messages is shown whatever the header says', async () => {
+        const payload = await waitOnce(() => json(200, PAGE, { 'x-agentchat-waited-ms': '20', 'x-agentchat-wait-outcome': 'others_waiting' }))
+        expect(payload).toMatchObject({ outcome: 'messages', count: 1 })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedMessages)
+      })
+    })
+
     describe('a server without the scoped wait (it answers the newest page, newest first)', () => {
       const NEWEST_FIRST = [
         { ...PAGE[1]!, id: 'msg_9', seq: 9 },
@@ -866,6 +1086,22 @@ describe('agentchat_wait handler', () => {
         expect(calls).toHaveLength(1)
       })
 
+      it('410 GROUP_DELETED: the group is gone, so stop waiting on it, one attempt', async () => {
+        const { impl, calls } = fetchStub(() =>
+          json(410, {
+            code: 'GROUP_DELETED',
+            message: 'Group has been deleted',
+            details: { group_id: 'grp_9', deleted_by_handle: 'alice', deleted_at: '2026-11-19T00:00:00Z' },
+          }),
+        )
+        const result = await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, conversation_id: 'grp_9', after_message_id: 'msg_5' })
+        expect(result.isError).toBe(true)
+        expect(firstText(result)).toBe(
+          'Error: GROUP_DELETED\n\nThis group was deleted by alice. You can no longer send messages to it. Nothing more arrives in it either, so do not call agentchat_wait on it again: stop.',
+        )
+        expect(calls).toHaveLength(1)
+      })
+
       it('unauthenticated: the composition’s error, nothing on the wire', async () => {
         const { impl, calls } = fetchStub(() => json(200, []))
         const result = await waitTool.createHandler(makeCtx(impl, null))({ timeout_seconds: 5, limit: 50, ...scoped })
@@ -891,9 +1127,31 @@ describe('agentchat_wait handler', () => {
       const { impl } = fetchStub((call) => (isAck(call) ? json(200, { acked: 2 }) : json(200, [HIDDEN, ROWS[0]])))
       const payload = payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 50 }))
       const messages = (payload['conversations'] as Array<{ messages: Array<Record<string, unknown>> }>)[0]!.messages
-      expect(messages[0]).toMatchObject({ message_id: 'msg_h', message_type: 'text', content: { text: NOTE }, could_not_process: true })
+      expect(messages[0]).toMatchObject({ message_id: 'msg_h', message_type: 'text', content: { text: NOTE }, could_not_process: true, original_type: 'file' })
       expect(messages[0]!['could_not_process']).toBe(true)
       expect(messages[1]).not.toHaveProperty('could_not_process')
+      expect(messages[1]).not.toHaveProperty('original_type')
+    })
+
+    it('original_type sits next to could_not_process, and only when the server names one', async () => {
+      const variants = [
+        [{ at: 'x', original_type: 'text' }, 'text'],
+        [{ at: 'x' }, undefined],
+        [{ at: 'x', original_type: '' }, undefined],
+        [{ at: 'x', original_type: 7 }, undefined],
+      ] as const
+      for (const [marker, expected] of variants) {
+        const { impl } = fetchStub(() => json(200, [{ ...HIDDEN, delivery_id: undefined, could_not_process: marker }]))
+        const payload = payloadOf(
+          await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 50, conversation_id: 'conv_1', after_message_id: 'msg_0' }),
+        )
+        const message = (payload['conversations'] as Array<{ messages: Array<Record<string, unknown>> }>)[0]!.messages[0]!
+        expect(message['could_not_process'], JSON.stringify(marker)).toBe(true)
+        expect(message['original_type'], JSON.stringify(marker)).toBe(expected)
+        const keys = Object.keys(message)
+        if (expected) expect(keys.slice(-2), JSON.stringify(marker)).toEqual(['could_not_process', 'original_type'])
+        else expect([keys.at(-1), keys.includes('original_type')], JSON.stringify(marker)).toEqual(['could_not_process', false])
+      }
     })
 
     it('the scoped wait shows it the same way', async () => {
@@ -903,7 +1161,7 @@ describe('agentchat_wait handler', () => {
       )
       const messages = (payload['conversations'] as Array<{ messages: Array<Record<string, unknown>> }>)[0]!.messages
       expect(messages).toHaveLength(1)
-      expect(messages[0]).toMatchObject({ message_id: 'msg_h', content: { text: NOTE }, could_not_process: true })
+      expect(messages[0]).toMatchObject({ message_id: 'msg_h', content: { text: NOTE }, could_not_process: true, original_type: 'file' })
     })
 
     it('isHidden reads only an object as hidden', () => {

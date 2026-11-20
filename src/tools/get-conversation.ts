@@ -166,13 +166,21 @@ function contentOf(message: RawMessage): Record<string, unknown> {
 }
 
 /**
- * One short field for a hidden message, so a model can tell the note from
- * what the peer wrote; absent on every other message.
+ * The short fields for a hidden message, so a model can tell the note from
+ * what the peer wrote: `could_not_process: true`, and `original_type`, the
+ * type the message had before it was hidden, when the server names one (as
+ * agentchat_wait shows them). Absent on every other message.
  */
-function hiddenMarker(message: RawMessage): { could_not_process: true } | Record<string, never> {
-  return typeof message.could_not_process === 'object' && message.could_not_process !== null
-    ? { could_not_process: true }
-    : {}
+function hiddenMarker(
+  message: RawMessage,
+): { could_not_process: true; original_type?: string } | Record<string, never> {
+  const marker = message.could_not_process
+  if (typeof marker !== 'object' || marker === null) return {}
+  const originalType = (marker as { original_type?: unknown }).original_type
+  return {
+    could_not_process: true,
+    ...(typeof originalType === 'string' && originalType.length > 0 ? { original_type: originalType } : {}),
+  }
 }
 
 function participantMetadata(
