@@ -597,7 +597,9 @@ async function scopedWait(
   const served: unknown = page.messages
   const pageRows: SyncRow[] = Array.isArray(served) ? (served as SyncRow[]) : []
   const rows = pageRows.filter((row) => !isOwn(row, selfHandle))
-  const waitedMs = waitedMsOf(page.headers, startedAt)
+  // A read once (waitMs 0) sends no wait_ms, so the server parks nothing and
+  // sends no waited header: it waited 0, not the local round trip.
+  const waitedMs = waitMs === 0 && page.headers.get('x-agentchat-waited-ms') === null ? 0 : waitedMsOf(page.headers, startedAt)
 
   if (signal?.aborted) {
     ctx.logger.info(
