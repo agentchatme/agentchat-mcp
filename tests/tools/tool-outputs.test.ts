@@ -6,12 +6,15 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildMcpServer, PACKAGE_VERSION } from '../../src/lib.js'
 import { KEY } from './_real-client.js'
+// The SDK's wake-check methods, until the installed SDK has its own.
+import './_wake-check-sdk-polyfill.js'
 
 // ─── What a caller sees, pinned per server answer ──────────────────────────
 //
 // For every tool that reaches the server through a wire call of its own
 // (the tray, the long-poll and its ack, invite dismiss, the wake-webhook
-// trio, registration and verification), this suite drives the PUBLIC
+// trio, the wake check's set and clear, registration and verification),
+// this suite drives the PUBLIC
 // composition — buildMcpServer over a real MCP transport pair, the network
 // stubbed at fetch — through a fixed set of server answers: the normal ones,
 // the error codes each tool advises on, and the odd bodies a proxy can
@@ -207,6 +210,13 @@ const WAKE_WEBHOOK = {
 
 const SET_ARGS = { url: 'https://hooks.example.com/wake', secret: 'a-secret-of-sixteen+', dialect: 'openclaw' }
 
+const WAKE_CHECK = {
+  url: 'https://outputs.agentchat.test/v1/wake-check/wc1.kid.iv.ciphertext.tag',
+  rewake: true,
+  created_at: '2026-11-20T10:00:00.000Z',
+  last_seen_at: null,
+}
+
 const SCENARIOS: Scenario[] = [
   // ── agentchat_inbox ──
   { name: 'inbox: tray v1 with cards, invites and unknown fields (default park)', tool: 'agentchat_inbox', args: {}, answers: [json(200, TRAY_V1)] },
@@ -275,6 +285,7 @@ const SCENARIOS: Scenario[] = [
   { name: 'set_webhook: 2xx body cut mid-read', tool: 'agentchat_set_webhook', args: SET_ARGS, answers: [cutOff(200, '{"wake_webhook":{"url"')] },
   { name: 'set_webhook: 503 then 200 (PUT is retried)', tool: 'agentchat_set_webhook', args: SET_ARGS, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'blip' }), json(200, { wake_webhook: WAKE_WEBHOOK })] },
   { name: 'set_webhook: unauthenticated session', tool: 'agentchat_set_webhook', args: SET_ARGS, answers: [json(200, { wake_webhook: WAKE_WEBHOOK })], apiKey: null },
+  { name: 'set_webhook: 409 WAKE_DESTINATION_EXISTS (a wake check is set)', tool: 'agentchat_set_webhook', args: SET_ARGS, answers: [json(409, { code: 'WAKE_DESTINATION_EXISTS', message: 'This agent has a wake check. Clear it first (DELETE /v1/agents/me/wake-check).' })] },
 
   // ── agentchat_test_webhook ──
   { name: 'test_webhook: receiver answered 2xx', tool: 'agentchat_test_webhook', args: {}, answers: [json(200, { test_wake: { ok: true, dialect: 'openclaw', url_host: 'hooks.example.com', status: 200, duration_ms: 41, error: null, delivery_id: 'wk_1' } })] },
@@ -296,6 +307,31 @@ const SCENARIOS: Scenario[] = [
   { name: 'clear_webhook: 401 UNAUTHORIZED', tool: 'agentchat_clear_webhook', args: {}, answers: [json(401, { code: 'UNAUTHORIZED', message: 'bad key' })] },
   { name: 'clear_webhook: 2xx body cut mid-read', tool: 'agentchat_clear_webhook', args: {}, answers: [cutOff(200, '{"ok":tr')] },
   { name: 'clear_webhook: 503 then 200 (DELETE is retried)', tool: 'agentchat_clear_webhook', args: {}, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'blip' }), json(200, { ok: true, removed: true })] },
+
+  // ── agentchat_set_wake_check ──
+  { name: 'set_wake_check: set, server defaults', tool: 'agentchat_set_wake_check', args: {}, answers: [json(200, { wake_check: WAKE_CHECK })] },
+  { name: 'set_wake_check: rewake false, rotated', tool: 'agentchat_set_wake_check', args: { rewake: false, rotate: true }, answers: [json(200, { wake_check: { ...WAKE_CHECK, rewake: false, last_seen_at: '2026-11-20T10:05:00.000Z' } })] },
+  { name: 'set_wake_check: blank optionals are unset', tool: 'agentchat_set_wake_check', args: { rewake: '', rotate: null }, answers: [json(200, { wake_check: WAKE_CHECK })] },
+  { name: 'set_wake_check: 409 WAKE_DESTINATION_EXISTS (a wake webhook is set)', tool: 'agentchat_set_wake_check', args: {}, answers: [json(409, { code: 'WAKE_DESTINATION_EXISTS', message: 'This agent has a wake webhook. Clear it first (DELETE /v1/agents/me/wake-webhook).' })] },
+  { name: 'set_wake_check: 503 WAKE_CHECK_UNAVAILABLE on every attempt', tool: 'agentchat_set_wake_check', args: {}, answers: [json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message: 'Wake checks cannot be issued on this server.' })] },
+  { name: 'set_wake_check: 503 then 200 (PUT is retried)', tool: 'agentchat_set_wake_check', args: { rotate: true }, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'blip' }), json(200, { wake_check: WAKE_CHECK })] },
+  { name: 'set_wake_check: 404 NOT_FOUND (switched off)', tool: 'agentchat_set_wake_check', args: {}, answers: [json(404, { code: 'NOT_FOUND', message: 'Not found' })] },
+  { name: 'set_wake_check: bare 404 from a server without the route', tool: 'agentchat_set_wake_check', args: {}, answers: [empty(404)] },
+  { name: 'set_wake_check: 429 RATE_LIMITED', tool: 'agentchat_set_wake_check', args: {}, answers: [json(429, { code: 'RATE_LIMITED', message: 'slow down' }, { 'retry-after': '60' })] },
+  { name: 'set_wake_check: 2xx empty body', tool: 'agentchat_set_wake_check', args: {}, answers: [empty(200)] },
+  { name: 'set_wake_check: 2xx JSON null', tool: 'agentchat_set_wake_check', args: {}, answers: [json(200, null)] },
+  { name: 'set_wake_check: 2xx without the envelope', tool: 'agentchat_set_wake_check', args: {}, answers: [json(200, { ok: true })] },
+  { name: 'set_wake_check: 2xx not JSON', tool: 'agentchat_set_wake_check', args: {}, answers: [text(200, '<html>ok</html>')] },
+  { name: 'set_wake_check: 2xx body cut mid-read', tool: 'agentchat_set_wake_check', args: {}, answers: [cutOff(200, '{"wake_check":{"url"')] },
+  { name: 'set_wake_check: unauthenticated session', tool: 'agentchat_set_wake_check', args: { rotate: true }, answers: [json(200, { wake_check: WAKE_CHECK })], apiKey: null },
+
+  // ── agentchat_clear_wake_check ──
+  { name: 'clear_wake_check: cleared', tool: 'agentchat_clear_wake_check', args: {}, answers: [json(200, { cleared: true })] },
+  { name: 'clear_wake_check: nothing to clear', tool: 'agentchat_clear_wake_check', args: {}, answers: [json(200, { cleared: false })] },
+  { name: 'clear_wake_check: 204', tool: 'agentchat_clear_wake_check', args: {}, answers: [empty(204)] },
+  { name: 'clear_wake_check: 404 NOT_FOUND (switched off)', tool: 'agentchat_clear_wake_check', args: {}, answers: [json(404, { code: 'NOT_FOUND', message: 'Not found' })] },
+  { name: 'clear_wake_check: 503 then 200 (DELETE is retried)', tool: 'agentchat_clear_wake_check', args: {}, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'blip' }), json(200, { cleared: true })] },
+  { name: 'clear_wake_check: unauthenticated session', tool: 'agentchat_clear_wake_check', args: {}, answers: [json(200, { cleared: true })], apiKey: null },
 
   // ── agentchat_register ──
   { name: 'register: pending', tool: 'agentchat_register', args: { email: 'owner@example.com', handle: 'fresh-bot' }, answers: [json(200, { pending_id: 'pend_1', message: 'Code sent' })], apiKey: null },
