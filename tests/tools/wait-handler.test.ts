@@ -636,11 +636,12 @@ describe('agentchat_wait handler', () => {
         expectEmpty(await waitOnce(() => noWait('capacity')))
       })
 
-      it('any other answer ends the row: a real empty wait, messages, or a pause', async () => {
+      it('any other answer ends the row: a real empty wait, messages, a pause, or others waiting', async () => {
         const between = [
           () => json(200, [], { 'x-agentchat-waited-ms': '30000' }),
           () => json(200, PAGE, { 'x-agentchat-waited-ms': '20' }),
           () => json(200, [], { 'x-agentchat-waited-ms': '0', 'x-agentchat-wait-outcome': 'paused' }),
+          () => json(200, [], { 'x-agentchat-waited-ms': '3', 'x-agentchat-wait-outcome': 'others_waiting' }),
         ]
         for (const answer of between) {
           expectCallAgain(await waitOnce(() => noWait('capacity')))
@@ -736,6 +737,42 @@ describe('agentchat_wait handler', () => {
           const { impl } = fetchStub(PAUSED)
           expect(payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))).toMatchObject({ outcome: 'paused' })
         }
+      })
+    })
+
+    describe('other conversations waiting (X-AgentChat-Wait-Outcome: others_waiting)', () => {
+      const OTHERS = () => json(200, [], { 'x-agentchat-waited-ms': '3', 'x-agentchat-wait-outcome': 'others_waiting' })
+      const waitOnce = async (answer: () => Response) => {
+        const { impl } = fetchStub(answer)
+        return payloadOf(await waitTool.createHandler(makeCtx(impl))({ timeout_seconds: 30, limit: 50, ...scoped }))
+      }
+
+      it('says record your verdict and stop, in the same shape: a stop, not a call again', async () => {
+        const payload = await waitOnce(OTHERS)
+        expect(Object.keys(payload).sort()).toEqual(
+          ['you', 'outcome', 'waited_ms', 'count', 'acked', 'has_more', 'security_boundary', 'conversations', 'next_after_message_id', 'next'].sort(),
+        )
+        expect(payload).toMatchObject({ outcome: 'others_waiting', waited_ms: 3, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedOthersWaiting)
+        expect(payload['next']).toBe(
+          'Other conversations are waiting for you: record your verdict for this conversation and stop; its next message starts a new run.',
+        )
+        expect(payload['next']).not.toContain('call agentchat_wait')
+      })
+
+      it('every time, and it does not count toward the call-again hint', async () => {
+        for (let i = 0; i < 3; i += 1) expect(await waitOnce(OTHERS)).toMatchObject({ outcome: 'others_waiting' })
+        // Not a no-wait answer: the capacity after it is still the first of its row.
+        expect(await waitOnce(() => json(200, [], { 'x-agentchat-waited-ms': '4', 'x-agentchat-wait-outcome': 'capacity' }))).toMatchObject({ outcome: 'call_again' })
+        // And it ends a row: the capacity after it is again the first.
+        expect(await waitOnce(OTHERS)).toMatchObject({ outcome: 'others_waiting' })
+        expect(await waitOnce(() => json(200, [], { 'x-agentchat-waited-ms': '4', 'x-agentchat-wait-outcome': 'capacity' }))).toMatchObject({ outcome: 'call_again' })
+      })
+
+      it('a page with messages is shown whatever the header says', async () => {
+        const payload = await waitOnce(() => json(200, PAGE, { 'x-agentchat-waited-ms': '20', 'x-agentchat-wait-outcome': 'others_waiting' }))
+        expect(payload).toMatchObject({ outcome: 'messages', count: 1 })
+        expect(payload['next']).toBe(waitTool.NEXT.scopedMessages)
       })
     })
 

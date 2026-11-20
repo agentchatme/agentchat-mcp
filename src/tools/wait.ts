@@ -482,6 +482,8 @@ export const NEXT = {
     'The server held no wait this time (it is holding as many waits for you as it allows, or it is restarting), so this was not an empty wait: call agentchat_wait once more with the same conversation_id and after_message_id.',
   scopedPaused:
     'Your owner paused you: stop. While you are paused no wait is held and no message is handed to you, so do not call agentchat_wait again.',
+  scopedOthersWaiting:
+    'Other conversations are waiting for you: record your verdict for this conversation and stop; its next message starts a new run.',
 } as const
 
 // ─── An empty scoped answer that was no wait ───────────────────────────────
@@ -494,11 +496,18 @@ export const NEXT = {
 // after it, is treated as an empty wait, so a server that keeps answering
 // without holding cannot keep a run calling in a loop. `paused` is an
 // owner's full pause: never held, never handed messages (outcome "paused").
+// `others_waiting`: other conversations are waiting for this agent (or one
+// got a message while this wait was parked), so the run stops here and this
+// conversation's next message starts a new one (outcome "others_waiting").
+// Both are a stop: neither is a no-wait answer, and like every other answer
+// each ends a row. An older server never sends either.
 
 /** The empty answers that were no real wait. */
 export const NO_WAIT_OUTCOMES: ReadonlySet<string> = new Set(['capacity', 'draining'])
 /** The owner's full pause. */
 export const PAUSED_OUTCOME = 'paused'
+/** Other conversations are waiting for this agent. */
+export const OTHERS_WAITING_OUTCOME = 'others_waiting'
 /** A "call again" older than this no longer counts as the answer before. */
 export const CALL_AGAIN_WINDOW_MS = 2 * HOST_BUDGET_MS
 /** The most rows remembered at once; the oldest is forgotten first. */
@@ -619,8 +628,9 @@ function scopedCancelledResult(
  * served, and `next_after_message_id` is its last row, own messages
  * included, so a page of only the caller's own messages still moves the
  * cursor on. An empty answer the server held no wait for says call again
- * (outcome "call_again", once in a row), and an owner's full pause says
- * stop (outcome "paused"): see NO_WAIT_OUTCOMES.
+ * (outcome "call_again", once in a row); an owner's full pause (outcome
+ * "paused") and other conversations waiting (outcome "others_waiting") say
+ * stop: see NO_WAIT_OUTCOMES.
  */
 async function scopedWait(
   ctx: ToolContext,
@@ -721,7 +731,17 @@ async function scopedWait(
     noWaitRows.delete(rowKey)
   }
   const paused = waitOutcome === PAUSED_OUTCOME
-  const outcome = rows.length > 0 ? 'messages' : callAgain ? 'call_again' : paused ? 'paused' : 'timeout'
+  const othersWaiting = waitOutcome === OTHERS_WAITING_OUTCOME
+  const outcome =
+    rows.length > 0
+      ? 'messages'
+      : callAgain
+        ? 'call_again'
+        : paused
+          ? 'paused'
+          : othersWaiting
+            ? 'others_waiting'
+            : 'timeout'
   const next =
     rows.length > 0
       ? NEXT.scopedMessages
@@ -729,9 +749,11 @@ async function scopedWait(
         ? NEXT.scopedCallAgain
         : paused
           ? NEXT.scopedPaused
-          : hasMore
-            ? NEXT.scopedOwnOnly
-            : NEXT.scopedTimeout
+          : othersWaiting
+            ? NEXT.scopedOthersWaiting
+            : hasMore
+              ? NEXT.scopedOwnOnly
+              : NEXT.scopedTimeout
   return {
     type: 'json',
     value: {

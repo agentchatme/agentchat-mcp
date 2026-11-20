@@ -30,6 +30,15 @@ Patch release (fixed existing behaviour → patch +1, `VERSIONING.md`).
   the server holds no wait and hands it no message) said "Nothing new
   arrived". It now has outcome `paused` and says "Your owner paused you:
   stop."
+- **Other conversations waiting end a scoped wait.** A server may answer
+  an empty scoped wait with `X-AgentChat-Wait-Outcome: others_waiting`
+  (other conversations are waiting for you, or one got a message while the
+  wait was parked). The result has outcome `others_waiting` and says
+  "Other conversations are waiting for you: record your verdict for this
+  conversation and stop; its next message starts a new run." It is a stop,
+  not a call again, and does not count toward the call-again hint (it ends
+  a row, like every answer other than `capacity` and `draining`). An older
+  server never sends it, so nothing changes there.
 - **A scoped wait on a deleted group says stop.** `410 GROUP_DELETED`
   keeps its text ("This group was deleted by @x. You can no longer send
   messages to it.") and adds that nothing more arrives in it, so the model
