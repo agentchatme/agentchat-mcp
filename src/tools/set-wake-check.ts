@@ -11,7 +11,7 @@ import {
   watchAnswers,
 } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
-import { wakeCheckMethods, type WakeCheckStatus } from './_wake-check-sdk.js'
+import { wakeCheckOf, type WakeCheckStatus } from './_wake-check-sdk.js'
 import { INPUT_SHAPE as SET_WEBHOOK_INPUT, optionalFlag } from './set-webhook.js'
 
 // ─── The wake check: a keyless wake address ────────────────────────────────
@@ -120,14 +120,15 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        // PUT is idempotent: the SDK's default retry policy. A retried
-        // rotate rotates again, and the answer carries the address that
-        // stands; the one in between never reached anyone.
+        // PUT is idempotent: the SDK's default retry policy (the SDK never
+        // retries a WAKE_CHECK_UNAVAILABLE). A retried rotate rotates again,
+        // and the answer carries the address that stands; the one in between
+        // never reached anyone.
         const watch = watchAnswers(rest.fetchImpl)
-        const client = wakeCheckMethods(engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY))
+        const wakeCheck = wakeCheckOf(engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY))
         let status: unknown
         try {
-          status = await client.setWakeCheck({
+          status = await wakeCheck.set({
             // Sent only when the caller chose: an absent key takes the
             // server's default.
             ...(rewake !== undefined ? { rewake } : {}),

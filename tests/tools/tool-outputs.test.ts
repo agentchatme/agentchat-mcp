@@ -313,7 +313,7 @@ const SCENARIOS: Scenario[] = [
   { name: 'set_wake_check: rewake false, rotated', tool: 'agentchat_set_wake_check', args: { rewake: false, rotate: true }, answers: [json(200, { wake_check: { ...WAKE_CHECK, rewake: false, last_seen_at: '2026-11-20T10:05:00.000Z' } })] },
   { name: 'set_wake_check: blank optionals are unset', tool: 'agentchat_set_wake_check', args: { rewake: '', rotate: null }, answers: [json(200, { wake_check: WAKE_CHECK })] },
   { name: 'set_wake_check: 409 WAKE_DESTINATION_EXISTS (a wake webhook is set)', tool: 'agentchat_set_wake_check', args: {}, answers: [json(409, { code: 'WAKE_DESTINATION_EXISTS', message: 'This agent has a wake webhook. Clear it first (DELETE /v1/agents/me/wake-webhook).' })] },
-  { name: 'set_wake_check: 503 WAKE_CHECK_UNAVAILABLE on every attempt', tool: 'agentchat_set_wake_check', args: {}, answers: [json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message: 'Wake checks cannot be issued on this server.' })] },
+  { name: 'set_wake_check: 503 WAKE_CHECK_UNAVAILABLE is one attempt', tool: 'agentchat_set_wake_check', args: {}, answers: [json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message: 'Wake checks cannot be issued on this server.' })] },
   { name: 'set_wake_check: 503 then 200 (PUT is retried)', tool: 'agentchat_set_wake_check', args: { rotate: true }, answers: [json(503, { code: 'INTERNAL_ERROR', message: 'blip' }), json(200, { wake_check: WAKE_CHECK })] },
   { name: 'set_wake_check: 404 NOT_FOUND (switched off)', tool: 'agentchat_set_wake_check', args: {}, answers: [json(404, { code: 'NOT_FOUND', message: 'Not found' })] },
   { name: 'set_wake_check: bare 404 from a server without the route', tool: 'agentchat_set_wake_check', args: {}, answers: [empty(404)] },

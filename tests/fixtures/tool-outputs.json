@@ -2963,41 +2963,8 @@
       ]
     }
   },
-  "set_wake_check: 503 WAKE_CHECK_UNAVAILABLE on every attempt": {
+  "set_wake_check: 503 WAKE_CHECK_UNAVAILABLE is one attempt": {
     "calls": [
-      {
-        "method": "PUT",
-        "path": "/v1/agents/me/wake-check",
-        "query": [],
-        "body": {},
-        "auth": "bearer-session-key",
-        "client": "mcp",
-        "client_version_is_package": true,
-        "idempotency_key": false,
-        "content_type": "application/json"
-      },
-      {
-        "method": "PUT",
-        "path": "/v1/agents/me/wake-check",
-        "query": [],
-        "body": {},
-        "auth": "bearer-session-key",
-        "client": "mcp",
-        "client_version_is_package": true,
-        "idempotency_key": false,
-        "content_type": "application/json"
-      },
-      {
-        "method": "PUT",
-        "path": "/v1/agents/me/wake-check",
-        "query": [],
-        "body": {},
-        "auth": "bearer-session-key",
-        "client": "mcp",
-        "client_version_is_package": true,
-        "idempotency_key": false,
-        "content_type": "application/json"
-      },
       {
         "method": "PUT",
         "path": "/v1/agents/me/wake-check",

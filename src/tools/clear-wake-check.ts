@@ -4,7 +4,7 @@ import { DESTRUCTIVE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, requireRestAuth } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
-import { wakeCheckMethods } from './_wake-check-sdk.js'
+import { wakeCheckOf } from './_wake-check-sdk.js'
 import { rethrowWakeCheckError } from './set-wake-check.js'
 
 export const NAME = 'agentchat_clear_wake_check'
@@ -44,10 +44,10 @@ export function createHandler(ctx: ToolContext) {
       async () => {
         const rest = requireRestAuth(ctx)
         // DELETE is idempotent: the SDK's default retry policy.
-        const client = wakeCheckMethods(engineClient(rest, DEFAULT_RETRY_POLICY))
+        const wakeCheck = wakeCheckOf(engineClient(rest, DEFAULT_RETRY_POLICY))
         let answer: unknown
         try {
-          answer = await client.clearWakeCheck()
+          answer = await wakeCheck.clear()
         } catch (err) {
           rethrowWakeCheckError(err, NOT_OFFERED)
         }

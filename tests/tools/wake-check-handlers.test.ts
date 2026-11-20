@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto'
 import { Writable } from 'node:stream'
+import { AgentChatClient, ServerError } from 'agentchatme'
 import pino from 'pino'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { DESTRUCTIVE, WRITE_IDEMPOTENT } from '../../src/tools/_annotations.js'
+import { wakeCheckOf } from '../../src/tools/_wake-check-sdk.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 import * as clearWakeCheck from '../../src/tools/clear-wake-check.js'
 import * as setWakeCheck from '../../src/tools/set-wake-check.js'
@@ -15,8 +17,8 @@ import './_wake-check-sdk-polyfill.js'
 //
 // Same discipline as the other handler suites: fetch is stubbed under a real
 // client, so each test proves the wire (method, path, body, key) and the real
-// error pipeline. The SDK's two wake-check methods come from the installed
-// SDK when it has them, and from the test stand-in until then
+// error pipeline. The SDK's `client.wakeCheck` resource comes from the
+// installed SDK when it has one, and from the test stand-in until then
 // (_wake-check-sdk-polyfill.ts).
 
 const PATH = `${API_BASE}/v1/agents/me/wake-check`
@@ -33,6 +35,39 @@ const STATUS = {
 }
 
 const empty = (status: number) => new Response(null, { status })
+
+describe('client.wakeCheck: the SDK’s wire (the stand-in until the SDK ships it)', () => {
+  const client = (impl: typeof fetch) =>
+    new AgentChatClient({ apiKey: KEY, baseUrl: API_BASE, fetch: impl, retry: { maxRetries: 3, baseDelayMs: 1, maxDelayMs: 1 } })
+
+  it('set: PUT with only the documented fields, the envelope unwrapped; clear: DELETE, the answer as it came', async () => {
+    const { impl, calls } = fetchStub((call) =>
+      call.method === 'PUT' ? json(200, { wake_check: STATUS }) : json(200, { cleared: true }),
+    )
+    const wakeCheck = wakeCheckOf(client(impl))
+    await expect(wakeCheck.set()).resolves.toEqual(STATUS)
+    await expect(wakeCheck.set({ rewake: false, rotate: true })).resolves.toEqual(STATUS)
+    await expect(wakeCheck.clear()).resolves.toEqual({ cleared: true })
+    expect(calls.map((call) => [call.method, call.url, call.body])).toEqual([
+      ['PUT', PATH, {}],
+      ['PUT', PATH, { rewake: false, rotate: true }],
+      ['DELETE', PATH, null],
+    ])
+  })
+
+  it('a 503 WAKE_CHECK_UNAVAILABLE is a ServerError (503) after one attempt; any other 503 is retried', async () => {
+    const terminal = fetchStub(() => json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message: 'not here' }))
+    const err = await wakeCheckOf(client(terminal.impl)).set().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ServerError)
+    expect(err).toMatchObject({ code: 'WAKE_CHECK_UNAVAILABLE', status: 503, message: 'not here' })
+    expect(terminal.calls).toHaveLength(1)
+
+    const transient = fetchStub(() => json(503, { code: 'INTERNAL_ERROR', message: 'down' }))
+    const busy = await wakeCheckOf(client(transient.impl)).set().catch((e: unknown) => e)
+    expect(busy).toMatchObject({ code: 'INTERNAL_ERROR', status: 503 })
+    expect(transient.calls).toHaveLength(4)
+  })
+})
 
 describe('agentchat_set_wake_check handler', () => {
   it('PUTs /v1/agents/me/wake-check with the key, sends no field the caller did not choose, and returns the address', async () => {
@@ -111,16 +146,28 @@ describe('agentchat_set_wake_check handler', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('503 WAKE_CHECK_UNAVAILABLE keeps its code — never a transient SERVER_ERROR — and says nothing was changed', async () => {
+  it('503 WAKE_CHECK_UNAVAILABLE keeps its code — never a transient SERVER_ERROR — says nothing was changed, and is one attempt', async () => {
     const message = 'Wake checks cannot be issued on this server.'
     const { impl, calls } = fetchStub(() => json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message }))
     const result = await setWakeCheck.createHandler(makeRealCtx(impl))({})
     expect(result.isError).toBe(true)
     expect(firstText(result)).toBe(`Error: WAKE_CHECK_UNAVAILABLE\n\n${message} ${setWakeCheck.UNAVAILABLE_GUIDANCE}`)
-    // Whether the transport retries a 503 is the SDK's call; every attempt is the same PUT.
-    expect(calls.length).toBeGreaterThanOrEqual(1)
-    for (const call of calls) expect([call.method, call.url]).toEqual(['PUT', PATH])
-  }, 20_000)
+    // The SDK never retries it: the server cannot run wake checks at all.
+    expect(calls).toHaveLength(1)
+    expect([calls[0]!.method, calls[0]!.url]).toEqual(['PUT', PATH])
+  })
+
+  it('a transient 503 is still retried under the PUT’s retry policy', async () => {
+    const { impl, calls } = fetchStub((_call, index) =>
+      index === 0 ? json(503, { code: 'INTERNAL_ERROR', message: 'blip' }) : json(200, { wake_check: STATUS }),
+    )
+    const result = await setWakeCheck.createHandler(makeRealCtx(impl))({ rotate: true })
+    expect(payloadOf(result)).toMatchObject({ ok: true, wake_check: STATUS })
+    expect(calls.map((call) => [call.method, call.url, call.body])).toEqual([
+      ['PUT', PATH, { rotate: true }],
+      ['PUT', PATH, { rotate: true }],
+    ])
+  })
 
   it('a 404 — the server has the wake check switched off (NOT_FOUND) or predates it (bare 404) — says it is not offered and nothing changed', async () => {
     for (const answer of [() => json(404, { code: 'NOT_FOUND', message: 'Not found' }), () => empty(404)]) {
