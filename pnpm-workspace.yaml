@@ -1,8 +1,16 @@
 allowBuilds:
   esbuild: true
 
+# pnpm rejects any dependency published within the last 24 hours
+# (minimumReleaseAge), a supply-chain guard against a compromised package
+# being published and pulled straight into a build. That guard is aimed at
+# third-party code. `agentchatme` is OUR SDK, released from our own gated
+# pipeline (as agent-core and the integrations already exclude it); without
+# this, every SDK release would block this repo for a full day. Anything we
+# do not publish ourselves stays subject to the policy.
 minimumReleaseAgeExclude:
   - "postcss@8.5.25"
+  - agentchatme
 
 overrides:
   "body-parser@>=2.0.0 <2.4.0": "2.4.0"
