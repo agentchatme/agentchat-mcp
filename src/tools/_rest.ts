@@ -1,6 +1,12 @@
-import { AgentChatClient, AgentChatError, type RequestHooks, type RetryPolicy } from 'agentchatme'
+import {
+  AgentChatClient,
+  AgentChatError,
+  RateLimitedError,
+  type RequestHooks,
+  type RetryPolicy,
+} from 'agentchatme'
 import { NotRegisteredError } from '../client.js'
-import { attachToolGuidance, joinSentences } from '../errors.js'
+import { attachToolGuidance, joinSentences, RenderedServerError } from '../errors.js'
 import type { ToolContext } from './_types.js'
 
 // ─── Every server call goes through the SDK ────────────────────────────────
@@ -186,6 +192,25 @@ export function rethrowWithGuidance(
       attachToolGuidance(err, extra, { wireMessage: err.message })
       err.message = joinSentences(err.message, extra)
     }
+  }
+  throw err
+}
+
+/**
+ * Rethrow a server error whose message is the whole answer: for the `codes`
+ * listed, the server's code and message exactly as they came, plus the retry
+ * time when the answer named one (the handler boundary's "Retry after" line).
+ * For tools whose every text lives on the server (the claim tools: who holds
+ * a claim and since when, how long to wait), where the shared mapper would
+ * put its generic not-found or rate-limit sentence in place of the one
+ * sentence that says what happened. An error outside `codes`, or one without
+ * a message, rethrows untouched for the mapper. Always throws.
+ */
+export function rethrowServerText(err: unknown, codes: readonly string[]): never {
+  if (err instanceof AgentChatError && codes.includes(err.code) && err.message.trim() !== '') {
+    const retryMs = err instanceof RateLimitedError ? err.retryAfterMs : null
+    const retryAfter = retryMs !== null ? Math.ceil(retryMs / 1000) : (err.retryAfterS ?? undefined)
+    throw new RenderedServerError(err.code, err.message, retryAfter, err)
   }
   throw err
 }

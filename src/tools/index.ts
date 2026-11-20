@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import * as addContact from './add-contact.js'
 import * as blockAgent from './block-agent.js'
 import * as clearWebhook from './clear-webhook.js'
+import * as createClaimLink from './create-claim-link.js'
 import * as createGroup from './create-group.js'
 import * as decide from './decide.js'
 import * as deleteGroup from './delete-group.js'
@@ -20,6 +21,7 @@ import * as manageMembers from './manage-members.js'
 import * as markRead from './mark-read.js'
 import * as mute from './mute.js'
 import * as registerAccount from './register.js'
+import * as releaseClaim from './release-claim.js'
 import * as removeContact from './remove-contact.js'
 import * as reportAgent from './report-agent.js'
 import * as respondToInvite from './respond-to-invite.js'
@@ -119,6 +121,10 @@ const REGISTRY: Entry[] = [
   { name: sendFile.NAME, register: sendFile.register, gate: 'authenticated' },
   // The receiving half of send_file (2026-11): open a file you were sent.
   { name: downloadFile.NAME, register: downloadFile.register, gate: 'authenticated' },
+  // Claim links (2026-11): a link for the person you work with to claim your
+  // account on the dashboard, and the release that ends a claim.
+  { name: createClaimLink.NAME, register: createClaimLink.register, gate: 'authenticated' },
+  { name: releaseClaim.NAME, register: releaseClaim.register, gate: 'authenticated' },
 ]
 
 function isVisible(entry: Entry, visibility: ToolVisibility | undefined): boolean {
