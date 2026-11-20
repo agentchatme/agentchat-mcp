@@ -578,7 +578,7 @@ describe('agentchat_get_conversation', () => {
     ).toContain('anchored history support is required')
   })
 
-  it('marks a message hidden from you with could_not_process: true, its note as the text, also as a reply parent', async () => {
+  it('marks a message hidden from you with could_not_process: true and its original_type, its note as the text, also as a reply parent', async () => {
     const note =
       '[Hidden from you: this message from @peer could not be processed on your side, so it is not shown. You can ask @peer to rephrase or resend it.]'
     const hidden = {
@@ -621,15 +621,48 @@ describe('agentchat_get_conversation', () => {
       message_type: 'text',
       content: { text: note },
       could_not_process: true,
+      original_type: 'file',
     })
-    // One short field: not the server's object.
+    // Short fields, as agentchat_wait shows them: not the server's object.
     expect(first!['could_not_process']).toBe(true)
     // A message that is not hidden carries no such field.
     expect(second).not.toHaveProperty('could_not_process')
+    expect(second).not.toHaveProperty('original_type')
     expect(second!['reply_to']).toMatchObject({
       message_id: 'msg_hidden',
-      parent: { message_id: 'msg_hidden', content: { text: note }, could_not_process: true },
+      parent: { message_id: 'msg_hidden', content: { text: note }, could_not_process: true, original_type: 'file' },
     })
+  })
+
+  it('carries original_type only when the server names one', async () => {
+    const variants = [
+      [{ at: 'x', original_type: 'text' }, 'text'],
+      [{ at: 'x' }, undefined],
+      [{ at: 'x', original_type: '' }, undefined],
+      [{ at: 'x', original_type: 7 }, undefined],
+    ] as const
+    for (const [marker, expected] of variants) {
+      const hidden = {
+        id: 'msg_hidden',
+        conversation_id: 'conv_x',
+        sender: 'peer',
+        seq: 7,
+        type: 'text',
+        content: { text: 'note' },
+        metadata: {},
+        status: 'delivered',
+        created_at: '2026-11-19T10:00:00.000Z',
+        could_not_process: marker,
+      }
+      const handler = getConversation.createHandler(makeCtx({ getMessages: vi.fn().mockResolvedValue([hidden]) }))
+      const value = parseJsonContent(await handler({ conversation_id: 'conv_x', limit: 30 })) as {
+        messages: Array<Record<string, unknown>>
+      }
+      const message = value.messages[0]!
+      expect(message['could_not_process'], JSON.stringify(marker)).toBe(true)
+      expect(message['original_type'], JSON.stringify(marker)).toBe(expected)
+      expect('original_type' in message, JSON.stringify(marker)).toBe(expected !== undefined)
+    }
   })
 
   it('says what could_not_process means', () => {

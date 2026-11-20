@@ -479,11 +479,11 @@ export const NEXT = {
   scopedOwnOnly:
     'Nothing from the others yet, only a full page of your own messages: call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id.',
   scopedCallAgain:
-    'The server held no wait this time (it is holding as many waits for you as it allows, or it is restarting), so this was not an empty wait: call agentchat_wait once more with the same conversation_id and after_message_id.',
+    'The server ended this wait early (it is holding as many waits for you as it allows, or it is restarting). This does not count as a wait that returned nothing: call agentchat_wait once more with the same conversation_id and after_message_id.',
   scopedPaused:
     'Your owner paused you: stop. While you are paused no wait is held and no message is handed to you, so do not call agentchat_wait again.',
   scopedOthersWaiting:
-    'Other conversations are waiting for you: record your verdict for this conversation and stop; its next message starts a new run.',
+    'Other conversations are waiting for you: record your verdict for this conversation if it is not recorded yet, and stop; its next message starts a new run.',
 } as const
 
 // ─── An empty scoped answer that was no wait ───────────────────────────────
@@ -494,8 +494,11 @@ export const NEXT = {
 // restarting): not an empty wait, so the result says call again (outcome
 // "call_again"). Once only: the second such answer in a row, and every one
 // after it, is treated as an empty wait, so a server that keeps answering
-// without holding cannot keep a run calling in a loop. `paused` is an
-// owner's full pause: never held, never handed messages (outcome "paused").
+// without holding cannot keep a run calling in a loop. Only an answer the
+// server did not hold (X-AgentChat-Waited-Ms under HELD_WAIT_MS) counts: one
+// it held first (a wait drained mid-hold) always says call again, and starts
+// a new row. `paused` is an owner's full pause: never held, never handed
+// messages (outcome "paused").
 // `others_waiting`: other conversations are waiting for this agent (or one
 // got a message while this wait was parked), so the run stops here and this
 // conversation's next message starts a new one (outcome "others_waiting").
@@ -504,6 +507,11 @@ export const NEXT = {
 
 /** The empty answers that were no real wait. */
 export const NO_WAIT_OUTCOMES: ReadonlySet<string> = new Set(['capacity', 'draining'])
+/**
+ * A capacity or draining answer held at least this long (X-AgentChat-Waited-Ms)
+ * was a real hold that ended early: it always says call again.
+ */
+export const HELD_WAIT_MS = 1_000
 /** The owner's full pause. */
 export const PAUSED_OUTCOME = 'paused'
 /** Other conversations are waiting for this agent. */
@@ -529,10 +537,12 @@ function noWaitRowKey(apiKey: string, conversationId: string): string {
 }
 
 /**
- * Records a no-wait answer for its row; true when it is the first of the row
- * (say call again), false for the second and later (treat it as empty).
+ * Records a capacity or draining answer for its row; true when it is the
+ * first of the row (say call again), false for the second and later (treat
+ * it as empty). A `held` answer (the server held it HELD_WAIT_MS or more) is
+ * never the second: it starts a new row.
  */
-export function firstNoWaitInRow(rowKey: string, now: number): boolean {
+export function firstNoWaitInRow(rowKey: string, now: number, held = false): boolean {
   const previous = noWaitRows.get(rowKey)
   noWaitRows.delete(rowKey)
   noWaitRows.set(rowKey, now)
@@ -541,7 +551,7 @@ export function firstNoWaitInRow(rowKey: string, now: number): boolean {
     if (oldest === undefined) break
     noWaitRows.delete(oldest)
   }
-  return previous === undefined || now - previous > CALL_AGAIN_WINDOW_MS
+  return held || previous === undefined || now - previous > CALL_AGAIN_WINDOW_MS
 }
 
 /** Forgets every row: for tests. */
@@ -721,10 +731,13 @@ async function scopedWait(
   const rowKey = noWaitRowKey(rest.apiKey, scope.conversationId)
   let callAgain = false
   if (waitOutcome !== null && NO_WAIT_OUTCOMES.has(waitOutcome)) {
-    callAgain = firstNoWaitInRow(rowKey, Date.now())
+    // The SDK's integer X-AgentChat-Waited-Ms: a wait answered without one
+    // was refused above (servedWithoutScopedWait), so it is set here.
+    const held = (page.waitedMs ?? 0) >= HELD_WAIT_MS
+    callAgain = firstNoWaitInRow(rowKey, Date.now(), held)
     ctx.logger.info(
-      { tool: NAME, scoped: true, wait_outcome: waitOutcome, call_again: callAgain },
-      callAgain ? 'the server held no wait; the result says call again' : 'the server held no wait again; treated as an empty wait',
+      { tool: NAME, scoped: true, wait_outcome: waitOutcome, held, call_again: callAgain },
+      callAgain ? 'the server ended the wait early; the result says call again' : 'the server held no wait again; treated as an empty wait',
     )
   } else {
     // Any other answer ends the row.

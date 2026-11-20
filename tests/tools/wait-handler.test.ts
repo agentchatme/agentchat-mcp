@@ -614,7 +614,9 @@ describe('agentchat_wait handler', () => {
         expect(Object.keys(payload).sort()).toEqual(SHAPE)
         expect(payload).toMatchObject({ outcome: 'call_again', waited_ms: 4, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
         expect(payload['next']).toBe(waitTool.NEXT.scopedCallAgain)
-        expect(payload['next']).toContain('this was not an empty wait')
+        expect(payload['next']).toContain(
+          'This does not count as a wait that returned nothing: call agentchat_wait once more with the same conversation_id and after_message_id.',
+        )
         expect(payload['next']).toContain('call agentchat_wait once more with the same conversation_id and after_message_id')
       }
       const expectEmpty = (payload: Record<string, unknown>) => {
@@ -694,6 +696,45 @@ describe('agentchat_wait handler', () => {
         expectCallAgain(await waitOnce(() => noWait('capacity')))
       })
 
+      describe('an answer the server held first (X-AgentChat-Waited-Ms of 1000 or more)', () => {
+        const held = (outcome: string, waited: string) =>
+          () => json(200, [], { 'x-agentchat-waited-ms': waited, 'x-agentchat-wait-outcome': outcome })
+        const callAgainAfterHold = (payload: Record<string, unknown>, waited: number) => {
+          expect(payload).toMatchObject({ outcome: 'call_again', waited_ms: waited, count: 0, next_after_message_id: 'msg_5' })
+          expect(payload['next']).toBe(waitTool.NEXT.scopedCallAgain)
+        }
+
+        it('a draining after a real hold says call again even right after a no-wait answer, and starts a new row', async () => {
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          // Held 21 s, then drained: not the second of that row.
+          callAgainAfterHold(await waitOnce(held('draining', '21000')), 21000)
+          // It started a new row: a no-wait answer next is its second.
+          expectEmpty(await waitOnce(() => noWait('capacity')))
+        })
+
+        it('held answers never count toward the once-in-a-row: each says call again', async () => {
+          for (const [outcome, waited] of [['draining', '1000'], ['capacity', '30000'], ['draining', '44999']] as const) {
+            callAgainAfterHold(await waitOnce(held(outcome, waited)), Number(waited))
+          }
+        })
+
+        it('under 1000 ms is a no-wait answer: 999 counts toward the row', async () => {
+          expectCallAgain(await waitOnce(() => noWait('capacity')))
+          expect(await waitOnce(held('draining', '999'))).toMatchObject({ outcome: 'timeout', waited_ms: 999, next: waitTool.NEXT.scopedTimeout })
+          waitTool.resetNoWaitRows()
+          expect(await waitOnce(held('capacity', '999'))).toMatchObject({ outcome: 'call_again', waited_ms: 999 })
+          expect(await waitOnce(held('draining', '0'))).toMatchObject({ outcome: 'timeout', waited_ms: 0 })
+        })
+
+        it('pins the threshold', () => {
+          expect(waitTool.HELD_WAIT_MS).toBe(1_000)
+          const now = Date.now()
+          expect(waitTool.firstNoWaitInRow('row-h', now)).toBe(true)
+          expect(waitTool.firstNoWaitInRow('row-h', now, true)).toBe(true)
+          expect(waitTool.firstNoWaitInRow('row-h', now)).toBe(false)
+        })
+      })
+
       it('an outcome the tool does not know is an empty wait', async () => {
         expectEmpty(await waitOnce(() => noWait('something-new')))
       })
@@ -755,7 +796,7 @@ describe('agentchat_wait handler', () => {
         expect(payload).toMatchObject({ outcome: 'others_waiting', waited_ms: 3, count: 0, acked: 0, has_more: false, conversations: [], next_after_message_id: 'msg_5' })
         expect(payload['next']).toBe(waitTool.NEXT.scopedOthersWaiting)
         expect(payload['next']).toBe(
-          'Other conversations are waiting for you: record your verdict for this conversation and stop; its next message starts a new run.',
+          'Other conversations are waiting for you: record your verdict for this conversation if it is not recorded yet, and stop; its next message starts a new run.',
         )
         expect(payload['next']).not.toContain('call agentchat_wait')
       })
