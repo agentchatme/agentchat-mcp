@@ -223,14 +223,25 @@ function compactMessage(row: SyncRow, selfHandle: string) {
     content: compactContent(row),
     mentioned_you: mentions.map(bareHandle).includes(bareHandle(selfHandle)),
     ...(replyTo ? { reply_to: { message_id: replyTo } } : {}),
-    // Hidden from you: content.text is the server's note in its place.
-    ...(isHidden(row) ? { could_not_process: true } : {}),
+    // Hidden from you: content.text is the server's note in its place, and
+    // message_type is the note's ('text'); original_type is what it was.
+    ...(isHidden(row) ? hiddenFields(row) : {}),
   }
 }
 
 /** A message hidden from this agent (could not process): the server sets an object on it. */
 export function isHidden(row: { could_not_process?: unknown }): boolean {
   return typeof row.could_not_process === 'object' && row.could_not_process !== null
+}
+
+/**
+ * A hidden message's marker, with the type the message had before it was
+ * hidden (`could_not_process.original_type`: a file, a text, …), when the
+ * server names one.
+ */
+function hiddenFields(row: SyncRow): { could_not_process: true; original_type?: string } {
+  const originalType = str((row.could_not_process as { original_type?: unknown }).original_type)
+  return { could_not_process: true, ...(originalType ? { original_type: originalType } : {}) }
 }
 
 /** The caller's own message (a scoped read returns them too; the sync never does). */
@@ -320,6 +331,12 @@ function waitedMsOf(headers: Headers, startedAt: number): number | null {
   const waitedHeader = headers.get('x-agentchat-waited-ms')
   const waitedRaw = waitedHeader !== null ? Number(waitedHeader) : Date.now() - startedAt
   return Number.isFinite(waitedRaw) ? Math.max(0, Math.round(waitedRaw)) : null
+}
+
+/** X-AgentChat-Wait-Outcome, as one lowercase word, or null when not sent. */
+function waitOutcomeOf(headers: Headers): string | null {
+  const value = headers.get('x-agentchat-wait-outcome')?.trim().toLowerCase()
+  return value ? value : null
 }
 
 /**
@@ -445,6 +462,9 @@ const SCOPED_GUIDANCE: Record<string, string> = {
   FORBIDDEN: 'Use the conversation_id exactly as the card or agentchat_get_conversation gave it.',
   CONVERSATION_NOT_FOUND:
     'This conversation is not visible to you: you are not a participant, or the id is wrong. Use the conversation_id exactly as the card or agentchat_get_conversation gave it.',
+  // After the mapper's "This group was deleted (by @x). You can no longer
+  // send messages to it." (errors.ts), which keeps this.
+  GROUP_DELETED: 'Nothing more arrives in it either, so do not call agentchat_wait on it again: stop.',
 }
 
 export const NEXT = {
@@ -458,7 +478,67 @@ export const NEXT = {
     'Nothing new arrived in this conversation: stop — the next message wakes you.',
   scopedOwnOnly:
     'Nothing from the others yet, only a full page of your own messages: call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id.',
+  scopedCallAgain:
+    'The server held no wait this time (it is holding as many waits for you as it allows, or it is restarting), so this was not an empty wait: call agentchat_wait once more with the same conversation_id and after_message_id.',
+  scopedPaused:
+    'Your owner paused you: stop. While you are paused no wait is held and no message is handed to you, so do not call agentchat_wait again.',
 } as const
+
+// ─── An empty scoped answer that was no wait ───────────────────────────────
+//
+// X-AgentChat-Wait-Outcome (contract v1 §3.9) says why an empty scoped
+// answer was no real wait: `capacity` (the server is holding as many
+// requests for this agent as it allows) or `draining` (that machine is
+// restarting): not an empty wait, so the result says call again (outcome
+// "call_again"). Once only: the second such answer in a row, and every one
+// after it, is treated as an empty wait, so a server that keeps answering
+// without holding cannot keep a run calling in a loop. `paused` is an
+// owner's full pause: never held, never handed messages (outcome "paused").
+
+/** The empty answers that were no real wait. */
+export const NO_WAIT_OUTCOMES: ReadonlySet<string> = new Set(['capacity', 'draining'])
+/** The owner's full pause. */
+export const PAUSED_OUTCOME = 'paused'
+/** A "call again" older than this no longer counts as the answer before. */
+export const CALL_AGAIN_WINDOW_MS = 2 * HOST_BUDGET_MS
+/** The most rows remembered at once; the oldest is forgotten first. */
+export const CALL_AGAIN_MAX_ROWS = 10_000
+
+/**
+ * When each (agent, conversation) last got a no-wait answer, by a sha256 of
+ * the key and the conversation id (never the key or the id). Module-wide,
+ * not per session: the hosted endpoint is stateless and builds a session (a
+ * ToolContext) per HTTP request, so a session's memory would never see the
+ * second answer. Per process: on a host with several machines another
+ * machine may give the hint once more, and each gives it at most once in a
+ * row. Map order is the order of the last answer, oldest first.
+ */
+const noWaitRows = new Map<string, number>()
+
+function noWaitRowKey(apiKey: string, conversationId: string): string {
+  return createHash('sha256').update(apiKey).update('\0').update(conversationId).digest('hex')
+}
+
+/**
+ * Records a no-wait answer for its row; true when it is the first of the row
+ * (say call again), false for the second and later (treat it as empty).
+ */
+export function firstNoWaitInRow(rowKey: string, now: number): boolean {
+  const previous = noWaitRows.get(rowKey)
+  noWaitRows.delete(rowKey)
+  noWaitRows.set(rowKey, now)
+  while (noWaitRows.size > CALL_AGAIN_MAX_ROWS) {
+    const oldest = noWaitRows.keys().next().value
+    if (oldest === undefined) break
+    noWaitRows.delete(oldest)
+  }
+  return previous === undefined || now - previous > CALL_AGAIN_WINDOW_MS
+}
+
+/** Forgets every row: for tests. */
+export function resetNoWaitRows(): void {
+  noWaitRows.clear()
+}
 
 type CancelPhase = 'before-poll' | 'poll' | 'after-poll' | 'ack'
 
@@ -538,7 +618,9 @@ function scopedCancelledResult(
  * here" is always one the caller received. `has_more` counts the page as
  * served, and `next_after_message_id` is its last row, own messages
  * included, so a page of only the caller's own messages still moves the
- * cursor on.
+ * cursor on. An empty answer the server held no wait for says call again
+ * (outcome "call_again", once in a row), and an owner's full pause says
+ * stop (outcome "paused"): see NO_WAIT_OUTCOMES.
  */
 async function scopedWait(
   ctx: ToolContext,
@@ -623,11 +705,38 @@ async function scopedWait(
   let nextAfterMessageId = scope.afterMessageId
   for (const row of pageRows) nextAfterMessageId = str(row.id) ?? nextAfterMessageId
   const hasMore = pageRows.length >= limit
+
+  // Only an empty answer says why it was no wait; a page is always shown.
+  const waitOutcome = pageRows.length === 0 ? waitOutcomeOf(page.headers) : null
+  const rowKey = noWaitRowKey(rest.apiKey, scope.conversationId)
+  let callAgain = false
+  if (waitOutcome !== null && NO_WAIT_OUTCOMES.has(waitOutcome)) {
+    callAgain = firstNoWaitInRow(rowKey, Date.now())
+    ctx.logger.info(
+      { tool: NAME, scoped: true, wait_outcome: waitOutcome, call_again: callAgain },
+      callAgain ? 'the server held no wait; the result says call again' : 'the server held no wait again; treated as an empty wait',
+    )
+  } else {
+    // Any other answer ends the row.
+    noWaitRows.delete(rowKey)
+  }
+  const paused = waitOutcome === PAUSED_OUTCOME
+  const outcome = rows.length > 0 ? 'messages' : callAgain ? 'call_again' : paused ? 'paused' : 'timeout'
+  const next =
+    rows.length > 0
+      ? NEXT.scopedMessages
+      : callAgain
+        ? NEXT.scopedCallAgain
+        : paused
+          ? NEXT.scopedPaused
+          : hasMore
+            ? NEXT.scopedOwnOnly
+            : NEXT.scopedTimeout
   return {
     type: 'json',
     value: {
       you,
-      outcome: rows.length > 0 ? 'messages' : 'timeout',
+      outcome,
       waited_ms: waitedMs,
       count: rows.length,
       // The fetch marked them delivered before the server answered.
@@ -639,7 +748,7 @@ async function scopedWait(
         selfHandle,
       ),
       next_after_message_id: nextAfterMessageId,
-      next: rows.length > 0 ? NEXT.scopedMessages : hasMore ? NEXT.scopedOwnOnly : NEXT.scopedTimeout,
+      next,
     },
   }
 }
