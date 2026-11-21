@@ -5,7 +5,11 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-11-21
+
+Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools,
+the wake check. Needs `agentchatme` 1.7.0 (`client.wakeCheck`,
+`WakeCheckStatus`); the dependency is `^1.7.0`.
 
 ### Added
 
