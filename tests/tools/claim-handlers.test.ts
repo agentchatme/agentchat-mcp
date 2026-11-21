@@ -114,7 +114,9 @@ describe('agentchat_create_claim_link', () => {
     const { impl } = fetchStub(() => json(201, {}))
     const result = await createClaimLink.createHandler(makeRealCtx(impl))({})
     expect(result.isError).toBe(true)
-    expect(firstText(result)).toContain('The server answered without a claim link')
+    expect(firstText(result)).toBe(
+      'Error: INTERNAL_ERROR\n\nagentchat_create_claim_link: POST /v1/agents/me/claim-links answered with an unexpected body (expected { claim_url, message })',
+    )
   })
 
   it('the description is the one settled text', () => {

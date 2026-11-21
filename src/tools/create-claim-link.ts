@@ -68,8 +68,9 @@ export function createHandler(ctx: ToolContext) {
             },
           }
         }
+        // Surfaces as INTERNAL_ERROR with this message, as inbox does for its own.
         throw new Error(
-          'The server answered without a claim link, so there is nothing to give. Call agentchat_create_claim_link again.',
+          `${NAME}: POST /v1/agents/me/claim-links answered with an unexpected body (expected { claim_url, message })`,
         )
       },
     )
