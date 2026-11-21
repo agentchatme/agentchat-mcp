@@ -5,10 +5,11 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-11-21
 
-Needs the `agentchatme` release with `createClaimLink()`, `releaseClaim()`
-and `claim` on `getMe()`; the dependency moves to it at the release step.
+Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools
+and a new status field. Needs `agentchatme` 1.6.0 (`createClaimLink()`,
+`releaseClaim()`, `claim` on `getMe()`); the dependency is `^1.6.0`.
 
 ### Added
 
