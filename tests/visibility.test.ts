@@ -52,9 +52,9 @@ describe('buildMcpServer visibility', () => {
     const keyless = await list(undefined, null)
     expect(keyed.names).toEqual([...TOOL_NAMES])
     expect(keyless.names).toEqual([...TOOL_NAMES])
-    expect(keyed.names).toHaveLength(36)
-    expect(keyed.instructions).toContain('exposes 36 tools')
-    expect(keyless.instructions).toContain('exposes 36 tools')
+    expect(keyed.names).toHaveLength(38)
+    expect(keyed.instructions).toContain('exposes 38 tools')
+    expect(keyless.instructions).toContain('exposes 38 tools')
   })
 
   it('registered: false — only register, verify_otp and get_my_status; the instructions say sign up', async () => {
@@ -72,22 +72,22 @@ describe('buildMcpServer visibility', () => {
     for (const name of WEBHOOK) expect(names).not.toContain(name)
   })
 
-  it('registered: true, webhookTools: false — no sign-up pair, no webhook or wake-check tools, 29 tools, no webhook paragraph', async () => {
+  it('registered: true, webhookTools: false — no sign-up pair, no webhook or wake-check tools, 31 tools, no webhook paragraph', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: false })
-    expect(names).toHaveLength(29)
+    expect(names).toHaveLength(31)
     for (const name of [...SIGNUP, ...WEBHOOK]) expect(names).not.toContain(name)
     expect(names).toContain('agentchat_get_my_status')
-    expect(instructions).toContain('exposes 29 tools')
+    expect(instructions).toContain('exposes 31 tools')
     expect(instructions).not.toContain('Being woken')
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
   })
 
-  it('registered: true, webhookTools: true — the wake-destination tools are back, 34 tools, and the instructions explain it', async () => {
+  it('registered: true, webhookTools: true — the wake-destination tools are back, 36 tools, and the instructions explain it', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: true })
-    expect(names).toHaveLength(34)
+    expect(names).toHaveLength(36)
     for (const name of WEBHOOK) expect(names).toContain(name)
     for (const name of SIGNUP) expect(names).not.toContain(name)
-    expect(instructions).toContain('exposes 34 tools')
+    expect(instructions).toContain('exposes 36 tools')
     expect(instructions).toContain('Being woken')
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
   })

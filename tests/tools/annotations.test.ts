@@ -51,6 +51,7 @@ const DESTRUCTIVE_TOOLS = [
   'agentchat_block_agent',
   'agentchat_report_agent',
   'agentchat_manage_members',
+  'agentchat_release_claim',
   // A cleared wake-check address is gone for good: a new check is a new address.
   'agentchat_clear_wake_check',
 ]
@@ -104,7 +105,7 @@ describe('tool annotations', () => {
     expect(readOnly).not.toContain('agentchat_wait')
   })
 
-  it('the destructive set is exactly the removals: delete group/message, leave, remove contact, block, report, manage members, clear the wake check', async () => {
+  it('the destructive set is exactly the removals: delete group/message, leave, remove contact, block, report, manage members, release a claim, clear the wake check', async () => {
     const tools = await listTools()
     const destructive = tools.filter((t) => t.annotations!['destructiveHint'] === true).map((t) => t.name)
     expect(destructive.sort()).toEqual([...DESTRUCTIVE_TOOLS].sort())
@@ -126,6 +127,8 @@ describe('tool annotations', () => {
       'agentchat_test_webhook',
       'agentchat_wait',
       'agentchat_manage_members',
+      // Each link cancels the one before.
+      'agentchat_create_claim_link',
       // A repeated `defer` climbs the server's reminder ladder.
       'agentchat_decide',
     ]) {

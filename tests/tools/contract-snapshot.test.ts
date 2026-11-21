@@ -173,6 +173,9 @@ describe('tool contract snapshot (publish-blocking)', () => {
       'agentchat_update_profile',
       'agentchat_send_file',
       'agentchat_download_file',
+      // Claim links (2026-11)
+      'agentchat_create_claim_link',
+      'agentchat_release_claim',
       // The wake check (2026-11)
       'agentchat_set_wake_check',
       'agentchat_clear_wake_check',

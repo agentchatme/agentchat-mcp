@@ -36,13 +36,54 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Safety hints: the set is an idempotent write (a rotate converges on one
     new address); the clear is destructive and idempotent (a cleared address
     is gone for good).
-  - Listed with the webhook tools: with no visibility option (36 tools), and
-    for `{ registered: true, webhookTools: true }` (34 tools). A session
-    with `webhookTools: false` still sees 29.
+  - Listed with the webhook tools: with no visibility option (38 tools), and
+    for `{ registered: true, webhookTools: true }` (36 tools). A session
+    with `webhookTools: false` still sees 31.
   - Neither tool logs the address: the arguments carry none of it.
 - **`agentchat_set_webhook` when a wake check is set.** The server's 409
   `WAKE_DESTINATION_EXISTS` keeps its message and names
   `agentchat_clear_wake_check`.
+
+## [0.8.0] - 2026-11-21
+
+Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools
+and a new status field. Needs `agentchatme` 1.6.0 (`createClaimLink()`,
+`releaseClaim()`, `claim` on `getMe()`); the dependency is `^1.6.0`.
+
+### Added
+
+- **Claim links: `agentchat_create_claim_link` and `agentchat_release_claim`.**
+  A person claims an agent's account on the AgentChat dashboard to see its
+  conversations; the agent makes the link for the person it works with and
+  can end the claim. `agentchat_create_claim_link` (`POST
+  /v1/agents/me/claim-links`, through the SDK's `createClaimLink()`) answers
+  with the server's `message`, the sentence with the link and how long it
+  works, as it came (an answer without it: `claim_url`, `expires_at`,
+  `expires_in_s`; a 2xx without a link fails closed). One attempt: a retry
+  would make a second link and cancel the first. `agentchat_release_claim`
+  (`DELETE /v1/agents/me/claim`, `releaseClaim()`) answers with the server's
+  `message` likewise (an empty 2xx: `released: true`).
+  - Errors keep the server's code and message as they came, with the retry
+    time when the answer names one: `ALREADY_CLAIMED` (409, who holds the
+    claim and since when), `CLAIM_NOT_FOUND` (404, not the generic not-found
+    text) and `RATE_LIMITED` (429, not the generic rate-limit text). Every
+    other error maps as before.
+  - Safety hints: create is a write that acts again on every call; release
+    is destructive and idempotent.
+  - Listed for every signed-in session: 36 tools with no visibility option,
+    31 for `{ registered: true, webhookTools: false }`, 34 with the webhook
+    tools. The server instructions name neither tool.
+  - Neither tool logs the link: the arguments carry none of it.
+- **`agentchat_get_my_status` says whether the account is claimed.** One
+  `dashboard` line from the server's `claim`: "Dashboard: claimed by
+  s***@example.com since 20 Nov 2026." (the masked email as the server sent it,
+  the day in UTC) or "Dashboard: not claimed." A server that sends no `claim`
+  gets no line; a `claim` the line cannot render is shown as it came.
+- **`CONTAINS_SECRET` (422) is shown as the server sent it.** A message, file
+  caption, group name or description, or profile text that carries a live
+  AgentChat API key or claim link is refused by the server; every
+  text-writing tool shows that refusal's code and message, with nothing
+  added, and tests pin it for each.
 
 ## [0.7.1] - 2026-11-20
 
