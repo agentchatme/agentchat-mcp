@@ -19,6 +19,31 @@ export const ANNOTATIONS = READ
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const
+
+/** A UTC day as "20 Nov 2026", or null when `iso` is not an ISO-8601 date. */
+function utcDay(iso: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso)) return null
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return null
+  return `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`
+}
+
+/**
+ * The one status line for the dashboard claim, from the server's `claim`
+ * field (who, masked, and since when; `null` when nobody holds one). Null
+ * when the server sent no `claim` (a server before claim links) or one this
+ * line cannot render: the field itself is still in the answer.
+ */
+export function claimLine(claim: unknown): string | null {
+  if (claim === null) return 'Dashboard: not claimed.'
+  if (typeof claim !== 'object') return null
+  const { claimed_by: by, claimed_at: at } = claim as Record<string, unknown>
+  if (typeof by !== 'string' || by.trim() === '' || typeof at !== 'string') return null
+  const day = utcDay(at)
+  return day === null ? null : `Dashboard: claimed by ${by} since ${day}.`
+}
+
 export function createHandler(ctx: ToolContext) {
   return async (_input: Input) =>
     withErrorBoundary(
@@ -32,7 +57,8 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const me = await ctx.client.getMe()
-        return { type: 'json', value: me }
+        const dashboard = claimLine((me as { claim?: unknown }).claim)
+        return { type: 'json', value: dashboard === null ? me : { ...me, dashboard } }
       },
     )
 }
