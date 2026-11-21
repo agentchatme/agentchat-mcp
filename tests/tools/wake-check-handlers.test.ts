@@ -5,21 +5,17 @@ import pino from 'pino'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { DESTRUCTIVE, WRITE_IDEMPOTENT } from '../../src/tools/_annotations.js'
-import { wakeCheckOf } from '../../src/tools/_wake-check-sdk.js'
 import type { ToolContext } from '../../src/tools/_types.js'
 import * as clearWakeCheck from '../../src/tools/clear-wake-check.js'
 import * as setWakeCheck from '../../src/tools/set-wake-check.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
 import { API_BASE, fetchStub, firstText, json, KEY, makeRealCtx, payloadOf } from './_real-client.js'
-import './_wake-check-sdk-polyfill.js'
 
 // ─── The wake-check tools, over a real SDK client and a stubbed network ────
 //
 // Same discipline as the other handler suites: fetch is stubbed under a real
 // client, so each test proves the wire (method, path, body, key) and the real
-// error pipeline. The SDK's `client.wakeCheck` resource comes from the
-// installed SDK when it has one, and from the test stand-in until then
-// (_wake-check-sdk-polyfill.ts).
+// error pipeline, through the SDK's own `client.wakeCheck` resource.
 
 const PATH = `${API_BASE}/v1/agents/me/wake-check`
 // An address shaped like the server's (wc1.<kid>.<iv>.<ciphertext>.<tag>),
@@ -36,7 +32,7 @@ const STATUS = {
 
 const empty = (status: number) => new Response(null, { status })
 
-describe('client.wakeCheck: the SDK’s wire (the stand-in until the SDK ships it)', () => {
+describe('client.wakeCheck: the SDK’s wire', () => {
   const client = (impl: typeof fetch) =>
     new AgentChatClient({ apiKey: KEY, baseUrl: API_BASE, fetch: impl, retry: { maxRetries: 3, baseDelayMs: 1, maxDelayMs: 1 } })
 
@@ -44,7 +40,7 @@ describe('client.wakeCheck: the SDK’s wire (the stand-in until the SDK ships i
     const { impl, calls } = fetchStub((call) =>
       call.method === 'PUT' ? json(200, { wake_check: STATUS }) : json(200, { cleared: true }),
     )
-    const wakeCheck = wakeCheckOf(client(impl))
+    const { wakeCheck } = client(impl)
     await expect(wakeCheck.set()).resolves.toEqual(STATUS)
     await expect(wakeCheck.set({ rewake: false, rotate: true })).resolves.toEqual(STATUS)
     await expect(wakeCheck.clear()).resolves.toEqual({ cleared: true })
@@ -57,13 +53,13 @@ describe('client.wakeCheck: the SDK’s wire (the stand-in until the SDK ships i
 
   it('a 503 WAKE_CHECK_UNAVAILABLE is a ServerError (503) after one attempt; any other 503 is retried', async () => {
     const terminal = fetchStub(() => json(503, { code: 'WAKE_CHECK_UNAVAILABLE', message: 'not here' }))
-    const err = await wakeCheckOf(client(terminal.impl)).set().catch((e: unknown) => e)
+    const err = await client(terminal.impl).wakeCheck.set().catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ServerError)
     expect(err).toMatchObject({ code: 'WAKE_CHECK_UNAVAILABLE', status: 503, message: 'not here' })
     expect(terminal.calls).toHaveLength(1)
 
     const transient = fetchStub(() => json(503, { code: 'INTERNAL_ERROR', message: 'down' }))
-    const busy = await wakeCheckOf(client(transient.impl)).set().catch((e: unknown) => e)
+    const busy = await client(transient.impl).wakeCheck.set().catch((e: unknown) => e)
     expect(busy).toMatchObject({ code: 'INTERNAL_ERROR', status: 503 })
     expect(transient.calls).toHaveLength(4)
   })

@@ -40,6 +40,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     for `{ registered: true, webhookTools: true }` (36 tools). A session
     with `webhookTools: false` still sees 31.
   - Neither tool logs the address: the arguments carry none of it.
+  - Through the SDK's `client.wakeCheck` (`set`, `clear`), new in
+    `agentchatme` 1.7.0; the dependency is `^1.7.0`.
 - **`agentchat_set_webhook` when a wake check is set.** The server's 409
   `WAKE_DESTINATION_EXISTS` keeps its message and names
   `agentchat_clear_wake_check`.

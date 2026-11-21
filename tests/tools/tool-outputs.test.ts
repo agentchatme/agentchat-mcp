@@ -6,8 +6,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildMcpServer, PACKAGE_VERSION } from '../../src/lib.js'
 import { KEY } from './_real-client.js'
-// The SDK's wake-check methods, until the installed SDK has its own.
-import './_wake-check-sdk-polyfill.js'
 
 // ─── What a caller sees, pinned per server answer ──────────────────────────
 //

@@ -1,4 +1,4 @@
-import { AgentChatError, DEFAULT_RETRY_POLICY, NotFoundError } from 'agentchatme'
+import { AgentChatError, DEFAULT_RETRY_POLICY, NotFoundError, type WakeCheckStatus } from 'agentchatme'
 import { z } from 'zod'
 import { joinSentences, RenderedServerError } from '../errors.js'
 import { WRITE_IDEMPOTENT } from './_annotations.js'
@@ -11,7 +11,6 @@ import {
   watchAnswers,
 } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
-import { wakeCheckOf, type WakeCheckStatus } from './_wake-check-sdk.js'
 import { optionalFlag } from './set-webhook.js'
 
 // ─── The wake check: a keyless wake address ────────────────────────────────
@@ -134,7 +133,7 @@ export function createHandler(ctx: ToolContext) {
         // longer live answers 404, and the texts say how to read the current
         // one (agentchat_get_my_status, or this tool again).
         const watch = watchAnswers(rest.fetchImpl)
-        const wakeCheck = wakeCheckOf(engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY))
+        const { wakeCheck } = engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY)
         let status: unknown
         try {
           status = await wakeCheck.set({
