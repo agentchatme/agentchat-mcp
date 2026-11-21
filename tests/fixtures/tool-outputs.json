@@ -2343,6 +2343,34 @@
       ]
     }
   },
+  "set_webhook: 409 WAKE_DESTINATION_EXISTS (a wake check is set)": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-webhook",
+        "query": [],
+        "body": {
+          "url": "https://hooks.example.com/wake",
+          "secret": "a-secret-of-sixteen+",
+          "dialect": "openclaw"
+        },
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: WAKE_DESTINATION_EXISTS\n\nThis agent has a wake check. Clear it first (DELETE /v1/agents/me/wake-check). An agent has one wake destination: to switch to a webhook, clear the wake check with agentchat_clear_wake_check, then call agentchat_set_webhook again."
+        }
+      ]
+    }
+  },
   "test_webhook: receiver answered 2xx": {
     "calls": [
       {
@@ -2805,6 +2833,566 @@
             "ok": true,
             "removed": true
           }
+        }
+      ]
+    }
+  },
+  "set_wake_check: set, server defaults": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "wake_check": {
+              "url": "https://outputs.agentchat.test/v1/wake-check/wc1.kid.iv.ciphertext.tag",
+              "rewake": true,
+              "created_at": "2026-11-20T10:00:00.000Z",
+              "last_seen_at": null
+            },
+            "next": "Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+          }
+        }
+      ]
+    }
+  },
+  "set_wake_check: rewake false, rotated": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {
+          "rewake": false,
+          "rotate": true
+        },
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "wake_check": {
+              "url": "https://outputs.agentchat.test/v1/wake-check/wc1.kid.iv.ciphertext.tag",
+              "rewake": false,
+              "created_at": "2026-11-20T10:00:00.000Z",
+              "last_seen_at": "2026-11-20T10:05:00.000Z"
+            },
+            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+          }
+        }
+      ]
+    }
+  },
+  "set_wake_check: blank optionals are unset": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "wake_check": {
+              "url": "https://outputs.agentchat.test/v1/wake-check/wc1.kid.iv.ciphertext.tag",
+              "rewake": true,
+              "created_at": "2026-11-20T10:00:00.000Z",
+              "last_seen_at": null
+            },
+            "next": "Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+          }
+        }
+      ]
+    }
+  },
+  "set_wake_check: 409 WAKE_DESTINATION_EXISTS (a wake webhook is set)": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: WAKE_DESTINATION_EXISTS\n\nThis agent has a wake webhook. Clear it first (DELETE /v1/agents/me/wake-webhook). An agent has one wake destination: to switch to the wake check, clear the webhook with agentchat_clear_webhook, then call agentchat_set_wake_check again."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 503 WAKE_CHECK_UNAVAILABLE is one attempt": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: WAKE_CHECK_UNAVAILABLE\n\nWake checks cannot be issued on this server. Nothing was changed, and your call did not cause this: try again later."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 503 then 200 (PUT is retried)": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {
+          "rotate": true
+        },
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      },
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {
+          "rotate": true
+        },
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "wake_check": {
+              "url": "https://outputs.agentchat.test/v1/wake-check/wc1.kid.iv.ciphertext.tag",
+              "rewake": true,
+              "created_at": "2026-11-20T10:00:00.000Z",
+              "last_seen_at": null
+            },
+            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+          }
+        }
+      ]
+    }
+  },
+  "set_wake_check: 404 NOT_FOUND (switched off)": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A runtime that can receive a webhook can use agentchat_set_webhook instead."
+        }
+      ]
+    }
+  },
+  "set_wake_check: bare 404 from a server without the route": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A runtime that can receive a webhook can use agentchat_set_webhook instead."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 429 RATE_LIMITED": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: RATE_LIMITED\n\nRate limit exceeded; retry after 60 seconds. Per-agent rate limits are shared across all your tool calls (sends are capped at 60 messages/second); honor the retry hint before calling again.\n\nRetry after: 60 seconds."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 2xx empty body": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 2xx JSON null": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 2xx without the envelope": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 2xx not JSON": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: CONNECTION_ERROR\n\nCould not reach the AgentChat API. Check the network and try again."
+        }
+      ]
+    }
+  },
+  "set_wake_check: 2xx body cut mid-read": {
+    "calls": [
+      {
+        "method": "PUT",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": {},
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: INTERNAL_ERROR\n\nterminated"
+        }
+      ]
+    }
+  },
+  "set_wake_check: unauthenticated session": {
+    "calls": [],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: NOT_AUTHENTICATED\n\nThis session has no AgentChat API key. Configure your MCP client to send `Authorization: Bearer <api key>` to this endpoint, then retry. No account yet? Call agentchat_register (email + desired handle), then agentchat_verify_otp with the emailed 6-digit code — the verify step returns your API key exactly once."
+        }
+      ]
+    }
+  },
+  "clear_wake_check: cleared": {
+    "calls": [
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "cleared": true,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+          }
+        }
+      ]
+    }
+  },
+  "clear_wake_check: nothing to clear": {
+    "calls": [
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "cleared": false,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+          }
+        }
+      ]
+    }
+  },
+  "clear_wake_check: 204": {
+    "calls": [
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+          }
+        }
+      ]
+    }
+  },
+  "clear_wake_check: 404 NOT_FOUND (switched off)": {
+    "calls": [
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed."
+        }
+      ]
+    }
+  },
+  "clear_wake_check: 503 then 200 (DELETE is retried)": {
+    "calls": [
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      },
+      {
+        "method": "DELETE",
+        "path": "/v1/agents/me/wake-check",
+        "query": [],
+        "body": null,
+        "auth": "bearer-session-key",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": null
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "cleared": true,
+            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+          }
+        }
+      ]
+    }
+  },
+  "clear_wake_check: unauthenticated session": {
+    "calls": [],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: NOT_AUTHENTICATED\n\nThis session has no AgentChat API key. Configure your MCP client to send `Authorization: Bearer <api key>` to this endpoint, then retry. No account yet? Call agentchat_register (email + desired handle), then agentchat_verify_otp with the emailed 6-digit code — the verify step returns your API key exactly once."
         }
       ]
     }

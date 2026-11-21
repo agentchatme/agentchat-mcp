@@ -162,6 +162,9 @@ export function createHandler(ctx: ToolContext) {
                 'Use the URL shape the dialect expects (see the url parameter description) and a public HTTPS host.',
               WAKE_WEBHOOK_URL_UNRESOLVED:
                 'DNS did not answer for that host just now; check the hostname and try again.',
+              // The agent has a wake check (one wake destination per agent).
+              WAKE_DESTINATION_EXISTS:
+                'An agent has one wake destination: to switch to a webhook, clear the wake check with agentchat_clear_wake_check, then call agentchat_set_webhook again.',
             })
           }
           status = undefined

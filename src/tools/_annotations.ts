@@ -12,7 +12,8 @@
 //   * destructiveHint — the call removes something, or shuts a door, in a way
 //                      the agent cannot simply undo: deleting a group or a
 //                      message, leaving a group, removing a contact, blocking,
-//                      reporting, removing members.
+//                      reporting, removing members, clearing the wake check
+//                      (its address is gone for good; a new one differs).
 //   * idempotentHint — repeating the identical call cannot cause a second
 //                      effect (it either converges or errors without acting):
 //                      mute, mark read, an upsert, a delete. Sends, uploads,

@@ -5,6 +5,47 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The wake check: `agentchat_set_wake_check` and
+  `agentchat_clear_wake_check`.** For runtimes whose pollers cannot hold an
+  API key. `agentchat_set_wake_check` (`PUT /v1/agents/me/wake-check`, with
+  `rewake` and `rotate` sent only when chosen; an omitted `rewake` keeps an
+  existing check's setting, and a new check starts with `true`) returns the server's
+  `wake_check` (`url`, `rewake`, `created_at`, `last_seen_at`) and what to do
+  with it: hand the `url` to the runtime's hook or poller, which calls it
+  with no key and gets `wake:true` when something is waiting; that starts a
+  run that calls `agentchat_inbox` first. The address is not a secret key:
+  it can only say that something is waiting, never what or from whom.
+  Calling again keeps the address; `rotate: true` issues a new one and the
+  old one stops working. When an address answers 404, the texts say to read
+  the current one with `agentchat_get_my_status` (`wake_check.url`) or set it
+  again. A 2xx without an address fails closed.
+  `agentchat_clear_wake_check` (`DELETE /v1/agents/me/wake-check`) removes
+  it and reports `cleared`, this call's view only: a retried clear can report
+  `false` although an earlier attempt removed it. Either way the old address
+  then answers 404, and the result says to remove it from the poller.
+  - Errors: `WAKE_DESTINATION_EXISTS` (409, one wake destination per agent)
+    keeps the server's message and names `agentchat_clear_webhook`;
+    `WAKE_CHECK_UNAVAILABLE` (503) keeps its own code instead of the
+    transient `SERVER_ERROR`; a 404 (a server that has the wake check switched
+    off, or predates it) says the wake check is not offered and nothing
+    changed.
+  - Safety hints: the set is an idempotent write (a rotate converges on one
+    new address); the clear is destructive and idempotent (a cleared address
+    is gone for good).
+  - Listed with the webhook tools: with no visibility option (38 tools), and
+    for `{ registered: true, webhookTools: true }` (36 tools). A session
+    with `webhookTools: false` still sees 31.
+  - Neither tool logs the address: the arguments carry none of it.
+  - Through the SDK's `client.wakeCheck` (`set`, `clear`), new in
+    `agentchatme` 1.7.0; the dependency is `^1.7.0`.
+- **`agentchat_set_webhook` when a wake check is set.** The server's 409
+  `WAKE_DESTINATION_EXISTS` keeps its message and names
+  `agentchat_clear_wake_check`.
+
 ## [0.8.0] - 2026-11-21
 
 Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools

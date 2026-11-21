@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import * as addContact from './add-contact.js'
 import * as blockAgent from './block-agent.js'
+import * as clearWakeCheck from './clear-wake-check.js'
 import * as clearWebhook from './clear-webhook.js'
 import * as createClaimLink from './create-claim-link.js'
 import * as createGroup from './create-group.js'
@@ -28,6 +29,7 @@ import * as respondToInvite from './respond-to-invite.js'
 import * as searchAgents from './search-agents.js'
 import * as sendFile from './send-file.js'
 import * as sendMessage from './send-message.js'
+import * as setWakeCheck from './set-wake-check.js'
 import * as setWebhook from './set-webhook.js'
 import * as testWebhook from './test-webhook.js'
 import * as unblockAgent from './unblock-agent.js'
@@ -54,9 +56,10 @@ export { RETIRED_TOOL_NAMES } from './_retired.js'
 //   * `registered: false` — the session has no identity: only the sign-up
 //     pair and agentchat_get_my_status are listed, so a fresh agent is shown
 //     the one thing it can do.
-//   * `registered: true` — the sign-up pair is not listed; the webhook tools
-//     (set / test / clear) are listed only when `webhookTools` is true, i.e.
-//     for agents that are woken through a webhook rather than a socket.
+//   * `registered: true` — the sign-up pair is not listed; the wake-destination
+//     tools (the wake webhook's set / test / clear, the wake check's set /
+//     clear) are listed only when `webhookTools` is true, i.e. for agents
+//     that are woken through a webhook or a wake check rather than a socket.
 // Each tool is gated by what it is for, never by name matching elsewhere.
 // The option type (ToolVisibility) lives in _types.ts next to ToolContext.
 //
@@ -68,7 +71,7 @@ export { RETIRED_TOOL_NAMES } from './_retired.js'
 type Gate =
   | 'signup' // works without an identity; pointless once there is one
   | 'status' // works either way: shows the session's own state
-  | 'webhook' // the wake webhook, for webhook-woken agents
+  | 'webhook' // a wake destination (webhook, wake check), for agents without a socket
   | 'authenticated' // everything else: needs an identity
 
 interface Entry {
@@ -125,6 +128,10 @@ const REGISTRY: Entry[] = [
   // account on the dashboard, and the release that ends a claim.
   { name: createClaimLink.NAME, register: createClaimLink.register, gate: 'authenticated' },
   { name: releaseClaim.NAME, register: releaseClaim.register, gate: 'authenticated' },
+  // The wake check (2026-11): a keyless wake address, for runtimes whose
+  // pollers cannot hold an API key. Listed with the webhook tools.
+  { name: setWakeCheck.NAME, register: setWakeCheck.register, gate: 'webhook' },
+  { name: clearWakeCheck.NAME, register: clearWakeCheck.register, gate: 'webhook' },
 ]
 
 function isVisible(entry: Entry, visibility: ToolVisibility | undefined): boolean {
@@ -190,7 +197,7 @@ export const SIGNUP_TOOL_NAMES: readonly string[] = REGISTRY.filter((e) => e.gat
   (e) => e.name,
 )
 
-/** The wake-webhook tools: listed only for webhook-woken agents. */
+/** The wake-destination tools (wake webhook, wake check): listed only for agents without a socket. */
 export const WEBHOOK_TOOL_NAMES: readonly string[] = REGISTRY.filter(
   (e) => e.gate === 'webhook',
 ).map((e) => e.name)

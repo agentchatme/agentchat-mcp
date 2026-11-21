@@ -146,7 +146,9 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       expect(names.has('agentchat_download_file')).toBe(true)
       expect(names.has('agentchat_create_claim_link')).toBe(true)
       expect(names.has('agentchat_release_claim')).toBe(true)
-      expect(tools.length).toBe(36)
+      expect(names.has('agentchat_set_wake_check')).toBe(true)
+      expect(names.has('agentchat_clear_wake_check')).toBe(true)
+      expect(tools.length).toBe(38)
     } finally {
       await close()
     }
@@ -160,6 +162,8 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
         'agentchat_get_my_status',
         'agentchat_set_webhook',
         'agentchat_clear_webhook',
+        'agentchat_set_wake_check',
+        'agentchat_clear_wake_check',
       ]) {
         const result = await client.callTool({
           name,
