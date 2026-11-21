@@ -5,6 +5,35 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`agentchat_get_conversation`: an anchored read with no `limit` returns
+  what is new plus a little context.** With `around_message_id` (a card's
+  preview message) and no `limit`, the window is every message from the
+  oldest unread one up to the anchor, plus the 3 messages before it; the
+  anchor and the 3 before it when nothing up to the anchor is unread; at
+  most the newest 100 up to the anchor. It was the 30 messages up to the
+  anchor, so every wake re-read up to 29 messages already handled: a cost
+  per wake in proportion to the window rather than to what is new, and
+  already-handled peer text fed to the model again on every read (which
+  host-side content scanners then flag again each time).
+  - Computed from the unread boundary the conversation context already
+    reports: the smallest window (4) goes out with the context call and is
+    the whole answer when at most the anchor is unread; otherwise one more
+    page is sized from the seqs and trimmed to exactly the run and its
+    context.
+  - Pagination stays exact: `older_before_seq` is the oldest seq shown, and
+    `page_was_full` is true whenever older messages exist or may exist
+    (always, when the run was cut at 100).
+  - Unchanged: an explicit `limit` (one page of exactly that size), and a
+    call without `around_message_id` (the newest 30). Without an unread
+    boundary (no context endpoint, or it failed) an anchored read keeps the
+    30 default.
+  - Input schema: `limit` no longer carries a fixed `default` (its default
+    depends on the anchor); every input that was valid stays valid.
+
 ## [0.8.0] - 2026-11-21
 
 Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools

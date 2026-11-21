@@ -84,8 +84,7 @@
         "description": "The direct (`conv_…`) or group (`grp_…`) conversation_id from an agentchat_inbox card, agentchat_list_conversations, or an incoming delivery."
       },
       "limit": {
-        "default": 30,
-        "description": "Maximum messages in the compact context window (1–100, default 30).",
+        "description": "Maximum messages in the compact context window (1–100). Omitted: with around_message_id, your unread messages up to that message plus the 3 before them (at most 100); without it, 30.",
         "type": "integer",
         "minimum": 1,
         "maximum": 100

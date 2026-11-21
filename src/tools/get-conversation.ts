@@ -7,6 +7,13 @@ import { CARD_ANCHOR } from './_texts.js'
 
 export const NAME = 'agentchat_get_conversation'
 
+/** The window when no limit is given and there is no anchor; also the fallback. */
+export const DEFAULT_LIMIT = 30
+/** The largest window, explicit or default. */
+export const MAX_LIMIT = 100
+/** Messages a default anchored read shows before the oldest unread one. */
+export const CONTEXT_BEFORE_UNREAD = 3
+
 export const INPUT_SHAPE = {
   conversation_id: z
     .string()
@@ -18,10 +25,10 @@ export const INPUT_SHAPE = {
     .number()
     .int()
     .min(1)
-    .max(100)
-    .default(30)
+    .max(MAX_LIMIT)
+    .optional()
     .describe(
-      'Maximum messages in the compact context window (1–100, default 30).',
+      'Maximum messages in the compact context window (1–100). Omitted: with around_message_id, your unread messages up to that message plus the 3 before them (at most 100); without it, 30.',
     ),
   around_message_id: z
     .string()
@@ -58,7 +65,9 @@ export const INPUT_SHAPE = {
 export const DESCRIPTION = [
   'Read a compact, chronological window of a direct or group conversation: server-verified sender and room identity, unread boundaries, reply parents, mentions, delivery/read state and message content.',
   '',
-  `For a tray card, pass its ${CARD_ANCHOR} as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids. For older pages, pass the returned pagination.older_before_seq.`,
+  `For a tray card, pass its ${CARD_ANCHOR} as around_message_id so later arrivals do not shift its context; for a batched group delivery also pass the mention ids as attention_message_ids.`,
+  '',
+  'With around_message_id and no limit, the window is what is new plus a little context: your unread messages up to that message and the 3 before the oldest of them (that message and the 3 before it when none is unread), at most the newest 100. For more, page back: pass the returned pagination.older_before_seq as before_seq (30 per page, or a limit); page_was_full true means older messages may exist. A limit you pass sets the window; without around_message_id it is the newest 30.',
   '',
   'Reading never marks anything read. Read is a verdict — agentchat_decide dismiss, or reply once your agentchat_send_message has gone out, through the newest message you read — or agentchat_mark_read (conversation_id + through_message_id) when you read without one. Group history before you joined is not available.',
   '',
@@ -274,6 +283,109 @@ async function optionalConversationContext(
   return client.getConversationContext(conversationId).catch(() => null)
 }
 
+/** The primary window: rows newest first (oldest first for after_seq). */
+type PrimaryWindow = {
+  messages: RawMessage[]
+  roomContext: ConversationContext | null
+  /** Older (newer, for after_seq) messages may exist past this window. */
+  pageWasFull: boolean
+}
+
+/** The window as the caller sized it, or the 30 default. Unchanged behaviour. */
+async function sizedWindow(
+  client: ContextCapableClient,
+  conversationId: string,
+  limit: number,
+  cursor: { aroundMessageId?: string; beforeSeq?: number; afterSeq?: number },
+): Promise<PrimaryWindow> {
+  const [messages, roomContext] = await Promise.all([
+    client.getMessages(conversationId, { limit, ...cursor }),
+    optionalConversationContext(client, conversationId),
+  ])
+  return { messages, roomContext, pageWasFull: messages.length === limit }
+}
+
+/** The oldest unread seq the context reports, when it reports a usable one. */
+function unreadBoundary(roomContext: ConversationContext | null): { known: false } | { known: true; oldestSeq: number | null } {
+  const unread = roomContext?.unread
+  if (!unread || typeof unread.count !== 'number') return { known: false }
+  if (unread.count <= 0) return { known: true, oldestSeq: null }
+  return typeof unread.oldest_seq === 'number' ? { known: true, oldestSeq: unread.oldest_seq } : { known: false }
+}
+
+/**
+ * The default window of an anchored read (around_message_id, no limit): what
+ * is new plus a little context. Every message from the oldest unread one up
+ * to the anchor, and the CONTEXT_BEFORE_UNREAD messages before it; the anchor
+ * and the ones before it when nothing up to the anchor is unread. At most the
+ * newest MAX_LIMIT up to the anchor. So a woken read costs in proportion to
+ * what is new, and already-handled text is not fed back on every wake.
+ *
+ * The anchored history endpoint returns rows newest first, ending at the
+ * anchor. The first page (the smallest window there is) goes out with the
+ * context call, which says where the unread run starts; it is the whole
+ * window when at most the anchor is unread. Otherwise one more page is sized
+ * from the seqs: seqs only grow, but hidden messages leave gaps, so the seq
+ * span is an upper bound on the rows needed, and the page is then trimmed to
+ * exactly the run plus its context. Without an unread boundary (no context
+ * endpoint, or it failed) the window is the 30 default, as before: a smaller
+ * guess could leave unread messages out.
+ */
+async function unreadWindow(
+  client: ContextCapableClient,
+  conversationId: string,
+  aroundMessageId: string,
+): Promise<PrimaryWindow> {
+  const firstLimit = CONTEXT_BEFORE_UNREAD + 1
+  const [first, roomContext]: [RawMessage[], ConversationContext | null] = await Promise.all([
+    client.getMessages(conversationId, { limit: firstLimit, aroundMessageId }),
+    optionalConversationContext(client, conversationId),
+  ])
+  const anchor = first.find((message) => message.id === aroundMessageId)
+  // No anchor in the page: the caller fails closed on it.
+  if (!anchor) return { messages: first, roomContext, pageWasFull: first.length === firstLimit }
+  // A short first page is all the history up to the anchor: the window
+  // whatever is unread.
+  if (first.length < firstLimit) return { messages: first, roomContext, pageWasFull: false }
+  const anchorSeq = anchor.seq
+  const boundary = unreadBoundary(roomContext)
+  if (!boundary.known || typeof anchorSeq !== 'number' || !seqsKnown(first)) {
+    return sizedWindow(client, conversationId, DEFAULT_LIMIT, { aroundMessageId })
+  }
+  const oldestUnread = boundary.oldestSeq
+  if (oldestUnread === null || oldestUnread > anchorSeq) {
+    // Nothing up to the anchor is unread: the anchor and the few before it.
+    return { messages: first, roomContext, pageWasFull: true }
+  }
+
+  const before = (rows: SeqMessage[]) => rows.filter((message) => message.seq < oldestUnread).length
+  let page: SeqMessage[] = first
+  let pageLimit = firstLimit
+  if (before(first) < CONTEXT_BEFORE_UNREAD) {
+    pageLimit = Math.min(MAX_LIMIT, anchorSeq - oldestUnread + 1 + CONTEXT_BEFORE_UNREAD)
+    const second: RawMessage[] = await client.getMessages(conversationId, { limit: pageLimit, aroundMessageId })
+    if (!seqsKnown(second)) {
+      return { messages: second, roomContext, pageWasFull: second.length === pageLimit }
+    }
+    page = second
+  }
+  const newestFirst = [...page].sort((a, b) => b.seq - a.seq)
+  const runRows = newestFirst.length - before(newestFirst)
+  const keep = Math.min(newestFirst.length, runRows + CONTEXT_BEFORE_UNREAD, MAX_LIMIT)
+  return {
+    messages: newestFirst.slice(0, keep),
+    roomContext,
+    // Trimmed: older messages exist. A full page: they may.
+    pageWasFull: keep < newestFirst.length || page.length === pageLimit,
+  }
+}
+
+type SeqMessage = RawMessage & { seq: number }
+
+function seqsKnown(rows: RawMessage[]): rows is SeqMessage[] {
+  return rows.every((message) => typeof message.seq === 'number')
+}
+
 async function hydrateMissingParents(
   client: ContextCapableClient,
   conversationId: string,
@@ -395,18 +507,22 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const client = ctx.client as ContextCapableClient
-        const options = {
-          limit,
-          ...(around_message_id !== undefined
-            ? { aroundMessageId: around_message_id }
-            : {}),
-          ...(before_seq !== undefined ? { beforeSeq: before_seq } : {}),
-          ...(after_seq !== undefined ? { afterSeq: after_seq } : {}),
-        }
-        const [messages, roomContext] = await Promise.all([
-          client.getMessages(conversation_id, options),
-          optionalConversationContext(client, conversation_id),
-        ])
+        // An anchored read with no limit gets the woken-read default. Any
+        // other call keeps its own limit or the 30 default; a cursor beside
+        // the anchor still goes out as before, for the server to refuse.
+        const { messages, roomContext, pageWasFull } =
+          around_message_id !== undefined &&
+          limit === undefined &&
+          before_seq === undefined &&
+          after_seq === undefined
+            ? await unreadWindow(client, conversation_id, around_message_id)
+            : await sizedWindow(client, conversation_id, limit ?? DEFAULT_LIMIT, {
+                ...(around_message_id !== undefined
+                  ? { aroundMessageId: around_message_id }
+                  : {}),
+                ...(before_seq !== undefined ? { beforeSeq: before_seq } : {}),
+                ...(after_seq !== undefined ? { afterSeq: after_seq } : {}),
+              })
         if (
           around_message_id !== undefined &&
           !messages.some((message) => message.id === around_message_id)
@@ -566,7 +682,7 @@ export function createHandler(ctx: ToolContext) {
             pagination: {
               older_before_seq: seqs.length > 0 ? Math.min(...seqs) : null,
               newer_after_seq: seqs.length > 0 ? Math.max(...seqs) : null,
-              page_was_full: messages.length === limit,
+              page_was_full: pageWasFull,
             },
             messages: compactMessages,
           },
