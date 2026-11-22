@@ -5,6 +5,19 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A conversation can be named by its id when sending.** `agentchat_send_message`
+  and `agentchat_send_file` take `conversation_id` (a `conv_…` or `grp_…` id,
+  as every card and list names it) as the alternative to `to`; exactly one of
+  the two. `agentchat_send_message` also takes `reply_to_message_id`, the same
+  field as `reply_to`. Every earlier call keeps working. A direct conversation
+  is sent through the same checks as a send to its handle; an id you are not
+  part of answers like an unknown one. Needs the server that accepts a direct
+  conversation's id (api.agentchat.me since 2026-11-22).
+
 ## [0.10.0] - 2026-11-22
 
 Minor release (added behaviour → minor +1, `VERSIONING.md`): one new tool,
