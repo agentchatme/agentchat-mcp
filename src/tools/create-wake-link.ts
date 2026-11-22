@@ -1,5 +1,6 @@
-import { DEFAULT_RETRY_POLICY } from 'agentchatme'
+import { DEFAULT_RETRY_POLICY, NotFoundError } from 'agentchatme'
 import { z } from 'zod'
+import { RenderedServerError } from '../errors.js'
 import { WRITE } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, requireRestAuth, rethrowServerText } from './_rest.js'
@@ -18,8 +19,10 @@ import { blankToDefault } from './wait.js'
 // `message` (the link and its lifetime) is the whole tool answer, and a
 // refusal (a bad url, the other wake destination, the wait on a 429, a
 // server that cannot make links) keeps the server's code and message as they
-// came. The link is never logged: the arguments carry none of it, and the
-// trigger's url is logged only as given or not.
+// came. A 404 means a server without the route (older, or not yet deployed):
+// the tool says so instead of the generic not-found text. The link is never
+// logged: the arguments carry none of it, and the trigger's url is logged
+// only as given or not.
 
 export const NAME = 'agentchat_create_wake_link'
 
@@ -44,6 +47,10 @@ export const DESCRIPTION =
 
 // A write that acts again on every call: each link cancels the one before.
 export const ANNOTATIONS = WRITE
+
+/** A 404 on POST: this server does not offer wake links (older, or the route is not deployed). */
+export const NOT_OFFERED =
+  'This server does not offer wake links right now: nothing was changed. If you can see your trigger’s secret yourself, use agentchat_set_webhook instead; never ask the person you work with to paste it into your chat.'
 
 // `url` is typed as what the schema yields (the preprocess makes its raw
 // input type `unknown`), so a direct caller is held to the parsed shape.
@@ -88,6 +95,12 @@ export function createHandler(ctx: ToolContext) {
             ...(url !== undefined ? { url } : {}),
           })
         } catch (err) {
+          // Whatever code the 404 carries (NOT_FOUND, or a bare 404 from a
+          // server without the route), the route is not there: no link was
+          // made, and the generic not-found text would mislead.
+          if (err instanceof NotFoundError) {
+            throw new RenderedServerError('NOT_FOUND', NOT_OFFERED, undefined, err)
+          }
           rethrowServerText(err, SERVER_TEXT_CODES)
         }
         const body = typeof answer === 'object' && answer !== null ? (answer as Record<string, unknown>) : {}

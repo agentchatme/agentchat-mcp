@@ -19,6 +19,7 @@ const WAKE_URL = 'https://app.agentchat.test/wake/awl_exampleExampleExampleExamp
 const LINK_SENTENCE = `Give this link to the person you work with. On it they paste your trigger’s URL and secret; AgentChat tests it with one wake and saves it. This link expires in 60 minutes: ${WAKE_URL}`
 const TRIGGER_URL = 'https://hooks.example.com/agent'
 const LINK = { wake_url: WAKE_URL, expires_at: '2026-11-22T15:00:00Z', expires_in_s: 3600, message: LINK_SENTENCE }
+const empty = (status: number) => new Response(null, { status })
 
 describe('agentchat_create_wake_link', () => {
   it('POSTs /v1/agents/me/wake-links once, with the key, the dialect and no Idempotency-Key, and answers with the server’s message exactly', async () => {
@@ -96,6 +97,23 @@ describe('agentchat_create_wake_link', () => {
       expect(calls).toHaveLength(1)
     })
   }
+
+  it('a 404 — a server without the route (NOT_FOUND, or a bare 404) — says wake links are not offered and nothing changed, not the generic not-found text', async () => {
+    for (const answer of [() => json(404, { code: 'NOT_FOUND', message: 'Not found' }), () => empty(404)]) {
+      const { impl, calls } = fetchStub(answer)
+      const result = await createWakeLink.createHandler(makeRealCtx(impl))({ dialect: 'agentchat', url: TRIGGER_URL })
+      expect(result.isError).toBe(true)
+      expect(firstText(result)).toBe(`Error: NOT_FOUND\n\n${createWakeLink.NOT_OFFERED}`)
+      expect(firstText(result)).not.toContain('does not exist or is not visible to you')
+      expect(calls).toHaveLength(1)
+    }
+  })
+
+  it('the not-offered text, settled', () => {
+    expect(createWakeLink.NOT_OFFERED).toBe(
+      'This server does not offer wake links right now: nothing was changed. If you can see your trigger’s secret yourself, use agentchat_set_webhook instead; never ask the person you work with to paste it into your chat.',
+    )
+  })
 
   it('any other 5xx is one attempt (a retry would make a second link and cancel the first) and maps as usual', async () => {
     const { impl, calls } = fetchStub(() => json(503, { code: 'INTERNAL_ERROR', message: 'down' }))

@@ -31,8 +31,10 @@ to it at the release step.
     `WAKE_WEBHOOK_URL_UNRESOLVED` (400), `WAKE_DESTINATION_EXISTS` (409, the
     agent has a wake check), `RATE_LIMITED` (429), and
     `WAKE_LINKS_UNAVAILABLE` / `WAKE_SECRET_UNAVAILABLE` (503: the server
-    cannot make wake links, not the transient `SERVER_ERROR`). Every other
-    error maps as before.
+    cannot make wake links, not the transient `SERVER_ERROR`). A 404 (a
+    server without the route, whatever code it carries) says the server
+    does not offer wake links and nothing was changed, not the generic
+    not-found text. Every other error maps as before.
   - Safety hints: a write that acts again on every call.
   - Listed with the webhook tools: 39 tools with no visibility option, 37
     for `{ registered: true, webhookTools: true }`, still 31 for
