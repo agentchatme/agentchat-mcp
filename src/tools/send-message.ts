@@ -4,6 +4,9 @@ import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
 import { CARD_ANCHOR, ONE_CONVERSATION_RUN, SCOPED_WAIT } from './_texts.js'
+import { CONVERSATION_ID_DESCRIPTION, TO_DESCRIPTION, targetOf, wireAddress } from './_target.js'
+
+export { targetOf } from './_target.js'
 
 export const NAME = 'agentchat_send_message'
 
@@ -12,16 +15,12 @@ export const INPUT_SHAPE = {
     .string()
     .min(1)
     .optional()
-    .describe(
-      'Recipient handle starting with `@` (e.g. `@alice`): a direct message, the way to start one. A group id `grp_…` also works here. Give exactly one of `to` or `conversation_id`.',
-    ),
+    .describe(TO_DESCRIPTION),
   conversation_id: z
     .string()
     .min(1)
     .optional()
-    .describe(
-      'The conversation to send into, as agentchat_inbox, agentchat_list_conversations or agentchat_get_conversation give it: a direct conversation `conv_…` or a group `grp_…`. Give exactly one of `to` or `conversation_id`.',
-    ),
+    .describe(CONVERSATION_ID_DESCRIPTION),
   text: z
     .string()
     .min(1)
@@ -39,26 +38,6 @@ export const INPUT_SHAPE = {
     .describe(
       `Optional. The message_id this replies to (a card’s ${CARD_ANCHOR}, or any message_id from the conversation). Same as reply_to; give one of them.`,
     ),
-}
-
-const FORM_RULE =
-  'Give exactly one of `to` (a handle like `@alice`) or `conversation_id` (`conv_…` or `grp_…`, as a card or the conversation list gives it); reply_to and reply_to_message_id are the same field, give one of them.'
-
-/**
- * The cross-field rules the shape cannot express, resolved to what the call
- * means: one target, one reply anchor. Single source for the schema refine
- * (protocol layer) and the handler guard (direct callers).
- */
-export function targetOf(
-  input: Pick<Input, 'to' | 'conversation_id' | 'reply_to' | 'reply_to_message_id'>,
-): { target: string; replyTo: string | undefined } | { issue: string } {
-  const to = input.to?.trim()
-  const conversationId = input.conversation_id?.trim()
-  if ((to ? 1 : 0) + (conversationId ? 1 : 0) !== 1) return { issue: FORM_RULE }
-  const a = input.reply_to
-  const b = input.reply_to_message_id
-  if (a !== undefined && b !== undefined && a !== b) return { issue: FORM_RULE }
-  return { target: (to ?? conversationId) as string, replyTo: a ?? b }
 }
 
 /**
@@ -151,9 +130,7 @@ export function createHandler(ctx: ToolContext) {
         // anything else as an unknown handle); conversation ids go as
         // `conversation_id`, a group or a direct conversation the sender is
         // in (the server sends a direct one through its direct path, every
-        // direct-send rule as with `to`). Handles cannot contain `_`, so the
-        // prefix sniff can never misroute one, whichever field it came in.
-        const isConversationId = /^(grp|conv)_/.test(target)
+        // direct-send rule as with `to`). See _target.ts.
         // The turn key comes from the composition: the stdio entry reads
         // AGENTCHAT_TURN_IDEMPOTENCY_KEY at call time (the historical env
         // contract, unchanged); the hosted core always supplies undefined so
@@ -162,7 +139,7 @@ export function createHandler(ctx: ToolContext) {
         const ordinalKey = `${target}\0${reply_to ?? ''}`
         const ordinal = sendOrdinals.get(ordinalKey) ?? 0
         const result = await ctx.client.sendMessage({
-          ...(isConversationId ? { conversation_id: target } : { to: target }),
+          ...wireAddress(target),
           type: 'text',
           content: { text },
           ...(reply_to ? { metadata: { reply_to } } : {}),

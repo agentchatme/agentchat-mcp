@@ -150,15 +150,15 @@ describe('agentchat_send_message', () => {
   it('refuses no target, two targets, or two different reply anchors before any network call', async () => {
     const sendMessageMock = vi.fn()
     const handler = sendMessage.createHandler(makeCtx({ sendMessage: sendMessageMock }))
-    for (const input of [
-      { text: 'hi' },
-      { to: '@bob', conversation_id: 'conv_direct', text: 'hi' },
-      { to: '  ', text: 'hi' },
-      { to: '@bob', text: 'hi', reply_to: 'msg_1', reply_to_message_id: 'msg_2' },
-    ]) {
+    for (const [input, rule] of [
+      [{ text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '@bob', conversation_id: 'conv_direct', text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '  ', text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '@bob', text: 'hi', reply_to: 'msg_1', reply_to_message_id: 'msg_2' }, 'the same field'],
+    ] as const) {
       const result = await handler(input as Parameters<typeof handler>[0])
       expect(result.isError).toBe(true)
-      expect(JSON.stringify(result.content)).toContain('exactly one of `to`')
+      expect(JSON.stringify(result.content)).toContain(rule)
       expect(sendMessage.INPUT_SCHEMA.safeParse(input).success).toBe(false)
     }
     expect(sendMessageMock).not.toHaveBeenCalled()
