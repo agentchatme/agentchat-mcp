@@ -5,7 +5,11 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.1] - 2026-11-22
+
+Patch release (fixed or adjusted existing behaviour → patch +1, `VERSIONING.md`):
+the send tools accept a conversation by its id. Needs the server that accepts a
+direct conversation's id (api.agentchat.me since 2026-11-22, core #239).
 
 ### Fixed
 
