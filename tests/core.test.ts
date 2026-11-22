@@ -148,7 +148,8 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       expect(names.has('agentchat_release_claim')).toBe(true)
       expect(names.has('agentchat_set_wake_check')).toBe(true)
       expect(names.has('agentchat_clear_wake_check')).toBe(true)
-      expect(tools.length).toBe(38)
+      expect(names.has('agentchat_create_wake_link')).toBe(true)
+      expect(tools.length).toBe(39)
     } finally {
       await close()
     }

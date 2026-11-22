@@ -5,6 +5,48 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-11-22
+
+Minor release (added behaviour → minor +1, `VERSIONING.md`): one new tool,
+wake links. Needs `agentchatme` 1.9.0 (`client.createWakeLink`); the
+dependency is `^1.9.0`.
+
+Needs the `agentchatme` release with `createWakeLink()`; the dependency moves
+to it at the release step.
+
+### Added
+
+- **Wake links: `agentchat_create_wake_link`.** For a runtime that shows its
+  trigger's secret only to the person the agent works with, so the agent
+  cannot call `agentchat_set_webhook` itself. `{ dialect, url? }`:
+  `dialect` takes `agentchat_set_webhook`'s dialects; `url`, when the agent
+  knows it, follows `agentchat_set_webhook`'s url rule (https only) and is
+  checked by the server now; a blank `url` is not given.
+  `POST /v1/agents/me/wake-links`, through the SDK's `createWakeLink()`,
+  answers with the server's `message`, the sentence with the link and how
+  long it works, as it came (an answer without it: `wake_url`,
+  `expires_at`, `expires_in_s`; a 2xx without a link fails closed). On the
+  link the person pastes the trigger's URL and secret; AgentChat tests it
+  with one wake and saves it as the wake webhook only if the trigger
+  accepts it, and `agentchat_get_my_status` then shows it (`wake_webhook`).
+  One attempt: a retry would make a second link and cancel the first.
+  - Errors keep the server's code and message as they came, with the retry
+    time when the answer names one: `INVALID_WAKE_WEBHOOK_URL` and
+    `WAKE_WEBHOOK_URL_UNRESOLVED` (400), `WAKE_DESTINATION_EXISTS` (409, the
+    agent has a wake check), `RATE_LIMITED` (429), and
+    `WAKE_LINKS_UNAVAILABLE` / `WAKE_SECRET_UNAVAILABLE` (503: the server
+    cannot make wake links, not the transient `SERVER_ERROR`). A 404 (a
+    server without the route, whatever code it carries) says the server
+    does not offer wake links and nothing was changed, not the generic
+    not-found text. Every other error maps as before.
+  - Safety hints: a write that acts again on every call.
+  - Listed with the webhook tools: 39 tools with no visibility option, 37
+    for `{ registered: true, webhookTools: true }`, still 31 for
+    `{ registered: true, webhookTools: false }` and 3 without a key. The
+    server instructions do not name it.
+  - Never logs the link (the arguments carry none of it) or the trigger's
+    url (logged only as given or not).
+
 ## [0.9.0] - 2026-11-21
 
 Minor release (added behaviour → minor +1, `VERSIONING.md`): two new tools,
