@@ -94,14 +94,15 @@ export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void
  *     one thing it can do.
  *   * `registered: true` → the two sign-up tools are not listed; the
  *     wake-destination tools (set / test / clear_webhook, set /
- *     clear_wake_check) only when `webhookTools` is true.
+ *     clear_wake_check, create_wake_link) only when `webhookTools` is true.
  */
 export interface ToolVisibility {
   /** Does this session have an AgentChat identity (an API key)? */
   registered: boolean
   /**
    * Is this agent woken without a socket, through a wake webhook or a wake
-   * check (list set/test/clear_webhook and set/clear_wake_check)?
+   * check (list set/test/clear_webhook, set/clear_wake_check and
+   * create_wake_link)?
    */
   webhookTools: boolean
 }

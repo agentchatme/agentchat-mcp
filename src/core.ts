@@ -108,8 +108,8 @@ export interface BuildMcpServerOptions {
    * `{ registered: false }` lists only agentchat_register,
    * agentchat_verify_otp and agentchat_get_my_status; `{ registered: true }`
    * drops the sign-up pair and lists the wake-destination tools (the wake
-   * webhook's and the wake check's) only when `webhookTools` is true. The
-   * server instructions follow the same choice.
+   * webhook's, the wake check's and the wake link) only when `webhookTools`
+   * is true. The server instructions follow the same choice.
    */
   visibility?: ToolVisibility
   /**

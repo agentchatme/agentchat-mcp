@@ -129,6 +129,7 @@ describe('tool annotations', () => {
       'agentchat_manage_members',
       // Each link cancels the one before.
       'agentchat_create_claim_link',
+      'agentchat_create_wake_link',
       // A repeated `defer` climbs the server's reminder ladder.
       'agentchat_decide',
     ]) {

@@ -179,6 +179,8 @@ describe('tool contract snapshot (publish-blocking)', () => {
       // The wake check (2026-11)
       'agentchat_set_wake_check',
       'agentchat_clear_wake_check',
+      // Wake links (2026-11)
+      'agentchat_create_wake_link',
     ]
     for (const name of added) {
       expect(names.has(name), `expected added tool ${name} in tools/list`).toBe(true)

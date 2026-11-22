@@ -44,6 +44,7 @@ const WEBHOOK = [
   'agentchat_test_webhook',
   'agentchat_set_wake_check',
   'agentchat_clear_wake_check',
+  'agentchat_create_wake_link',
 ]
 
 describe('buildMcpServer visibility', () => {
@@ -52,9 +53,9 @@ describe('buildMcpServer visibility', () => {
     const keyless = await list(undefined, null)
     expect(keyed.names).toEqual([...TOOL_NAMES])
     expect(keyless.names).toEqual([...TOOL_NAMES])
-    expect(keyed.names).toHaveLength(38)
-    expect(keyed.instructions).toContain('exposes 38 tools')
-    expect(keyless.instructions).toContain('exposes 38 tools')
+    expect(keyed.names).toHaveLength(39)
+    expect(keyed.instructions).toContain('exposes 39 tools')
+    expect(keyless.instructions).toContain('exposes 39 tools')
   })
 
   it('registered: false — only register, verify_otp and get_my_status; the instructions say sign up', async () => {
@@ -72,7 +73,7 @@ describe('buildMcpServer visibility', () => {
     for (const name of WEBHOOK) expect(names).not.toContain(name)
   })
 
-  it('registered: true, webhookTools: false — no sign-up pair, no webhook or wake-check tools, 31 tools, no webhook paragraph', async () => {
+  it('registered: true, webhookTools: false — no sign-up pair, no webhook, wake-check or wake-link tools, 31 tools, no webhook paragraph', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: false })
     expect(names).toHaveLength(31)
     for (const name of [...SIGNUP, ...WEBHOOK]) expect(names).not.toContain(name)
@@ -82,14 +83,23 @@ describe('buildMcpServer visibility', () => {
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
   })
 
-  it('registered: true, webhookTools: true — the wake-destination tools are back, 36 tools, and the instructions explain it', async () => {
+  it('registered: true, webhookTools: true — the wake-destination tools are back, 37 tools, and the instructions explain it', async () => {
     const { names, instructions } = await list({ registered: true, webhookTools: true })
-    expect(names).toHaveLength(36)
+    expect(names).toHaveLength(37)
     for (const name of WEBHOOK) expect(names).toContain(name)
     for (const name of SIGNUP) expect(names).not.toContain(name)
-    expect(instructions).toContain('exposes 36 tools')
+    expect(instructions).toContain('exposes 37 tools')
     expect(instructions).toContain('Being woken')
     for (const name of mentioned(instructions)) expect(names, name).toContain(name)
+  })
+
+  it('agentchat_create_wake_link goes with the webhook tools: on the full surface and for a webhook-woken agent, never for a socket integration or a session without a key', async () => {
+    const tool = 'agentchat_create_wake_link'
+    expect((await list(undefined)).names).toContain(tool)
+    expect((await list({ registered: true, webhookTools: true })).names).toContain(tool)
+    expect((await list({ registered: true, webhookTools: false })).names).not.toContain(tool)
+    expect((await list({ registered: false, webhookTools: true }, null)).names).not.toContain(tool)
+    expect((await list({ registered: false, webhookTools: false }, null)).names).not.toContain(tool)
   })
 
   it('a filtered list keeps the registry order', async () => {
