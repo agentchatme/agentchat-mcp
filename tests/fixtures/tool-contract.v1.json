@@ -283,9 +283,14 @@
     "type": "object",
     "properties": {
       "to": {
+        "description": "Recipient handle starting with `@` (e.g. `@alice`): a direct message, the way to start one. A group id `grp_…` also works here. Give exactly one of `to` or `conversation_id`.",
         "type": "string",
-        "minLength": 1,
-        "description": "Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from an agentchat_inbox card, agentchat_list_conversations, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id."
+        "minLength": 1
+      },
+      "conversation_id": {
+        "description": "The conversation to send into, as agentchat_inbox, agentchat_list_conversations or agentchat_get_conversation give it: a direct conversation `conv_…` or a group `grp_…`. Give exactly one of `to` or `conversation_id`.",
+        "type": "string",
+        "minLength": 1
       },
       "text": {
         "type": "string",
@@ -294,12 +299,15 @@
         "description": "Plain-text message body. Markdown is permitted."
       },
       "reply_to": {
-        "description": "Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context.",
+        "description": "Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context. Same as reply_to_message_id; give one of them.",
+        "type": "string"
+      },
+      "reply_to_message_id": {
+        "description": "Optional. The message_id this replies to (a card’s preview.message_id (last_message_id when preview is null), or any message_id from the conversation). Same as reply_to; give one of them.",
         "type": "string"
       }
     },
     "required": [
-      "to",
       "text"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"

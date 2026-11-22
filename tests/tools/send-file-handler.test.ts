@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as sendFile from '../../src/tools/send-file.js'
+import { TARGET_RULE } from '../../src/tools/_target.js'
 import { fetchStub, firstText, json, KEY, makeRealCtx, pathOf, payloadOf, type FetchCall } from './_real-client.js'
 
 // agentchat_send_file: reserve (POST /v1/uploads) → PUT the bytes to the
@@ -183,13 +184,27 @@ describe('agentchat_send_file: the local path source', () => {
     expect((calls[2]!.body as { content: Record<string, unknown> }).content['text']).toBeUndefined()
   })
 
-  it('refuses a direct-conversation id up front and says to use the peer’s handle, with zero network calls', async () => {
-    const { impl, calls } = happyNetwork()
-    const result = await sendFile.createHandler(makeRealCtx(impl))({ to: 'conv_abc', path: rel('note.txt') })
-    expect(result.isError).toBe(true)
-    expect(firstText(result)).toBe(`Error: VALIDATION_ERROR\n\n${sendFile.DIRECT_ID_RULE}`)
-    expect(firstText(result)).toContain('@handle')
-    expect(calls).toHaveLength(0)
+  it('a direct conversation by its id goes as conversation_id on both the reservation and the send, in either field', async () => {
+    for (const input of [{ conversation_id: 'conv_abc' }, { to: 'conv_abc' }]) {
+      const { impl, calls } = happyNetwork()
+      const result = await sendFile.createHandler(makeRealCtx(impl))({ ...input, path: rel('note.txt') })
+      expect(result.isError).toBeFalsy()
+      expect(calls[0]!.body).toMatchObject({ conversation_id: 'conv_abc' })
+      expect(calls[0]!.body).not.toHaveProperty('to')
+      expect(calls[2]!.body).toMatchObject({ conversation_id: 'conv_abc', type: 'file', content: { attachment_id: 'att_1' } })
+    }
+  })
+
+  it('refuses no target or two targets with the one addressing rule, at the schema and in the handler, with zero network calls', async () => {
+    for (const input of [{}, { to: '@bob', conversation_id: 'conv_abc' }, { conversation_id: '  ' }]) {
+      const { impl, calls } = happyNetwork()
+      const result = await sendFile.createHandler(makeRealCtx(impl))({ ...input, path: rel('note.txt') } as Parameters<ReturnType<typeof sendFile.createHandler>>[0])
+      expect(result.isError).toBe(true)
+      expect(firstText(result)).toBe(`Error: VALIDATION_ERROR\n\n${TARGET_RULE}`)
+      expect(calls).toHaveLength(0)
+      expect(sendFile.INPUT_SCHEMA.safeParse({ ...input, path: 'note.txt' }).success).toBe(false)
+    }
+    expect(sendFile.INPUT_SCHEMA.safeParse({ conversation_id: 'conv_abc', path: 'note.txt' }).success).toBe(true)
   })
 
   it('refuses a path outside the working directory with its own code and zero network calls', async () => {

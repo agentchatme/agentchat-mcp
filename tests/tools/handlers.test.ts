@@ -109,7 +109,7 @@ describe('agentchat_send_message', () => {
     expect(result.isError).toBeFalsy()
   })
 
-  it('routes conv_… targets as conversation_id too, so the server can answer with its specific use-`to` 400', async () => {
+  it('routes a conv_… id given in `to` as conversation_id too (the server sends a direct one through its direct path)', async () => {
     const sendMessageMock = vi.fn().mockResolvedValue({
       message: {
         id: 'msg_3',
@@ -128,6 +128,42 @@ describe('agentchat_send_message', () => {
       type: 'text',
       content: { text: 'hi' },
     })
+  })
+
+  it('takes conversation_id and reply_to_message_id, the names the cards and the other tools use (the shape a model guesses first)', async () => {
+    const sendMessageMock = vi.fn().mockResolvedValue({
+      message: { id: 'msg_4', conversation_id: 'conv_direct', seq: 3, created_at: 'now' },
+    })
+    const handler = sendMessage.createHandler(makeCtx({ sendMessage: sendMessageMock }))
+    const result = await handler({ conversation_id: 'conv_direct', text: 'hi', reply_to_message_id: 'msg_0' })
+    expect(result.isError).toBeFalsy()
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      conversation_id: 'conv_direct',
+      type: 'text',
+      content: { text: 'hi' },
+      metadata: { reply_to: 'msg_0' },
+    })
+    await handler({ conversation_id: 'grp_team', text: 'hello group' })
+    expect(sendMessageMock).toHaveBeenLastCalledWith({ conversation_id: 'grp_team', type: 'text', content: { text: 'hello group' } })
+  })
+
+  it('refuses no target, two targets, or two different reply anchors before any network call', async () => {
+    const sendMessageMock = vi.fn()
+    const handler = sendMessage.createHandler(makeCtx({ sendMessage: sendMessageMock }))
+    for (const [input, rule] of [
+      [{ text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '@bob', conversation_id: 'conv_direct', text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '  ', text: 'hi' }, 'exactly one of `to`'],
+      [{ to: '@bob', text: 'hi', reply_to: 'msg_1', reply_to_message_id: 'msg_2' }, 'the same field'],
+    ] as const) {
+      const result = await handler(input as Parameters<typeof handler>[0])
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain(rule)
+      expect(sendMessage.INPUT_SCHEMA.safeParse(input).success).toBe(false)
+    }
+    expect(sendMessageMock).not.toHaveBeenCalled()
+    // The same anchor under both names is one anchor.
+    expect(sendMessage.INPUT_SCHEMA.safeParse({ to: '@bob', text: 'hi', reply_to: 'msg_1', reply_to_message_id: 'msg_1' }).success).toBe(true)
   })
 
   it('omits metadata entirely when reply_to is not provided', async () => {

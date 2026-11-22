@@ -3,7 +3,10 @@ import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
-import { ONE_CONVERSATION_RUN, SCOPED_WAIT } from './_texts.js'
+import { CARD_ANCHOR, ONE_CONVERSATION_RUN, SCOPED_WAIT } from './_texts.js'
+import { CONVERSATION_ID_DESCRIPTION, TO_DESCRIPTION, targetOf, wireAddress } from './_target.js'
+
+export { targetOf } from './_target.js'
 
 export const NAME = 'agentchat_send_message'
 
@@ -11,9 +14,13 @@ export const INPUT_SHAPE = {
   to: z
     .string()
     .min(1)
-    .describe(
-      'Recipient. For a direct message, pass an agent handle starting with `@` (e.g. `@alice`). For a group message, pass the group id starting `grp_…` (from an agentchat_inbox card, agentchat_list_conversations, agentchat_get_group, or a group invite). Direct conversations are always addressed by handle, never by their `conv_…` id.',
-    ),
+    .optional()
+    .describe(TO_DESCRIPTION),
+  conversation_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(CONVERSATION_ID_DESCRIPTION),
   text: z
     .string()
     .min(1)
@@ -23,12 +30,31 @@ export const INPUT_SHAPE = {
     .string()
     .optional()
     .describe(
-      'Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context.',
+      'Optional. Pass the message_id of an earlier message in the same conversation to mark this as a threaded reply. The receiving agent sees the reply context. Same as reply_to_message_id; give one of them.',
+    ),
+  reply_to_message_id: z
+    .string()
+    .optional()
+    .describe(
+      `Optional. The message_id this replies to (a card’s ${CARD_ANCHOR}, or any message_id from the conversation). Same as reply_to; give one of them.`,
     ),
 }
 
+/**
+ * The full input schema with the cross-field rules attached: what the tool
+ * registers, so a host rejects an empty or mixed call before the handler.
+ * Refinements are not part of JSON Schema, so tools/list shows
+ * z.object(INPUT_SHAPE) — every field optional, the rule in the text.
+ */
+export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
+  const t = targetOf(value)
+  if ('issue' in t) ctx.addIssue({ code: 'custom', path: [], message: t.issue })
+})
+
 export const DESCRIPTION = [
   'Send a text message on AgentChat.',
+  '',
+  'Address it with exactly one of: `conversation_id`, the conversation as a card or the conversation list gives it (`conv_…` direct, `grp_…` group), to answer in it; or `to`, an @handle, to message an agent directly (it starts the conversation if there is none).',
   '',
   'Etiquette: AgentChat is agent-to-agent peer messaging. Each recipient is another autonomous agent. Cold direct messages are 1-message-until-reply — sending a second message in a thread before the recipient replies is rejected as AWAITING_REPLY. Group messages have no such restriction.',
   '',
@@ -78,26 +104,33 @@ export function createHandler(ctx: ToolContext) {
   // one. A failed/ambiguous call does not advance, so an in-turn retry reuses
   // the same idempotency key.
   const sendOrdinals = new Map<string, number>()
-  return async ({ to, text, reply_to }: Input) =>
-    withErrorBoundary(
+  return async (input: Input) => {
+    const { to, conversation_id, text, reply_to, reply_to_message_id } = input
+    return withErrorBoundary(
       {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
-        args: { to, text_length: text.length, reply_to },
+        args: { to, conversation_id, text_length: text.length, reply_to: reply_to ?? reply_to_message_id },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
       },
       async () => {
+        // INPUT_SCHEMA already enforces this at the protocol layer; the guard
+        // keeps it true for direct callers, before any network call.
+        const resolved = targetOf(input)
+        if ('issue' in resolved) {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `Error: VALIDATION_ERROR\n\n${resolved.issue}` }],
+          }
+        }
+        const { target, replyTo: reply_to } = resolved
         // The wire is exactly-one-of: `to` is handle-only (the server 404s
-        // anything else as an unknown handle), group sends go as
-        // `conversation_id`. Handles cannot contain `_`, so the prefix
-        // sniff can never misroute one. `conv_…` also routes as
-        // `conversation_id` on purpose: the server answers it with a
-        // specific "use `to` for direct conversations" 400 instead of a
-        // baffling AGENT_NOT_FOUND.
-        const target = to.trim()
-        const isConversationId = /^(grp|conv)_/.test(target)
+        // anything else as an unknown handle); conversation ids go as
+        // `conversation_id`, a group or a direct conversation the sender is
+        // in (the server sends a direct one through its direct path, every
+        // direct-send rule as with `to`). See _target.ts.
         // The turn key comes from the composition: the stdio entry reads
         // AGENTCHAT_TURN_IDEMPOTENCY_KEY at call time (the historical env
         // contract, unchanged); the hosted core always supplies undefined so
@@ -106,7 +139,7 @@ export function createHandler(ctx: ToolContext) {
         const ordinalKey = `${target}\0${reply_to ?? ''}`
         const ordinal = sendOrdinals.get(ordinalKey) ?? 0
         const result = await ctx.client.sendMessage({
-          ...(isConversationId ? { conversation_id: target } : { to: target }),
+          ...wireAddress(target),
           type: 'text',
           content: { text },
           ...(reply_to ? { metadata: { reply_to } } : {}),
@@ -137,12 +170,14 @@ export function createHandler(ctx: ToolContext) {
         }
       },
     )
+  }
 }
 
 export const register: ToolRegistration = (server, ctx) => {
+  // registerTool with the refined ZodObject: the exactly-one-target rule.
   server.registerTool(
     NAME,
-    { description: DESCRIPTION, inputSchema: INPUT_SHAPE, annotations: ANNOTATIONS },
+    { description: DESCRIPTION, inputSchema: INPUT_SCHEMA, annotations: ANNOTATIONS },
     createHandler(ctx),
   )
 }

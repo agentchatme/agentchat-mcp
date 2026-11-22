@@ -13,6 +13,7 @@ import { openWorld, WRITE } from './_annotations.js'
 import { withErrorBoundary, type SuccessShape } from './_handler.js'
 import { rethrowWithGuidance } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
+import { CONVERSATION_ID_DESCRIPTION, TO_DESCRIPTION, targetOf, wireAddress } from './_target.js'
 
 export const NAME = 'agentchat_send_file'
 
@@ -72,12 +73,8 @@ const kib = (bytes: number) => `${Math.floor(bytes / 1024)} KiB`
 export function buildInputShape(mode: ServerMode | undefined) {
   const hosted = mode === 'hosted'
   return {
-    to: z
-      .string()
-      .min(1)
-      .describe(
-        'Recipient: an agent handle starting with `@` for a direct message, or a group id starting `grp_…`. A direct conversation is addressed by the peer’s handle, never by its `conv_…` id.',
-      ),
+    to: z.string().min(1).optional().describe(TO_DESCRIPTION),
+    conversation_id: z.string().min(1).optional().describe(CONVERSATION_ID_DESCRIPTION),
     path: z
       .string()
       .min(1)
@@ -122,9 +119,6 @@ export const INPUT_SHAPE = buildInputShape('stdio')
 
 export const SOURCE_RULE = 'Pass exactly one of path or bytes; bytes requires filename.'
 
-export const DIRECT_ID_RULE =
-  'For a direct conversation, send the file to the peer’s @handle; `conv_…` ids are not accepted here (uploads resolve group ids and handles only).'
-
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
 /** The cross-field rule: single source for the schema refine and the handler guard. */
@@ -136,9 +130,11 @@ export function sourceIssue(input: Pick<Input, 'path' | 'bytes' | 'filename'>): 
   return null
 }
 
-/** The registered inputSchema for a composition; the refine adds nothing to the emitted JSON Schema. */
+/** The registered inputSchema for a composition; the refines add nothing to the emitted JSON Schema. */
 export function inputSchemaFor(mode: ServerMode | undefined) {
   return z.object(buildInputShape(mode)).superRefine((value, ctx) => {
+    const t = targetOf(value)
+    if ('issue' in t) ctx.addIssue({ code: 'custom', path: [], message: t.issue })
     const issue = sourceIssue(value)
     if (issue) ctx.addIssue({ code: 'custom', path: [], message: issue })
   })
@@ -148,7 +144,7 @@ export function inputSchemaFor(mode: ServerMode | undefined) {
 export const INPUT_SCHEMA = inputSchemaFor('stdio')
 
 export const DESCRIPTION = [
-  'Send a file to an agent (`@handle`) or a group (`grp_…`): uploads it and sends a file message, with an optional caption, in one call. The recipient opens it by its attachment_id with agentchat_download_file.',
+  'Send a file into a conversation (`conversation_id`, `conv_…` or `grp_…`, as a card or the conversation list gives it) or to an agent (`to`, an @handle): uploads it and sends a file message, with an optional caption, in one call. Give exactly one of the two. The recipient opens it by its attachment_id with agentchat_download_file.',
   '',
   `Pass either path (a local file inside the working directory; stdio server only) or bytes (base64, with filename). Up to ${Math.floor(MAX_BYTES / 1024 / 1024)} MB through path; on the hosted endpoint bytes is capped at ${kib(HOSTED_MAX_BYTES)} of file, so larger files go through the stdio binary’s path form. Allowed types: images, PDF, JSON, plain text, Markdown, CSV, common audio and video. The same cold-message rule as agentchat_send_message applies.`,
 ].join('\n')
@@ -289,7 +285,7 @@ export function decodeBase64(encoded: string, maxBytes: number = MAX_BYTES): Buf
 const UPLOAD_GUIDANCE: Record<string, string> = {
   AGENT_NOT_FOUND: 'No agent with that handle is registered — check the spelling.',
   BLOCKED: 'A block between you and the recipient prevents sending files.',
-  GROUP_NOT_FOUND: 'No group with that id is visible to you: you are not a member, or the id is wrong.',
+  GROUP_NOT_FOUND: 'No conversation with that id is visible to you: you are not in it, or the id is wrong. Use the conversation_id exactly as a card or the conversation list gives it, or the peer’s @handle.',
   NOT_FOUND: 'The recipient or group was not found — check the handle or group id.',
   VALIDATION_ERROR: `content_type must be one of ${ALLOWED_ATTACHMENT_MIME.join(', ')}, the file at most ${MAX_BYTES} bytes, and a direct file cannot be addressed to yourself.`,
   STORAGE_UNAVAILABLE: 'The file store is temporarily unavailable; retry shortly.',
@@ -301,7 +297,7 @@ function failure(code: string, message: string): SuccessShape {
 
 export function createHandler(ctx: ToolContext) {
   return async (input: Input) => {
-    const { to, path: filePath, bytes: encoded, filename: givenName, content_type, caption } = input
+    const { to, conversation_id, path: filePath, bytes: encoded, filename: givenName, content_type, caption } = input
     return withErrorBoundary(
       {
         toolName: NAME,
@@ -310,6 +306,7 @@ export function createHandler(ctx: ToolContext) {
         // Never the bytes: name, type, and which source — that is enough to debug.
         args: {
           to,
+          conversation_id,
           source: filePath !== undefined ? 'path' : 'bytes',
           filename: givenName ?? (filePath !== undefined ? path.basename(filePath) : undefined),
           content_type,
@@ -319,6 +316,10 @@ export function createHandler(ctx: ToolContext) {
         inflight: ctx.inflight,
       },
       async (): Promise<SuccessShape> => {
+        // The schema already enforces both rules at the protocol layer; the
+        // guards keep them true for direct callers, before any network call.
+        const resolved = targetOf(input)
+        if ('issue' in resolved) return failure('VALIDATION_ERROR', resolved.issue)
         const issue = sourceIssue(input)
         if (issue) return failure('VALIDATION_ERROR', issue)
 
@@ -356,15 +357,11 @@ export function createHandler(ctx: ToolContext) {
         const sha256 = createHash('sha256').update(bytes).digest('hex')
         const size = bytes.length
 
-        // 2. Reserve the attachment. POST /v1/uploads resolves group ids and
-        //    handles only — a direct conversation's `conv_…` id would come
-        //    back as a misleading GROUP_NOT_FOUND, so it is refused here with
-        //    the fix. Handles cannot contain `_`, so the prefix test never
-        //    misroutes one.
-        const target = to.trim()
-        if (/^conv_/.test(target)) return failure('VALIDATION_ERROR', DIRECT_ID_RULE)
-        const isConversation = /^grp_/.test(target)
-        const address = isConversation ? { conversation_id: target } : { to: target }
+        // 2. Reserve the attachment, addressed exactly as the message will
+        //    be (_target.ts): POST /v1/uploads scopes it to the group, or to
+        //    the direct pair for a handle or a direct conversation's id, and
+        //    the send that follows must name the same conversation.
+        const address = wireAddress(resolved.target)
         let slot: CreateUploadResponse
         try {
           slot = await ctx.client.createUpload({
