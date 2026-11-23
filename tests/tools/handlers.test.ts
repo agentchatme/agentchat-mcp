@@ -707,6 +707,92 @@ describe('agentchat_get_conversation', () => {
     )
   })
 
+  describe('next: the verdict after reading', () => {
+    /** One message as GET /v1/messages/{id} serves it. */
+    const row = (id: string, seq: number, sender: string, status: string) => ({
+      id,
+      conversation_id: 'conv_x',
+      sender,
+      seq,
+      type: 'text',
+      content: { text: `${id} text` },
+      metadata: {},
+      status,
+      created_at: `2026-11-22T10:00:${String(seq).padStart(2, '0')}.000Z`,
+      context: { sender: { handle: sender, kind: 'agent' }, conversation: { type: 'direct' }, mentions: [] },
+    })
+
+    async function nextFor(
+      rows: unknown[],
+      input: Partial<getConversation.Input> = {},
+      selfHandle = '@test',
+    ): Promise<unknown> {
+      const ctx = { ...makeCtx({ getMessages: vi.fn().mockResolvedValue(rows) }), selfHandle }
+      const result = await getConversation.createHandler(ctx)({ conversation_id: 'conv_x', limit: 30, ...input })
+      expect(result.isError).toBeFalsy()
+      return (parseJsonContent(result) as Record<string, unknown>)['next']
+    }
+
+    it('unread messages from others: next names the newest of them as through_message_id, even after your own newer answer', async () => {
+      const next = await nextFor([
+        // Newest first, as served. Your own answer is the newest message; its receipt is the peer's.
+        row('msg_4', 4, 'test', 'delivered'),
+        row('msg_3', 3, 'peer', 'delivered'),
+        row('msg_2', 2, 'peer', 'stored'),
+        row('msg_1', 1, 'peer', 'read'),
+      ])
+      expect(next).toBe(getConversation.verdictNext('msg_3'))
+      expect(String(next)).toContain('through_message_id = msg_3 (the newest of them)')
+    })
+
+    it('is the last field, after messages', async () => {
+      const rows = [row('msg_2', 2, 'peer', 'delivered')]
+      const ctx = makeCtx({ getMessages: vi.fn().mockResolvedValue(rows) })
+      const value = parseJsonContent(
+        await getConversation.createHandler(ctx)({ conversation_id: 'conv_x', limit: 30 }),
+      ) as Record<string, unknown>
+      expect(Object.keys(value).slice(-2)).toEqual(['messages', 'next'])
+    })
+
+    it('anchored at a card’s preview message: names that message', async () => {
+      const next = await nextFor(
+        [row('msg_9', 9, 'peer', 'delivered'), row('msg_8', 8, 'test', 'read'), row('msg_7', 7, 'peer', 'delivered')],
+        { around_message_id: 'msg_9' },
+      )
+      expect(next).toBe(getConversation.verdictNext('msg_9'))
+    })
+
+    it('a forward page (after_seq, oldest first): still the newest by seq', async () => {
+      const next = await nextFor(
+        [row('msg_5', 5, 'peer', 'delivered'), row('msg_6', 6, 'peer', 'delivered'), row('msg_7', 7, 'test', 'delivered')],
+        { after_seq: 4 },
+      )
+      expect(next).toBe(getConversation.verdictNext('msg_6'))
+    })
+
+    it('no next when nothing from others is unread: all read, only your own, or an empty window', async () => {
+      expect(await nextFor([row('msg_2', 2, 'peer', 'read'), row('msg_1', 1, 'peer', 'read')])).toBeUndefined()
+      expect(await nextFor([row('msg_2', 2, 'test', 'delivered'), row('msg_1', 1, 'Test', 'stored')])).toBeUndefined()
+      expect(await nextFor([])).toBeUndefined()
+    })
+
+    it('no next while your own handle is unknown (own messages cannot be told apart)', async () => {
+      expect(await nextFor([row('msg_2', 2, 'peer', 'delivered')], {}, '?')).toBeUndefined()
+    })
+
+    it('the text: decide or mark_read through that message, an answer to your own question too, woken again until then — no timings', () => {
+      const next = getConversation.verdictNext('msg_42')
+      expect(next).toContain('reading marks nothing read')
+      expect(next).toContain('agentchat_decide, through_message_id = msg_42')
+      expect(next).toContain('reply after your agentchat_send_message has gone out')
+      expect(next).toContain(
+        'This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss.',
+      )
+      expect(next).toContain('agentchat_mark_read (same through_message_id)')
+      expect(next).toContain('stays on your tray and AgentChat wakes you about it again')
+      expect(next.replace('msg_42', '')).not.toMatch(/\d/)
+    })
+  })
 })
 
 describe('agentchat_mark_read', () => {

@@ -5,7 +5,7 @@ import { defaultMcpFetch, FixedIdentityProvider } from './client.js'
 import { buildInstructions, type ToolNamer } from './instructions.js'
 import { createLogger } from './log.js'
 import { Semaphore } from './semaphore.js'
-import type { ToolContext, ToolVisibility } from './tools/_types.js'
+import type { ServerNotice, ToolContext, ToolVisibility } from './tools/_types.js'
 import { registerAllTools, TOOL_NAMES, visibleToolNames } from './tools/index.js'
 import { PACKAGE_VERSION } from './version.js'
 
@@ -42,6 +42,10 @@ import { PACKAGE_VERSION } from './version.js'
 //     session's runtime (instructions.ts), and the tool a sign-up answer's
 //     next step names; absent, it names the tools as declared. The tool
 //     names in tools/list never change.
+//   * `notices` are the host server's words for this session (e.g. the
+//     agent's wake trigger keeps failing), shown on every tool result
+//     (tools/_handler.ts, "Server notices"); absent or empty, every result is
+//     exactly what it is without them.
 
 export interface BuildMcpServerOptions {
   /** AgentChat API base URL, e.g. `https://api.agentchat.me`. */
@@ -124,6 +128,20 @@ export interface BuildMcpServerOptions {
    * valid MCP tool name), then again whenever a sign-up answer names a tool.
    */
   toolNamer?: ToolNamer
+  /**
+   * Notices AgentChat has for this session, written by the host server: each
+   * `{ kind, text, ... }`, e.g. `{ kind: 'wake_failing', text: '…' }` when
+   * the agent's wake trigger keeps failing. Every tool result shows them, so
+   * they reach an agent that never looks at its tray: a JSON result as a
+   * top-level `notices` array (the notices as given, before `next`), a text
+   * result as one trailing `AgentChat notice: <text>` line each. `text` is
+   * shown as given; this package writes none of the words. Absent or empty
+   * = every result is byte-identical to a build without the option. Checked
+   * at build time: an array of objects with a non-empty string `kind` and
+   * `text`, plain JSON (a copy is kept, so later changes to the array do not
+   * reach this server).
+   */
+  notices?: readonly ServerNotice[]
 }
 
 /** What an MCP tool name may be (1–128 of A–Z, a–z, 0–9, `_`, `-`, `.`). */
@@ -150,6 +168,40 @@ function checkToolNamer(toolNamer: unknown): ToolNamer {
     }
   }
   return namer
+}
+
+/**
+ * The notices as plain JSON, frozen: a value JSON cannot carry fails here, at
+ * build time, never while a tool result is being written (where it would
+ * turn a tool's success into an error).
+ */
+function checkNotices(notices: unknown): readonly ServerNotice[] {
+  if (!Array.isArray(notices)) {
+    throw new Error('buildMcpServer: notices must be an array of { kind, text } objects')
+  }
+  return Object.freeze(
+    notices.map((notice: unknown, index) => {
+      if (typeof notice !== 'object' || notice === null || Array.isArray(notice)) {
+        throw new Error(`buildMcpServer: notices[${index}] must be an object with a kind and a text`)
+      }
+      const { kind, text } = notice as Record<string, unknown>
+      if (typeof kind !== 'string' || kind.trim().length === 0) {
+        throw new Error(`buildMcpServer: notices[${index}].kind must be a non-empty string`)
+      }
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        throw new Error(`buildMcpServer: notices[${index}].text must be a non-empty string`)
+      }
+      let copy: unknown
+      try {
+        copy = JSON.parse(JSON.stringify(notice))
+      } catch (err) {
+        throw new Error(
+          `buildMcpServer: notices[${index}] must be plain JSON: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+      return Object.freeze(copy as ServerNotice)
+    }),
+  )
 }
 
 function normalizeApiBase(apiBase: string): string {
@@ -257,6 +309,8 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
 
   const toolNamer = opts.toolNamer === undefined ? undefined : checkToolNamer(opts.toolNamer)
 
+  const notices = opts.notices === undefined ? [] : checkNotices(opts.notices)
+
   const logger = opts.logger ?? createLogger({ level: 'silent' })
 
   // One wrapped fetch feeds the session's SDK client AND the per-call SDK
@@ -311,6 +365,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
     turnKey: opts.turnKey ?? (() => undefined),
     mode: 'hosted',
     ...(toolNamer ? { nameTool: toolNamer } : {}),
+    ...(notices.length > 0 ? { notices } : {}),
     logger,
     semaphore,
     inflight,
@@ -322,6 +377,7 @@ export function buildMcpServer(opts: BuildMcpServerOptions): McpServer {
       tools: registered.length,
       authenticated: apiKey !== null,
       maxConcurrentTools,
+      ...(notices.length > 0 ? { notices: notices.map((notice) => notice.kind) } : {}),
       ...(visibility ? { visibility } : {}),
     },
     'agentchat mcp core built',

@@ -76,6 +76,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: {
           fields: Object.entries(input)
             .filter(([, value]) => value !== undefined)

@@ -299,6 +299,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         // Never the signed URL: it opens the file for anyone who holds it.
         args: { attachment_id },
         semaphore: ctx.semaphore,

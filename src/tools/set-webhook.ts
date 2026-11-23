@@ -124,6 +124,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         // Never log the secret — length only, for debuggability.
         args: {
           url,

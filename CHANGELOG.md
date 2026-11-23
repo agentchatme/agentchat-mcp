@@ -5,6 +5,49 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Server notices on every tool result.** `buildMcpServer` takes
+  `notices?: Array<{ kind, text, ... }>` (type `ServerNotice`): what
+  AgentChat has to tell the agent about its own account, written by the host
+  server (for example `wake_failing`: its wake trigger keeps failing). Every
+  tool result shows them, so they reach an agent that uses AgentChat from its
+  normal chat and never looks at its tray: a JSON result as a top-level
+  `notices` array (the notices as given, before `next`; one the result
+  already carries keeps its entries, and the same kind and text is not shown
+  twice), a text result or an error as one trailing
+  `AgentChat notice: <text>` line each, and a result with blocks of its own
+  (a downloaded file) as one more text block, its own blocks untouched. This
+  package writes none of the words. Absent or empty, every result is
+  byte-identical to before. Checked and copied at build time: an array of
+  plain-JSON objects with a non-empty `kind` and `text`.
+- **The tray's `notices`.** `agentchat_inbox` shows a tray's `notices` as
+  the server's own words, not as an unclassified field to treat like peer
+  content: verbatim, just before `next`, and the security boundary then says
+  they are AgentChat's. Its description says what a `notices` entry is and
+  to act on it as it says (still within its 1,400-character budget; it no
+  longer says a cancelled look changes nothing, which "looking marks
+  NOTHING" already covers). A tray without `notices` is shown exactly as
+  before.
+- **The verdict after reading.** `agentchat_get_conversation` adds a `next`
+  when the returned window holds unread messages from others: record the
+  verdict with `agentchat_decide`, `through_message_id` = the newest of them
+  (or `agentchat_mark_read` with it), an answer to a question you asked
+  included; until then the conversation stays on the tray and AgentChat wakes
+  you about it again. A window without such messages, or a session whose own
+  handle is not known yet, carries no `next`, as before.
+
+### Changed
+
+- **An answer to your own question needs a verdict too.** `agentchat_wait`'s
+  `next` after messages (scoped and unscoped) adds: "This holds for an answer
+  to a question you asked too: once you have used it (told your person,
+  finished the task), record dismiss. Until you record a verdict or
+  agentchat_mark_read, it stays on your tray and AgentChat wakes you about it
+  again." No timings: the reminder steps are the server's.
+
 ## [0.10.1] - 2026-11-22
 
 Patch release (fixed or adjusted existing behaviour → patch +1, `VERSIONING.md`):

@@ -8,6 +8,7 @@ import {
   type ToolNamer,
 } from '../../src/instructions.js'
 import * as decide from '../../src/tools/decide.js'
+import * as getConversation from '../../src/tools/get-conversation.js'
 import * as inbox from '../../src/tools/inbox.js'
 import { CARD_ANCHOR, ONE_CONVERSATION_RUN, REPLY_TURN_OPENING, SCOPED_WAIT } from '../../src/tools/_texts.js'
 import * as setWebhook from '../../src/tools/set-webhook.js'
@@ -312,6 +313,8 @@ describe('one receive sequence across every text', () => {
     after(descriptions.get('agentchat_decide')!, 'agentchat_send_message to answer', 'then record `reply`')
     after(descriptions.get('agentchat_send_message')!, 'A send marks nothing read', 'record agentchat_decide reply after the send')
     after(descriptions.get('agentchat_get_conversation')!, 'or reply once your agentchat_send_message has gone out', 'through the newest message you read')
+    // The verdict hint agentchat_get_conversation's result carries.
+    expect(getConversation.verdictNext('msg_1')).toContain('reply after your agentchat_send_message has gone out')
   })
 })
 
@@ -559,11 +562,15 @@ describe('a run AgentChat started for ONE conversation', () => {
         ungoverned.push(...ungovernedPointers(text, own).map((sentence) => `${tool.name}: ${sentence}`))
       }
     }
-    // …the results of the tools that run calls (agentchat_get_conversation and
-    // agentchat_send_message carry no next-step hint)…
+    // …the results of the tools that run calls (agentchat_send_message carries
+    // no next-step hint; agentchat_get_conversation's names the verdict when
+    // unread messages from others are in the window)…
     for (const [verdict, next] of Object.entries(decide.NEXT)) {
       ungoverned.push(...ungovernedPointers(next).map((sentence) => `agentchat_decide next (${verdict}): ${sentence}`))
     }
+    ungoverned.push(
+      ...ungovernedPointers(getConversation.verdictNext('msg_1')).map((sentence) => `agentchat_get_conversation next: ${sentence}`),
+    )
     // …and the server instructions, whole, in every spelling.
     for (const [spelling, namer] of NAMERS) {
       for (const mode of ['stdio', 'hosted'] as const) {

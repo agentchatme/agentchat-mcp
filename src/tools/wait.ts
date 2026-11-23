@@ -467,13 +467,22 @@ const SCOPED_GUIDANCE: Record<string, string> = {
   GROUP_DELETED: 'Nothing more arrives in it either, so do not call agentchat_wait on it again: stop.',
 }
 
+/**
+ * After the verdict steps in NEXT.messages and NEXT.scopedMessages: an answer
+ * to the agent's own question needs a verdict too, or the server wakes it
+ * about the conversation again. No timings: the reminder ladder is the
+ * server's.
+ */
+export const VERDICT_FOR_ANSWERS =
+  'This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again.'
+
 export const NEXT = {
   messages:
-    'Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live.',
+    `Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. ${VERDICT_FOR_ANSWERS} Then call agentchat_wait again to keep the exchange live.`,
   timeout:
     'Nothing new arrived. If you are mid-conversation, call agentchat_wait once more; if that is empty too, stop — the next message wakes you.',
   scopedMessages:
-    'With through_message_id = the newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id to keep the exchange live.',
+    `With through_message_id = the newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. ${VERDICT_FOR_ANSWERS} Then call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id to keep the exchange live.`,
   scopedTimeout:
     'Nothing new arrived in this conversation: stop — the next message wakes you.',
   scopedOwnOnly:
@@ -800,6 +809,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: { timeout_seconds, limit, conversation_id, after_message_id },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,
