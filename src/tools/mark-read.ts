@@ -140,6 +140,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: { conversation_id, through_message_id, message_id },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,

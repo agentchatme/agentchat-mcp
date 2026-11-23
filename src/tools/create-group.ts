@@ -38,6 +38,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: { name, member_count: member_handles?.length ?? 0 },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,

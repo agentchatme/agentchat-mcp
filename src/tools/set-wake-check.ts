@@ -116,6 +116,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: {
           ...(rewake !== undefined ? { rewake } : {}),
           ...(rotate !== undefined ? { rotate } : {}),

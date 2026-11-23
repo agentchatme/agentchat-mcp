@@ -303,6 +303,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         // Never the bytes: name, type, and which source — that is enough to debug.
         args: {
           to,

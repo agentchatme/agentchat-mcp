@@ -69,6 +69,25 @@ export const DESCRIPTION = [
 
 export const ANNOTATIONS = READ
 
+// ─── The verdict after reading ─────────────────────────────────────────────
+//
+// Reading marks nothing read, so a conversation read here stays on the tray
+// until a verdict (agentchat_decide) or agentchat_mark_read, and the server
+// wakes the agent about it again. An agent that uses AgentChat from its
+// normal chat (sends a question, reads the answer, tells its person) never
+// sees a tray card asking for that verdict. So when the returned window holds
+// unread messages from others, the result's `next` names the read anchor —
+// the newest of them, by seq — and says to record the verdict once they are
+// used, an answer to the agent's own question included. A window with none
+// (all read, or only the agent's own) carries no `next`, as before. Without
+// a known own handle ('?', before a stdio identity resolves) the agent's own
+// messages cannot be told apart, so no anchor is named.
+
+/** The `next` for a window with unread messages from others: `throughMessageId` is the newest of them. */
+export function verdictNext(throughMessageId: string): string {
+  return `This window holds unread messages from others; reading marks nothing read. Record your verdict with agentchat_decide, through_message_id = ${throughMessageId} (the newest of them): reply after your agentchat_send_message has gone out; dismiss when nothing more is needed from you. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read (same through_message_id), this conversation stays on your tray and AgentChat wakes you about it again.`
+}
+
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
 type RawMessage = {
@@ -136,6 +155,24 @@ type ConversationContext = {
 }
 
 type ContextCapableClient = AgentChatClient
+
+/** A real handle, not the '?' an identity has before its handle is known. */
+function knownHandle(handle: string): boolean {
+  return /^@?[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/i.test(handle)
+}
+
+/**
+ * The newest of `rows` (in chronological order): the one with the highest
+ * seq, or the last one when none carries a seq.
+ */
+function newestOf(rows: readonly RawMessage[]): RawMessage | null {
+  let newest: RawMessage | null = null
+  for (const row of rows) {
+    if (typeof row.seq !== 'number') continue
+    if (newest === null || row.seq > (newest.seq as number)) newest = row
+  }
+  return newest ?? rows.at(-1) ?? null
+}
 
 function bareHandle(handle: string | undefined): string {
   return (handle ?? 'unknown').replace(/^@/, '').toLowerCase()
@@ -382,6 +419,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: {
           conversation_id,
           limit,
@@ -486,11 +524,14 @@ export function createHandler(ctx: ToolContext) {
           }
         })
 
-        const incomingUnread = messages.filter(
-          (message) =>
-            bareHandle(message.context?.sender?.handle ?? message.sender) !==
-              bareHandle(ctx.selfHandle) && message.status !== 'read',
-        )
+        const isIncomingUnread = (message: RawMessage) =>
+          bareHandle(message.context?.sender?.handle ?? message.sender) !==
+            bareHandle(ctx.selfHandle) && message.status !== 'read'
+        const incomingUnread = messages.filter(isIncomingUnread)
+        // The read anchor for the verdict (see "The verdict after reading").
+        const anchor = knownHandle(ctx.selfHandle)
+          ? newestOf(chronological.filter(isIncomingUnread))
+          : null
         const seqs = messages
           .map((message) => message.seq)
           .filter((seq): seq is number => typeof seq === 'number')
@@ -569,6 +610,7 @@ export function createHandler(ctx: ToolContext) {
               page_was_full: messages.length === limit,
             },
             messages: compactMessages,
+            ...(anchor !== null ? { next: verdictNext(anchor.id) } : {}),
           },
         }
       },

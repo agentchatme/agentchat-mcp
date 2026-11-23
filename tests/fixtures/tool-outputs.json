@@ -497,7 +497,7 @@
                 ]
               }
             ],
-            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live."
+            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again to keep the exchange live."
           }
         }
       ]
@@ -731,7 +731,7 @@
                 ]
               }
             ],
-            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live."
+            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again to keep the exchange live."
           }
         }
       ]
@@ -837,7 +837,7 @@
                 ]
               }
             ],
-            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live."
+            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again to keep the exchange live."
           }
         }
       ]
@@ -899,7 +899,7 @@
                 ]
               }
             ],
-            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live."
+            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again to keep the exchange live."
           }
         }
       ]
@@ -1063,7 +1063,7 @@
                 ]
               }
             ],
-            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again to keep the exchange live."
+            "next": "Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again to keep the exchange live."
           }
         }
       ]
@@ -1154,7 +1154,7 @@
               }
             ],
             "next_after_message_id": "msg_7",
-            "next": "With through_message_id = the newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. Then call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id to keep the exchange live."
+            "next": "With through_message_id = the newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again. Then call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id to keep the exchange live."
           }
         }
       ]

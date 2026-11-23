@@ -89,6 +89,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         // Never log the OTP code — it is a live credential for ~minutes.
         args: { pending_id },
         semaphore: ctx.semaphore,

@@ -1170,6 +1170,35 @@ describe('agentchat_wait handler', () => {
     })
   })
 
+  describe('the verdict texts: an answer to your own question needs one too', () => {
+    const SENTENCE =
+      'This holds for an answer to a question you asked too: once you have used it (told your person, finished the task), record dismiss. Until you record a verdict or agentchat_mark_read, it stays on your tray and AgentChat wakes you about it again.'
+
+    it('pins the sentence, with no timings (the reminder ladder is the server’s)', () => {
+      expect(waitTool.VERDICT_FOR_ANSWERS).toBe(SENTENCE)
+      expect(SENTENCE).not.toMatch(/\d/)
+    })
+
+    it('NEXT.messages: after the reply step, before the wait-again step', () => {
+      expect(waitTool.NEXT.messages).toBe(
+        `Per conversation, with through_message_id = its newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. ${SENTENCE} Then call agentchat_wait again to keep the exchange live.`,
+      )
+    })
+
+    it('NEXT.scopedMessages: after the reply step, before the scoped wait-again step', () => {
+      expect(waitTool.NEXT.scopedMessages).toBe(
+        `With through_message_id = the newest message_id here (these messages are only delivered so far; reply and dismiss mark them read): if it needs nothing from you, record agentchat_decide dismiss now; if it earns a reply, answer with agentchat_send_message, then record agentchat_decide reply. ${SENTENCE} Then call agentchat_wait again with this conversation_id and next_after_message_id as after_message_id to keep the exchange live.`,
+      )
+    })
+
+    it('the other outcomes do not carry it', () => {
+      for (const [outcome, text] of Object.entries(waitTool.NEXT)) {
+        if (outcome === 'messages' || outcome === 'scopedMessages') continue
+        expect(text, outcome).not.toContain(SENTENCE)
+      }
+    })
+  })
+
   it('pins the input schema bounds', () => {
     expect(waitTool.MAX_WAIT_SECONDS).toBe(50)
     expect(waitTool.DEFAULT_WAIT_SECONDS).toBe(45)

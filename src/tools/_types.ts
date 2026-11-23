@@ -82,6 +82,26 @@ export interface ToolContext {
    * Authorization header.
    */
   saveKey?: (creds: NewCredentials) => SaveKeyResult
+  /**
+   * The host server's notices for this session (BuildMcpServerOptions.notices),
+   * shown on every tool result by withErrorBoundary (_handler.ts). Absent or
+   * empty = nothing is added. The stdio composition has none.
+   */
+  notices?: readonly ServerNotice[]
+}
+
+/**
+ * A notice the host server writes for this session: AgentChat telling the
+ * agent about its own account (e.g. `wake_failing`: its wake trigger keeps
+ * failing). The words are the server's; this package only shows them, as
+ * given. Any other fields (`since`, `last_at`, `status`, …) travel with it.
+ */
+export interface ServerNotice {
+  /** What the notice is about, e.g. `wake_failing`. */
+  kind: string
+  /** The server's own sentence for the agent. */
+  text: string
+  [field: string]: unknown
 }
 
 export type ToolRegistration = (server: McpServer, ctx: ToolContext) => void

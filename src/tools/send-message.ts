@@ -111,6 +111,7 @@ export function createHandler(ctx: ToolContext) {
         toolName: NAME,
         logger: ctx.logger,
         mode: ctx.mode,
+        notices: ctx.notices,
         args: { to, conversation_id, text_length: text.length, reply_to: reply_to ?? reply_to_message_id },
         semaphore: ctx.semaphore,
         inflight: ctx.inflight,

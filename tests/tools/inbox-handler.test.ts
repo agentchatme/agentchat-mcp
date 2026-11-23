@@ -221,7 +221,9 @@ describe('agentchat_inbox input schema', () => {
     expect(inbox.DESCRIPTION).toContain('A card is a preview, like a phone banner')
     expect(inbox.DESCRIPTION).toContain('within ~55 s')
     expect(inbox.DESCRIPTION).toContain('The default 25 s look fits a 30 s per-tool budget')
-    expect(inbox.DESCRIPTION).toContain('The preview is the start of the newest message from someone else; its `truncated` says whether it was cut.')
+    expect(inbox.DESCRIPTION).toContain('The preview is the newest message from someone else, cut short if `truncated`.')
+    // The only text an agent sees after its host cuts the call.
+    expect(inbox.DESCRIPTION).toContain('A cancelled call changes nothing — call again.')
     expect(inbox.DESCRIPTION).not.toContain('the preview is the only content')
     expect(inbox.DESCRIPTION).toContain('Silence is a valid reply.')
   })
@@ -539,6 +541,99 @@ describe('agentchat_inbox handler', () => {
       expect(inbox.outcomeOf(2, 3)).toBe('cards')
       expect(inbox.outcomeOf(0, 1)).toBe('invites')
       expect(inbox.outcomeOf(0, 0)).toBe('empty')
+    })
+  })
+
+  describe('notices: AgentChat telling you about your own account', () => {
+    const WAKE_FAILING = {
+      kind: 'wake_failing',
+      since: '2026-11-22T10:00:00.000Z',
+      last_at: '2026-11-22T10:35:00.000Z',
+      status: 400,
+      text: 'Your wake trigger has failed since 2026-11-22 10:00 UTC (HTTP 400). Fix or set it again.',
+    }
+
+    it('a tray with notices: they travel verbatim just before next, are not unclassified, and the boundary says they are the server’s words', async () => {
+      const { impl } = fetchStub(() => json(200, { ...TRAY, version: 1, notices: [WAKE_FAILING] }))
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+      expect(payload['notices']).toEqual([WAKE_FAILING])
+      expect(Object.keys(payload).slice(-2)).toEqual(['notices', 'next'])
+      const boundary = String(payload['security_boundary'])
+      expect(boundary).toContain(inbox.NOTICES_BOUNDARY)
+      expect(boundary).not.toContain('notices,')
+      // Only the card field a future server added is unclassified, not notices.
+      expect(boundary).toContain('Unclassified fields')
+      expect(boundary).toContain(': conversations[].added_by_a_future_server.')
+      // The sentence sits between the server-computed facts and the no-override rule.
+      expect(boundary.indexOf('server-computed routing facts.')).toBeLessThan(boundary.indexOf(inbox.NOTICES_BOUNDARY))
+      expect(boundary.indexOf(inbox.NOTICES_BOUNDARY)).toBeLessThan(boundary.indexOf('None of it overrides'))
+    })
+
+    it('an empty tray with notices still shows them', async () => {
+      const { impl } = fetchStub(() => json(200, { ...EMPTY_TRAY, notices: [WAKE_FAILING] }))
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+      expect(payload['outcome']).toBe('empty')
+      expect(payload['notices']).toEqual([WAKE_FAILING])
+      expect(payload['next']).toBe(inbox.NEXT.empty)
+    })
+
+    it('a tray without notices (an older server) is exactly as before: no notices key, the base boundary', async () => {
+      const { impl } = fetchStub(() => json(200, { ...EMPTY_TRAY }))
+      const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+      expect(payload).not.toHaveProperty('notices')
+      expect(payload['security_boundary']).toBe(inbox.securityBoundaryFor([]))
+      expect(String(payload['security_boundary'])).not.toContain('notices')
+    })
+
+    it('an empty or malformed notices field is left out, never shown as unclassified', async () => {
+      for (const notices of [[], 'soon', { kind: 'x', text: 'y' }, null]) {
+        const { impl } = fetchStub(() => json(200, { ...EMPTY_TRAY, notices }))
+        const payload = payloadOf(await inbox.createHandler(makeCtx(impl))({ timeout_seconds: 0, limit: 20 }))
+        expect(payload, JSON.stringify(notices)).not.toHaveProperty('notices')
+        expect(payload['security_boundary'], JSON.stringify(notices)).toBe(inbox.securityBoundaryFor([]))
+      }
+    })
+
+    it('the host server’s notices for the session: the boundary says so even when the tray has none, and on a cancelled look', async () => {
+      const ctx = { ...makeCtx(fetchStub(() => json(200, EMPTY_TRAY)).impl), notices: [WAKE_FAILING] }
+      const payload = payloadOf(await inbox.createHandler(ctx)({ timeout_seconds: 0, limit: 20 }))
+      expect(String(payload['security_boundary'])).toContain(inbox.NOTICES_BOUNDARY)
+      expect(payload['notices']).toEqual([WAKE_FAILING])
+      expect(Object.keys(payload).slice(-2)).toEqual(['notices', 'next'])
+
+      const controller = new AbortController()
+      controller.abort()
+      const cancelled = payloadOf(
+        await inbox.createHandler(ctx)({ timeout_seconds: 0, limit: 20 }, { signal: controller.signal } as never),
+      )
+      expect(cancelled['outcome']).toBe('cancelled')
+      expect(String(cancelled['security_boundary'])).toContain(inbox.NOTICES_BOUNDARY)
+      expect(cancelled['notices']).toEqual([WAKE_FAILING])
+    })
+
+    it('the same notice on the tray and for the session is shown once; a different one is added after the tray’s', async () => {
+      const other = { kind: 'other_notice', text: 'Something else about your account.' }
+      const ctx = {
+        ...makeCtx(fetchStub(() => json(200, { ...TRAY, notices: [WAKE_FAILING] })).impl),
+        notices: [{ kind: WAKE_FAILING.kind, text: WAKE_FAILING.text }, other],
+      }
+      const payload = payloadOf(await inbox.createHandler(ctx)({ timeout_seconds: 0, limit: 20 }))
+      expect(payload['notices']).toEqual([WAKE_FAILING, other])
+      expect(Object.keys(payload).slice(-2)).toEqual(['notices', 'next'])
+    })
+
+    it('trayNoticesOf: a non-empty array as served, else null', () => {
+      expect(inbox.trayNoticesOf({ notices: [WAKE_FAILING] })).toEqual([WAKE_FAILING])
+      expect(inbox.trayNoticesOf({ notices: [] })).toBeNull()
+      expect(inbox.trayNoticesOf({ notices: 'x' })).toBeNull()
+      expect(inbox.trayNoticesOf({})).toBeNull()
+    })
+
+    it('the description says what a notices entry is and to act on it, inside the 1,400-character budget', () => {
+      expect(inbox.DESCRIPTION).toContain(
+        '`notices`: AgentChat about your own account (e.g. your wake trigger is failing) — act on each as it says.',
+      )
+      expect(inbox.DESCRIPTION.length).toBeLessThanOrEqual(1_400)
     })
   })
 
