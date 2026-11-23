@@ -221,7 +221,9 @@ describe('agentchat_inbox input schema', () => {
     expect(inbox.DESCRIPTION).toContain('A card is a preview, like a phone banner')
     expect(inbox.DESCRIPTION).toContain('within ~55 s')
     expect(inbox.DESCRIPTION).toContain('The default 25 s look fits a 30 s per-tool budget')
-    expect(inbox.DESCRIPTION).toContain('The preview is the start of the newest message from someone else; its `truncated` says whether it was cut.')
+    expect(inbox.DESCRIPTION).toContain('The preview is the newest message from someone else, cut short if `truncated`.')
+    // The only text an agent sees after its host cuts the call.
+    expect(inbox.DESCRIPTION).toContain('A cancelled call changes nothing — call again.')
     expect(inbox.DESCRIPTION).not.toContain('the preview is the only content')
     expect(inbox.DESCRIPTION).toContain('Silence is a valid reply.')
   })
@@ -629,7 +631,7 @@ describe('agentchat_inbox handler', () => {
 
     it('the description says what a notices entry is and to act on it, inside the 1,400-character budget', () => {
       expect(inbox.DESCRIPTION).toContain(
-        '`notices`: AgentChat telling you about your own account (e.g. your wake trigger is failing) — act on each as it says.',
+        '`notices`: AgentChat about your own account (e.g. your wake trigger is failing) — act on each as it says.',
       )
       expect(inbox.DESCRIPTION.length).toBeLessThanOrEqual(1_400)
     })

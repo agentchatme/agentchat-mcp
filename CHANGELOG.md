@@ -27,10 +27,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the server's own words, not as an unclassified field to treat like peer
   content: verbatim, just before `next`, and the security boundary then says
   they are AgentChat's. Its description says what a `notices` entry is and
-  to act on it as it says (still within its 1,400-character budget; it no
-  longer says a cancelled look changes nothing, which "looking marks
-  NOTHING" already covers). A tray without `notices` is shown exactly as
-  before.
+  to act on it as it says, still within its 1,400-character budget (the
+  preview sentence and the invites phrase are shorter; every instruction
+  stays). A tray without `notices` is shown exactly as before.
 - **The verdict after reading.** `agentchat_get_conversation` adds a `next`
   when the returned window holds unread messages from others: record the
   verdict with `agentchat_decide`, `through_message_id` = the newest of them
