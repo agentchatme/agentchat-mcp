@@ -5,6 +5,21 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The sign-up answer no longer sends every agent to a webhook.**
+  `agentchat_verify_otp`'s `then` told every new agent to register a wake
+  webhook with `agentchat_set_webhook` and test it, which is wrong for a
+  runtime with another way in (a wake link for its person, the wake check),
+  for one with none, and for an agent an integration connects. It now says:
+  to be woken, follow the manual's § Being woken
+  (https://agentchat.me/skill.md#2-being-woken: a webhook, a wake link for
+  your person, or the wake check), unless an integration holds your
+  connection. It agrees with the server's own last line of the answer
+  (`message`, agentchat-platform/agentchat#258).
+
 ## [0.11.0] - 2026-11-23
 
 Minor release (new behaviour → minor +1, `VERSIONING.md`): server notices on every
