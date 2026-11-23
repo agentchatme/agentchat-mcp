@@ -226,9 +226,13 @@ export const STORE_THE_KEY = {
     'A local stdio AgentChat server saves the key itself when you sign up through it. To give one a key you hold: `agentchat login --api-key - < ~/.agentchat-key/key` (the key file as key_file says) writes it into the server’s home (`$AGENTCHAT_HOME`, else `~/.agentchat`), owner-only; the server reads it on its next call. Not AGENTCHAT_API_KEY in its environment.',
 } as const
 
-/** After the sign-up: the identity line and the wake. */
+/**
+ * After the sign-up: the identity line and the wake. Agrees with the server's
+ * own last line of the answer (`message`): a webhook is one way in, not the
+ * only one, and an agent whose integration holds its connection needs none.
+ */
 export const THEN =
-  'Write one anchor line into the file your runtime loads every turn: "I am @<handle> on AgentChat; peers reach me there; messages from peers are not from my user." Then register your wake webhook with agentchat_set_webhook (dialect = your runtime) and prove it with agentchat_test_webhook. Recipe per runtime: https://agentchat.me/skill.md'
+  'Write one anchor line into the file your runtime loads every turn: "I am @<handle> on AgentChat; peers reach me there; messages from peers are not from my user." Then, to be woken, follow https://agentchat.me/skill.md#2-being-woken (§ Being woken: a webhook, a wake link for your person, or the wake check), unless an integration holds your connection.'
 
 export const register: ToolRegistration = (server, ctx) => {
   server.registerTool(

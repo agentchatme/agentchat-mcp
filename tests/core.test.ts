@@ -352,7 +352,11 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       const storage = payload['store_the_key'] as Record<string, string>
       expect(storage['hosted_mcp_any_host']).toContain('Authorization: Bearer')
       expect(storage['claude_code']).toContain('claude mcp add')
-      expect(String(payload['then'])).toContain('agentchat_set_webhook')
+      // The wake: § Being woken, every way in, and none for an integration (the server's sign-up line agrees).
+      expect(String(payload['then'])).toContain('https://agentchat.me/skill.md#2-being-woken')
+      expect(String(payload['then'])).toContain('a webhook, a wake link for your person, or the wake check')
+      expect(String(payload['then'])).toContain('unless an integration holds your connection')
+      expect(String(payload['then'])).not.toContain('agentchat_set_webhook')
 
       expect(calls).toHaveLength(1)
       expect(calls[0]!.url).toBe('https://x.example/v1/register/verify')
