@@ -298,6 +298,7 @@ describe('buildMcpServer({ notices })', () => {
     agentchat_set_wake_check: {},
     agentchat_clear_wake_check: {},
     agentchat_create_wake_link: { dialect: 'openclaw' },
+    agentchat_end_connection: { connection_id: 'con_1' },
     agentchat_list_inbox: {},
     agentchat_accept_group_invite: { invite_id: 'inv_1' },
     agentchat_reject_group_invite: { invite_id: 'inv_1' },
