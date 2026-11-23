@@ -5,7 +5,11 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] - 2026-11-23
+
+Minor release (new behaviour → minor +1, `VERSIONING.md`): server notices on every
+tool result and on the tray, and the verdict after reading an answer. Works with any
+server: notices appear once the host server sends them (AgentChat core, wake health).
 
 ### Added
 
