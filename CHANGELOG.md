@@ -13,7 +13,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   a sign-in through which a runtime acts as the agent (connector sign-in,
   contract v1), by its `connection_id` from `agentchat_get_my_status`
   (`connections`). `DELETE /v1/agents/me/connections/{id}`: the answer is
-  the server's `{ ended: true, id }` (its sentence instead, if it sends one);
+  the server's `{ ended: true, id }` as it came;
   `CONNECTION_NOT_FOUND` keeps the server's code and message, and any other
   404 says nothing was changed. Destructive (only the person can sign the
   runtime in again), idempotent. Listed for every identity: an agent signed

@@ -9,33 +9,25 @@ import { fetchStub, firstText, json, KEY, makeRealCtx, pathOf, payloadOf } from 
 // ─── Connections: see them in your status, end one by its id ───────────────
 //
 // agentchat_end_connection (DELETE /v1/agents/me/connections/{id}) answers
-// with the server's `message` exactly when it sends one; its worded
-// refusals keep the server's code and message; any other 404 says nothing
-// was changed. agentchat_get_my_status passes the server's `connections`
+// with the server's `{ ended: true, id }` as it came; its worded refusals
+// keep the server's code and message; any other 404 says nothing was
+// changed. agentchat_get_my_status passes the server's `connections`
 // through untouched. A real SDK client over a stubbed fetch (with the
 // temporary stand-in for client.connections until the SDK ships it), so the
 // wire and the SDK's error pipeline are the real ones.
 
 const ID = 'con_0123456789abcdefABCDEF'
-const ENDED = 'Connection ended. Muse (muse.ai) is signed out of @scout.'
 
 describe('agentchat_end_connection', () => {
-  it('DELETEs /v1/agents/me/connections/{id} with the key; a server that words the answer is shown its sentence exactly', async () => {
-    const { impl, calls } = fetchStub(() => json(200, { ended: true, id: ID, message: ENDED }))
+  it('DELETEs /v1/agents/me/connections/{id} once, with the key, and answers with the server’s { ended: true, id } as it came', async () => {
+    const { impl, calls } = fetchStub(() => json(200, { ended: true, id: ID }))
     const result = await endConnection.createHandler(makeRealCtx(impl))({ connection_id: ID })
     expect(result.isError).toBeFalsy()
-    expect(result.content).toEqual([{ type: 'text', text: ENDED }])
+    expect(payloadOf(result)).toEqual({ ended: true, id: ID })
     expect(calls).toHaveLength(1)
     expect(calls[0]!.method).toBe('DELETE')
     expect(pathOf(calls[0]!)).toBe(`/v1/agents/me/connections/${ID}`)
     expect(calls[0]!.headers.get('authorization')).toBe(`Bearer ${KEY}`)
-  })
-
-  it('the contract answer, { ended: true, id }, as it came', async () => {
-    const { impl } = fetchStub(() => json(200, { ended: true, id: ID }))
-    const result = await endConnection.createHandler(makeRealCtx(impl))({ connection_id: ID })
-    expect(result.isError).toBeFalsy()
-    expect(payloadOf(result)).toEqual({ ended: true, id: ID })
   })
 
   it('an empty 2xx: ended, with the id asked for and nothing invented', async () => {

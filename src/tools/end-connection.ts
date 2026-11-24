@@ -2,7 +2,7 @@ import { DEFAULT_RETRY_POLICY, NotFoundError } from 'agentchatme'
 import { z } from 'zod'
 import { RenderedServerError } from '../errors.js'
 import { DESTRUCTIVE } from './_annotations.js'
-import { connectionsOf } from './_connections-sdk.js'
+import { connectionsOf, type EndConnectionResult } from './_connections-sdk.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, requireRestAuth, rethrowServerText } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -17,15 +17,13 @@ import type { ToolContext, ToolRegistration } from './_types.js'
 // /v1/agents/me/connections/{id}. agentchat_get_my_status lists them
 // (`connections`).
 //
-// The server answers `{ ended: true, id }` (shown as it came), or 404
+// The server answers exactly `{ ended: true, id }`, shown as it came, or 404
 // CONNECTION_NOT_FOUND for an id that is not one of your connections (also
-// what a retry sees after an end whose answer was lost). A `message`, if a
-// server sends one, is the whole tool answer, and a refusal it words
-// (CONNECTION_NOT_FOUND, the wait on a 429) keeps the server's code and
-// message. A 404 with any other code
-// means no such connection of yours, or a server without the route (older,
-// or the feature not on): nothing was changed either way, and the tool says
-// so instead of the generic not-found text.
+// what a retry sees after an end whose answer was lost). A refusal the
+// server words (CONNECTION_NOT_FOUND, the wait on a 429) keeps its code and
+// message. A 404 with any other code means a server without the route
+// (older, or the feature not on): nothing was changed, and the tool says so
+// instead of the generic not-found text.
 
 export const NAME = 'agentchat_end_connection'
 
@@ -70,7 +68,7 @@ export function createHandler(ctx: ToolContext) {
       async () => {
         const rest = requireRestAuth(ctx)
         const connections = connectionsOf(engineClient(rest, DEFAULT_RETRY_POLICY))
-        let answer: unknown
+        let answer: EndConnectionResult | undefined
         try {
           // DELETE converges: the SDK's default retry policy. A retry after an
           // end whose answer was lost finds no such connection (404), which is
@@ -82,11 +80,11 @@ export function createHandler(ctx: ToolContext) {
           }
           rethrowServerText(err, SERVER_TEXT_CODES)
         }
-        const body = typeof answer === 'object' && answer !== null ? (answer as Record<string, unknown>) : {}
-        const message = body['message']
-        if (typeof message === 'string' && message.trim() !== '') return message
-        // A 2xx without its sentence (an empty body is a normal DELETE answer).
-        return { type: 'json', value: { ended: true, id: connection_id, ...body } }
+        // The server's `{ ended: true, id }` as it came. A 2xx with no body
+        // (never sent by this route, but a normal DELETE answer) still ended
+        // the connection asked for.
+        const value = typeof answer === 'object' && answer !== null ? answer : { ended: true, id: connection_id }
+        return { type: 'json', value }
       },
     )
 }

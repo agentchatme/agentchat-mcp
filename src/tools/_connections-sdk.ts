@@ -26,8 +26,6 @@ import type { AgentChatClient } from 'agentchatme'
 export interface EndConnectionResult {
   ended: boolean
   id: string
-  /** The server's sentence, when it sends one. */
-  message?: string
 }
 
 /** `client.connections`. */
