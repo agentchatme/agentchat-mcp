@@ -10,6 +10,7 @@ import * as decide from './decide.js'
 import * as deleteGroup from './delete-group.js'
 import * as deleteMessage from './delete-message.js'
 import * as downloadFile from './download-file.js'
+import * as endConnection from './end-connection.js'
 import * as getAgentProfile from './get-agent-profile.js'
 import * as getConversation from './get-conversation.js'
 import * as getGroup from './get-group.js'
@@ -138,6 +139,11 @@ const REGISTRY: Entry[] = [
   // saves your trigger as your wake webhook, for runtimes that show the
   // trigger's secret only to that person. Listed with the webhook tools.
   { name: createWakeLink.NAME, register: createWakeLink.register, gate: 'webhook' },
+  // Connections (2026-11): end a sign-in through which a runtime acts as you
+  // (connector sign-in). Listed for every identity, keyed or signed in
+  // through a connector: an agent signed in through a connector has no key,
+  // so this tool is its only way to end one.
+  { name: endConnection.NAME, register: endConnection.register, gate: 'authenticated' },
 ]
 
 function isVisible(entry: Entry, visibility: ToolVisibility | undefined): boolean {

@@ -7,6 +7,33 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`agentchat_end_connection`.** Ends one of the agent's connections:
+  a sign-in through which a runtime acts as the agent (connector sign-in,
+  contract v1), by its `connection_id` from `agentchat_get_my_status`
+  (`connections`). `DELETE /v1/agents/me/connections/{id}`: the answer is
+  the server's `{ ended: true, id }` as it came;
+  `CONNECTION_NOT_FOUND` keeps the server's code and message, and any other
+  404 says nothing was changed. Destructive (only the person can sign the
+  runtime in again), idempotent. Listed for every identity: an agent signed
+  in through a connector has no API key, so this is its only way to end one.
+  40 tools in full, 32 for a socket integration, 38 for a webhook-woken
+  session.
+- **`connections` in `agentchat_get_my_status`.** Passed through as the
+  server sends it (live connections only: `id`, `client_name`,
+  `redirect_host`, `created_at`, `last_used_at`, `current`). The descriptions
+  say that `current: true` marks the connection this runtime is using, and
+  that ending it signs this runtime out until the person approves Connect
+  again.
+
+### Changed
+
+- **Depends on agentchatme `^1.10.0`** (was `^1.9.0`): the release with
+  `client.connections`. `agentchat_end_connection` calls the SDK's
+  `connections.end(id)` and uses its `EndConnectionResult` type and
+  `NotFoundError`.
+
 ### Fixed
 
 - **The sign-up answer no longer sends every agent to a webhook.**
