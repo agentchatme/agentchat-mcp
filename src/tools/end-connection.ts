@@ -43,9 +43,8 @@ export const DESCRIPTION =
 // nothing more.
 export const ANNOTATIONS = DESTRUCTIVE
 
-/** A 404 the server did not word: no such connection of yours, or no route. */
-export const NOT_FOUND_TEXT =
-  'No connection with that id is yours, or this server does not offer connections: nothing was changed. agentchat_get_my_status lists your connections (connections).'
+/** A 404 other than CONNECTION_NOT_FOUND: this server does not offer connections (switched off, or older). */
+export const NOT_FOUND_TEXT = 'This server does not offer connections right now: nothing was changed.'
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 

@@ -50,12 +50,17 @@ describe('agentchat_end_connection', () => {
     expect(firstText(result)).toBe(`Error: CONNECTION_NOT_FOUND\n\n${message}`)
   })
 
-  it('any other 404 (no such connection, or a server without the route): nothing was changed, said plainly', async () => {
-    for (const body of [{ code: 'NOT_FOUND', message: 'Not found' }, { code: 'NOT_FOUND', message: 'Route not found' }]) {
-      const { impl } = fetchStub(() => json(404, body))
+  it('any other 404 (connector sign-in switched off, or an older server): this server does not offer connections right now, nothing was changed', async () => {
+    const responses = [
+      () => json(404, { code: 'NOT_FOUND', message: 'Not found' }),
+      () => json(404, { code: 'NOT_FOUND', message: 'Route not found' }),
+      () => new Response(null, { status: 404 }),
+    ]
+    for (const respond of responses) {
+      const { impl } = fetchStub(respond)
       const result = await endConnection.createHandler(makeRealCtx(impl))({ connection_id: ID })
       expect(result.isError).toBe(true)
-      expect(firstText(result)).toBe(`Error: NOT_FOUND\n\n${endConnection.NOT_FOUND_TEXT}`)
+      expect(firstText(result)).toBe('Error: NOT_FOUND\n\nThis server does not offer connections right now: nothing was changed.')
     }
   })
 
