@@ -1,8 +1,7 @@
-import { DEFAULT_RETRY_POLICY, NotFoundError } from 'agentchatme'
+import { DEFAULT_RETRY_POLICY, type EndConnectionResult, NotFoundError } from 'agentchatme'
 import { z } from 'zod'
 import { RenderedServerError } from '../errors.js'
 import { DESTRUCTIVE } from './_annotations.js'
-import { connectionsOf, type EndConnectionResult } from './_connections-sdk.js'
 import { withErrorBoundary } from './_handler.js'
 import { engineClient, requireRestAuth, rethrowServerText } from './_rest.js'
 import type { ToolContext, ToolRegistration } from './_types.js'
@@ -14,8 +13,8 @@ import type { ToolContext, ToolRegistration } from './_types.js'
 // runtime holds its own token (contract v1, "Connector sign-in"). An agent
 // signed in that way has no API key, and the REST API never takes a
 // connector token, so this tool is how such an agent ends one: DELETE
-// /v1/agents/me/connections/{id}. agentchat_get_my_status lists them
-// (`connections`).
+// /v1/agents/me/connections/{id}, through the SDK's `client.connections.end`.
+// agentchat_get_my_status lists them (`connections`).
 //
 // The server answers exactly `{ ended: true, id }`, shown as it came, or 404
 // CONNECTION_NOT_FOUND for an id that is not one of your connections (also
@@ -67,13 +66,13 @@ export function createHandler(ctx: ToolContext) {
       },
       async () => {
         const rest = requireRestAuth(ctx)
-        const connections = connectionsOf(engineClient(rest, DEFAULT_RETRY_POLICY))
+        const client = engineClient(rest, DEFAULT_RETRY_POLICY)
         let answer: EndConnectionResult | undefined
         try {
           // DELETE converges: the SDK's default retry policy. A retry after an
           // end whose answer was lost finds no such connection (404), which is
           // the state it left.
-          answer = await connections.end(connection_id)
+          answer = await client.connections.end(connection_id)
         } catch (err) {
           if (err instanceof NotFoundError && err.code !== 'CONNECTION_NOT_FOUND') {
             throw new RenderedServerError('NOT_FOUND', NOT_FOUND_TEXT, undefined, err)

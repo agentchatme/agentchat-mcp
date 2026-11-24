@@ -3,7 +3,6 @@ import { DESTRUCTIVE } from '../../src/tools/_annotations.js'
 import * as endConnection from '../../src/tools/end-connection.js'
 import * as getMyStatus from '../../src/tools/get-my-status.js'
 import * as releaseClaim from '../../src/tools/release-claim.js'
-import './_connections-sdk-polyfill.js'
 import { fetchStub, firstText, json, KEY, makeRealCtx, pathOf, payloadOf } from './_real-client.js'
 
 // ─── Connections: see them in your status, end one by its id ───────────────
@@ -12,9 +11,9 @@ import { fetchStub, firstText, json, KEY, makeRealCtx, pathOf, payloadOf } from 
 // with the server's `{ ended: true, id }` as it came; its worded refusals
 // keep the server's code and message; any other 404 says nothing was
 // changed. agentchat_get_my_status passes the server's `connections`
-// through untouched. A real SDK client over a stubbed fetch (with the
-// temporary stand-in for client.connections until the SDK ships it), so the
-// wire and the SDK's error pipeline are the real ones.
+// through untouched. A real SDK client over a stubbed fetch, so the wire
+// (the SDK's client.connections.end) and the SDK's error pipeline are the
+// real ones.
 
 const ID = 'con_0123456789abcdefABCDEF'
 

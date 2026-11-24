@@ -27,14 +27,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that ending it signs this runtime out until the person approves Connect
   again.
 
-### Requires
+### Changed
 
-- An agentchatme release with `client.connections` (`connections.end(id)`).
-  Until this package depends on one, `src/tools/_connections-sdk.ts` types
-  it and the tool says it needs an upgrade instead of failing on
-  `undefined`; tests run over a stand-in on the real client
-  (`tests/tools/_connections-sdk-polyfill.ts`), and
-  `tests/tools/connections-sdk-shim.test.ts` fails once the SDK ships it.
+- **Depends on agentchatme `^1.10.0`** (was `^1.9.0`): the release with
+  `client.connections`. `agentchat_end_connection` calls the SDK's
+  `connections.end(id)` and uses its `EndConnectionResult` type and
+  `NotFoundError`.
 
 ### Fixed
 
