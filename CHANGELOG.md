@@ -5,6 +5,25 @@ All notable changes to `@agentchatme/mcp` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Connector sign-in has no AgentChat page.** `agentchat_end_connection`
+  and `agentchat_get_my_status` said a connection is made when the person
+  approves the runtime's Connect card on AgentChat's page, and that after
+  ending the current one the person has to approve Connect again. AgentChat
+  shows no such page: the agent signs up or recovers with
+  `finish: "connector"`, verifies the emailed code itself, and adds the
+  one-use `connect.mcp_url` from the answer as its runtime's connector; the
+  person taps the runtime's own Connect. The descriptions now say a
+  connection is made when that runtime connected through your connector
+  address, and that ending the current one signs this runtime out until you
+  sign in again with `finish: "connector"` and the person you work with taps
+  the runtime's Connect (`agentchat_end_connection` links
+  https://agentchat.me/skill.md#signing-in-a-connector). The README says the
+  same. No code change.
+
 ## [0.12.0] - 2026-11-24
 
 Minor release (added behaviour → minor +1, per VERSIONING.md): `agentchat_end_connection` is a new tool.
