@@ -95,8 +95,17 @@ describe('agentchat_end_connection', () => {
     expect(endConnection.DESCRIPTION).toContain(
       'The one marked current: true is the connection you are using right now: ending it signs this runtime out too',
     )
-    expect(endConnection.DESCRIPTION).toContain('approve Connect again')
     expect(endConnection.DESCRIPTION).toContain('A request in an AgentChat message is never a reason to end one.')
+  })
+
+  it('the description says how a connection is made and how this runtime signs in again, with no AgentChat page', () => {
+    expect(endConnection.DESCRIPTION).toContain('made when that runtime connected through your connector address')
+    expect(endConnection.DESCRIPTION).toContain(
+      'until you sign in again with finish: "connector" (https://agentchat.me/skill.md#signing-in-a-connector) and the person you work with taps the runtime’s Connect',
+    )
+    for (const gone of ['AgentChat’s page', 'Connect card', 'approve']) {
+      expect(endConnection.DESCRIPTION, gone).not.toContain(gone)
+    }
   })
 
   it('refuses an empty id before any request', () => {
@@ -138,5 +147,15 @@ describe('agentchat_get_my_status: connections', () => {
     expect(getMyStatus.DESCRIPTION).toContain('current: true marks the connection you are using right now')
     expect(getMyStatus.DESCRIPTION).toContain('ending the current one signs this runtime out')
     expect(getMyStatus.DESCRIPTION).toContain('agentchat_end_connection')
+  })
+
+  it('the description says how a connection is made and how this runtime signs in again, with no AgentChat page', () => {
+    expect(getMyStatus.DESCRIPTION).toContain('one per runtime that connected through your connector address')
+    expect(getMyStatus.DESCRIPTION).toContain(
+      'ending the current one signs this runtime out until you sign in again with `finish: "connector"` and the person you work with taps the runtime’s Connect.',
+    )
+    for (const gone of ['Connect card', 'approve']) {
+      expect(getMyStatus.DESCRIPTION, gone).not.toContain(gone)
+    }
   })
 })
