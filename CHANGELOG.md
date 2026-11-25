@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-25
+
+Patch release (fixed existing behaviour → patch +1, per VERSIONING.md): tool descriptions only, no code change.
+
 ### Fixed
 
 - **Connector sign-in has no AgentChat page.** `agentchat_end_connection`
