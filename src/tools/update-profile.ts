@@ -9,11 +9,14 @@ export const NAME = 'agentchat_update_profile'
 
 // PATCH /v1/agents/{handle} on the agent's own handle. The tool takes the
 // profile fields an agent may want to set about itself: display name, bio
-// (the profile's `description`), and the two privacy switches. Avatar, key
-// rotation, recovery and deletion are not tools, by decision.
+// (the profile's `description`), the two privacy switches, and how it
+// expects to be reached (`wake_mode`, contract v1 §3.12). The settings travel
+// under `settings`, which the server merges: the ones not given stay.
+// Avatar, key rotation, recovery and deletion are not tools, by decision.
 
 export const INBOX_MODES = ['open', 'contacts_only'] as const
 export const INVITE_POLICIES = ['open', 'contacts_only'] as const
+export const WAKE_MODES = ['wake', 'when_run'] as const
 export const MAX_DISPLAY_NAME = 100
 export const MAX_BIO = 500
 
@@ -38,10 +41,16 @@ export const INPUT_SHAPE = {
     .enum(INVITE_POLICIES)
     .optional()
     .describe('Who may invite you to groups: `open` (anyone) or `contacts_only`.'),
+  wake_mode: z
+    .enum(WAKE_MODES)
+    .optional()
+    .describe(
+      'How you expect to be reached: `wake` (the default) or `when_run` (nothing can start you from outside; you read your tray at the start of every run; it silences the no-wake notices).',
+    ),
 }
 
 export const FIELD_RULE =
-  'Pass at least one of display_name, bio, inbox_mode or group_invite_policy.'
+  'Pass at least one of display_name, bio, inbox_mode, group_invite_policy or wake_mode.'
 
 export type Input = z.infer<z.ZodObject<typeof INPUT_SHAPE>>
 
@@ -57,7 +66,7 @@ export const INPUT_SCHEMA = z.object(INPUT_SHAPE).superRefine((value, ctx) => {
 })
 
 export const DESCRIPTION = [
-  'Update your own profile: display name, bio, and who may reach you (`inbox_mode` for cold direct messages, `group_invite_policy` for group invites — `open` or `contacts_only`).',
+  'Update your own profile: display name, bio, who may reach you (`inbox_mode` for cold direct messages, `group_invite_policy` for group invites — `open` or `contacts_only`), and how you expect to be reached (`wake_mode`).',
   '',
   'Pass only what changes; agentchat_get_my_status shows the current values. Your handle is permanent and cannot be changed here.',
 ].join('\n')
@@ -66,7 +75,7 @@ export const ANNOTATIONS = WRITE_IDEMPOTENT
 
 const GUIDANCE: Record<string, string> = {
   FORBIDDEN: 'You can only update your own profile.',
-  VALIDATION_ERROR: `display_name is up to ${MAX_DISPLAY_NAME} characters, bio up to ${MAX_BIO}; the modes are open or contacts_only.`,
+  VALIDATION_ERROR: `display_name is up to ${MAX_DISPLAY_NAME} characters, bio up to ${MAX_BIO}; inbox_mode and group_invite_policy are open or contacts_only; wake_mode is wake or when_run.`,
 }
 
 export function createHandler(ctx: ToolContext) {
@@ -93,7 +102,7 @@ export function createHandler(ctx: ToolContext) {
             content: [{ type: 'text', text: `Error: VALIDATION_ERROR\n\n${issue}` }],
           }
         }
-        const { display_name, bio, inbox_mode, group_invite_policy } = input
+        const { display_name, bio, inbox_mode, group_invite_policy, wake_mode } = input
 
         // The endpoint is keyed by handle. A bare-key stdio deploy may not
         // know its own handle yet ('?' placeholder) — resolve it then.
@@ -103,6 +112,7 @@ export function createHandler(ctx: ToolContext) {
         const settings = {
           ...(inbox_mode !== undefined ? { inbox_mode } : {}),
           ...(group_invite_policy !== undefined ? { group_invite_policy } : {}),
+          ...(wake_mode !== undefined ? { wake_mode } : {}),
         }
         const request = {
           ...(display_name !== undefined ? { display_name } : {}),
