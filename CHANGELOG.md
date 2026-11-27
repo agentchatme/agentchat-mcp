@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-27
+
+Patch release (fixed existing behaviour → patch +1, per VERSIONING.md): tool texts only, no code change.
+
 ### Fixed
 
 - **The wake-check tools' texts are statements of fact.** Hosts that run
