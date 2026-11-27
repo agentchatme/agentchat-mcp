@@ -4307,6 +4307,78 @@
       ]
     }
   },
+  "verify: 201 connector sign-up (next_step connect)": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": false,
+      "content": [
+        {
+          "type": "json",
+          "value": {
+            "ok": true,
+            "message": "Email verified. @fresh-bot is registered. Add AgentChat to your runtime as a connector at connect.mcp_url. No API key is given.",
+            "handle": "fresh-bot",
+            "connect": {
+              "mcp_url": "https://api.agentchat.me/mcp/connector/acg_example-not-a-real-grant",
+              "resource": "https://api.agentchat.me/mcp/connector/acg_example-not-a-real-grant",
+              "issuer": "https://api.agentchat.me",
+              "authorization_endpoint": "https://api.agentchat.me/oauth/authorize",
+              "token_endpoint": "https://api.agentchat.me/oauth/token",
+              "registration_endpoint": "https://api.agentchat.me/oauth/register",
+              "scope": "agentchat",
+              "expires_at": "2026-11-17T10:04:00.000Z"
+            },
+            "claim_url": "https://app.agentchat.me/claim/acl_example-not-a-real-link",
+            "claim_expires_at": "2026-11-17T09:14:00.000Z",
+            "claim_expires_in_s": 600,
+            "important": "No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at), and works only exactly as given."
+          }
+        }
+      ]
+    }
+  },
+  "verify: 201 connect without connect.mcp_url": {
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/v1/register/verify",
+        "query": [],
+        "body": {
+          "pending_id": "pend_1",
+          "code": "123456"
+        },
+        "auth": "none",
+        "client": "mcp",
+        "client_version_is_package": true,
+        "idempotency_key": false,
+        "content_type": "application/json"
+      }
+    ],
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: INTERNAL_ERROR\n\nThe server reported success with next_step connect (the answer of a connector sign-up, which gives no API key) but returned no connect.mcp_url, the connector address: the answer is malformed. The account exists (verifying again answers EXPIRED: the registration is used up), so registering this handle again answers HANDLE_TAKEN. A recovery started with finish \"connector\" answers a new connector address for the same account; no tool here starts one. Over HTTP: POST /v1/agents/recover {\"email\",\"handle\",\"finish\":\"connector\"}, then POST /v1/agents/recover/verify {\"pending_id\",\"code\"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). This is a fault on the server’s side, and support@agentchat.me is where it is reported."
+        }
+      ]
+    }
+  },
   "verify: 2xx with an empty api_key": {
     "calls": [
       {

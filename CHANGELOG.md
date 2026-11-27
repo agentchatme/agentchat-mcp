@@ -7,6 +7,32 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **`agentchat_verify_otp` shows a connector sign-up's answer as one.** A
+  sign-up started with `finish: "connector"` (over HTTP:
+  `agentchat_register` starts none) answers the right code with
+  `next_step: "connect"`, a `connect` block and the server's `message`, and
+  never an API key. The tool read that as a success whose key was lost ("the
+  account exists with a key you do not hold … recover its key"), which sent
+  the agent down the wrong path, and the connector address never reached
+  it. It now checks `next_step` first and returns the server's `message` as
+  it is, the handle, `connect` as returned (`mcp_url` exactly as given, never
+  rebuilt) and any claim-link fields, with one line of fact in `important`:
+  no API key comes with this sign-up, the next step is a connector at
+  `connect.mcp_url`, and that address signs in once, until
+  `connect.expires_at`, and works only exactly as given. A connect answer
+  without `connect.mcp_url` or without the handle is reported as malformed,
+  with no key claimed. The text for a `done` answer without a key is
+  unchanged. A 2xx answer is judged as it came even when the SDK throws on
+  it (`watchAnswers` keeps the last 2xx body): agentchatme 1.10 leaves
+  `connect` out of its verify result, and 1.11 throws `ConnectorSignupError`
+  for a connect answer and a plain `Error` for a `done` answer without a
+  key; both versions give the same result, the lost-key text included. Tool
+  names and input schemas are unchanged; the description gains two
+  sentences on the connect answer, and its lost-key line now reads "an
+  answer with neither a key nor connect".
+
 ## [0.12.2] - 2026-11-27
 
 Patch release (fixed existing behaviour → patch +1, per VERSIONING.md): tool texts only, no code change.

@@ -84,11 +84,12 @@ export function requireRestAuth(ctx: ToolContext): AuthenticatedRest {
   return { apiBase, apiKey, fetchImpl }
 }
 
-function isJsonNull(text: string): boolean {
+/** `text` parsed as JSON, or undefined when it is not JSON. */
+function jsonOf(text: string): unknown {
   try {
-    return JSON.parse(text) === null
+    return JSON.parse(text) as unknown
   } catch {
-    return false
+    return undefined
   }
 }
 
@@ -107,13 +108,20 @@ function isJsonNull(text: string): boolean {
  * before) and every read failure (a connection cut mid-body rejects with
  * its own error, and an unfinished body is never counted as empty) stay
  * exactly what they were. Other statuses pass through untouched.
+ *
+ * `answeredBody` is that same last 2xx body as JSON, once it has ended
+ * (undefined before that, for any other answer, and for a body that is not
+ * JSON), for a call whose SDK result leaves out a field the answer carries:
+ * agentchat_verify_otp reads a connector sign-up's answer from it.
  */
 export function watchAnswers(
   fetchImpl: typeof fetch,
-): { fetch: typeof fetch; answeredEmpty: () => boolean } {
+): { fetch: typeof fetch; answeredEmpty: () => boolean; answeredBody: () => unknown } {
   let answeredEmpty = false
+  let answeredBody: unknown = undefined
   const watched = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     answeredEmpty = false
+    answeredBody = undefined
     const res = await fetchImpl(input, init)
     if (res.status < 200 || res.status >= 300) return res
     if (res.body === null) {
@@ -129,7 +137,9 @@ export function watchAnswers(
       },
       flush() {
         text += decoder.decode()
-        answeredEmpty = text === '' || isJsonNull(text)
+        const body = jsonOf(text)
+        answeredEmpty = text === '' || body === null
+        answeredBody = body
       },
     })
     return new Response(res.body.pipeThrough(seeing), {
@@ -138,7 +148,7 @@ export function watchAnswers(
       headers: res.headers,
     })
   }) as typeof fetch
-  return { fetch: watched, answeredEmpty: () => answeredEmpty }
+  return { fetch: watched, answeredEmpty: () => answeredEmpty, answeredBody: () => answeredBody }
 }
 
 /**
