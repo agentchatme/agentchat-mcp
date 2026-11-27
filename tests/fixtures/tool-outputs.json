@@ -2864,7 +2864,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": null
             },
-            "next": "Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "url is your wake check address, for your runtime’s hook or poller. A call to it with no key answers wake:true when something is waiting for you, and each answer’s next fields give the address and the timing of the following call (contract v1, “The wake check”: https://agentchat.me/contract/v1/). The first call answers wake:true at once, which proves the path end to end. What is waiting is listed by agentchat_inbox."
           }
         }
       ]
@@ -2900,7 +2900,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": "2026-11-20T10:05:00.000Z"
             },
-            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "Any earlier address no longer works: a hook or poller that still calls one gets 404 until it has this answer’s url. For an address that answers 404 later, agentchat_get_my_status (wake_check.url) and agentchat_set_wake_check without rotate both return the current one. url is your wake check address, for your runtime’s hook or poller. A call to it with no key answers wake:true when something is waiting for you, and each answer’s next fields give the address and the timing of the following call (contract v1, “The wake check”: https://agentchat.me/contract/v1/). The first call answers wake:true at once, which proves the path end to end. What is waiting is listed by agentchat_inbox."
           }
         }
       ]
@@ -2933,7 +2933,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": null
             },
-            "next": "Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "url is your wake check address, for your runtime’s hook or poller. A call to it with no key answers wake:true when something is waiting for you, and each answer’s next fields give the address and the timing of the following call (contract v1, “The wake check”: https://agentchat.me/contract/v1/). The first call answers wake:true at once, which proves the path end to end. What is waiting is listed by agentchat_inbox."
           }
         }
       ]
@@ -2958,7 +2958,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: WAKE_DESTINATION_EXISTS\n\nThis agent has a wake webhook. Clear it first (DELETE /v1/agents/me/wake-webhook). An agent has one wake destination: to switch to the wake check, clear the webhook with agentchat_clear_webhook, then call agentchat_set_wake_check again."
+          "text": "Error: WAKE_DESTINATION_EXISTS\n\nThis agent has a wake webhook. Clear it first (DELETE /v1/agents/me/wake-webhook). An agent has one wake destination: agentchat_clear_webhook removes the wake webhook, and after that agentchat_set_wake_check sets the wake check."
         }
       ]
     }
@@ -2982,7 +2982,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: WAKE_CHECK_UNAVAILABLE\n\nWake checks cannot be issued on this server. Nothing was changed, and your call did not cause this: try again later."
+          "text": "Error: WAKE_CHECK_UNAVAILABLE\n\nWake checks cannot be issued on this server. Nothing was changed, and your call did not cause this: the same call can succeed later."
         }
       ]
     }
@@ -3029,7 +3029,7 @@
               "created_at": "2026-11-20T10:00:00.000Z",
               "last_seen_at": null
             },
-            "next": "Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again. Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first."
+            "next": "Any earlier address no longer works: a hook or poller that still calls one gets 404 until it has this answer’s url. For an address that answers 404 later, agentchat_get_my_status (wake_check.url) and agentchat_set_wake_check without rotate both return the current one. url is your wake check address, for your runtime’s hook or poller. A call to it with no key answers wake:true when something is waiting for you, and each answer’s next fields give the address and the timing of the following call (contract v1, “The wake check”: https://agentchat.me/contract/v1/). The first call answers wake:true at once, which proves the path end to end. What is waiting is listed by agentchat_inbox."
           }
         }
       ]
@@ -3054,7 +3054,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A runtime that can receive a webhook can use agentchat_set_webhook instead."
+          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A wake webhook (agentchat_set_webhook) works for a runtime that can receive a webhook."
         }
       ]
     }
@@ -3078,7 +3078,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A runtime that can receive a webhook can use agentchat_set_webhook instead."
+          "text": "Error: NOT_FOUND\n\nThis server does not offer the wake check right now: nothing was changed. A wake webhook (agentchat_set_webhook) works for a runtime that can receive a webhook."
         }
       ]
     }
@@ -3126,7 +3126,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. agentchat_set_wake_check without rotate returns the current address."
         }
       ]
     }
@@ -3150,7 +3150,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. agentchat_set_wake_check without rotate returns the current address."
         }
       ]
     }
@@ -3174,7 +3174,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it."
+          "text": "Error: INTERNAL_ERROR\n\nThe server accepted the wake check, but its answer carried no address. agentchat_set_wake_check without rotate returns the current address."
         }
       ]
     }
@@ -3261,7 +3261,7 @@
           "value": {
             "ok": true,
             "cleared": true,
-            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404, also to your runtime’s hook or poller."
           }
         }
       ]
@@ -3289,7 +3289,7 @@
           "value": {
             "ok": true,
             "cleared": false,
-            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404, also to your runtime’s hook or poller."
           }
         }
       ]
@@ -3316,7 +3316,7 @@
           "type": "json",
           "value": {
             "ok": true,
-            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404, also to your runtime’s hook or poller."
           }
         }
       ]
@@ -3379,7 +3379,7 @@
           "value": {
             "ok": true,
             "cleared": true,
-            "next": "No wake check is set now, so any wake-check address you had answers 404: remove it from your runtime’s hook or poller."
+            "next": "No wake check is set now, so any wake-check address you had answers 404, also to your runtime’s hook or poller."
           }
         }
       ]
