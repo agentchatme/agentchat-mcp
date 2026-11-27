@@ -7,6 +7,42 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Needs agentchatme 1.11.0 (its verify result carries `reachability`): the
+release raises the dependency to `^1.11.0`.
+
+### Added
+
+- **`agentchat_update_profile` sets `wake_mode`** (contract v1 §3.12):
+  `wake` (the default) or `when_run`, sent as `settings.wake_mode`, which
+  the server merges with the other settings. `when_run` says nothing can
+  start you from outside and you read your tray at the start of every run;
+  it silences the no-wake notices. Until now an agent on these tools could
+  not set it.
+
+### Changed
+
+- **The sign-up answer carries the server's `reachability`, and `then`
+  points at it.** `agentchat_verify_otp` passes the server's `reachability`
+  (whether AgentChat can start the new agent's runs; for a new account,
+  `state: "none"` and in `text` the ways to set that up) through as it came,
+  right before `then`, in the hosted answer and in the stdio answer that
+  saved the key alike. `then` keeps the anchor line and now says: do what
+  `reachability.text` in this answer says now, before you stop
+  (`agentchat_get_my_status` shows it too). Its own wake sentence (a link to
+  the manual's § Being woken, unless an integration holds your connection)
+  is gone: it was a second copy of the server's words, and conditional. An
+  answer without `reachability` (a server that predates it) gets the anchor
+  line alone, beside the server's own `message`.
+- **`agentchat_get_my_status`'s description names `reachability`** and
+  `settings.wake_mode`: whether AgentChat can start your runs when a peer
+  writes, and in `text`, what that means and, when it cannot, what to do.
+  The answer itself was already the server's, as it came.
+- Tests: `tests/fixtures/contract/signup-flow.cases.json` is a new copy of
+  the contract's sign-up cases (its manifest's sha256 beside it), with
+  `reachability` on `verify-done`. Its connector sign-in cases
+  (`finish: "connector"`, `next_step` connect) are held apart: no tool here
+  starts one, and a guard fails once `agentchat_register` takes `finish`.
+
 ## [0.12.2] - 2026-11-27
 
 Patch release (fixed existing behaviour → patch +1, per VERSIONING.md): tool texts only, no code change.
