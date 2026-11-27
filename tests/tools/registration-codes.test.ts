@@ -41,11 +41,20 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // The per-code guidance the tools carried before is kept only for a server
 // that sends no `next_step` (an older server); the contract's `legacy` cases
 // and the last part of this file hold that fallback.
+//
+// Connector sign-in (`finish: "connector"`: the right code signs a runtime in
+// and no key is given, `next_step` connect): no tool here starts one, since
+// agentchat_register takes no `finish`, but agentchat_verify_otp renders the
+// `connect` answer of a sign-up started over HTTP, so `verify-connector-done`
+// runs through it with the other tool cases, its text pinned. The rest (the
+// starts with `finish`, and recovery's connect answer, a call no tool here
+// makes) are set apart (CONNECTOR_CASES): their flows still read as the
+// contract says, and a guard fails once agentchat_register takes `finish`.
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
 type Kind = 'register' | 'verify' | 'recover' | 'recover_verify' | 'rotate_key' | 'rotate_key_verify'
-type Action = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop' | 'legacy'
+type Action = 'done' | 'ask_code' | 'ask_param' | 'offer_new_code' | 'wait_then_retry' | 'stop' | 'legacy' | 'connect'
 
 interface Case {
   name: string
@@ -74,12 +83,19 @@ const CASES_PATH = path.join(FIXTURES, 'contract', 'signup-flow.cases.json')
 const CONTRACT = JSON.parse(fs.readFileSync(CASES_PATH, 'utf8')) as Cases
 const TEXTS_PATH = path.join(FIXTURES, 'signup-flow.texts.json')
 const TEXTS = JSON.parse(fs.readFileSync(TEXTS_PATH, 'utf8')) as Texts
-const CASES = CONTRACT.cases
+const ALL_CASES = CONTRACT.cases
+/** A connector sign-in case: a start with `finish`, or the `connect` answer to its code. */
+const isConnector = (c: Case) => 'finish' in c.request.body || c.expect.action === 'connect'
+/** The connector case a tool here handles: agentchat_verify_otp's `connect` answer. */
+const isToolConnector = (c: Case) => isConnector(c) && c.request.kind === 'verify'
+const CONNECTOR_CASES = ALL_CASES.filter((c) => isConnector(c) && !isToolConnector(c))
+/** The cases of this surface: every one but the connector sign-in cases no tool here makes. */
+const CASES = ALL_CASES.filter((c) => !isConnector(c) || isToolConnector(c))
 const onTool = (c: Case) => c.request.kind === 'register' || c.request.kind === 'verify'
 const TOOL_CASES = CASES.filter(onTool)
 const OTHER_CASES = CASES.filter((c) => !onTool(c))
 const byName = (name: string): Case => {
-  const found = CASES.find((c) => c.name === name)
+  const found = ALL_CASES.find((c) => c.name === name)
   if (found === undefined) throw new Error(`no contract case ${name}`)
   return found
 }
@@ -205,7 +221,7 @@ const AGENT_LINE = " If you can't read relay@example.com yourself, ask the user 
 const capitalized = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`
 
 /** What each client action looks like in the Next line of a tool on this surface. */
-const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy'>, RegExp> = {
+const ACTION_NEXT: Record<Exclude<Action, 'done' | 'legacy' | 'connect'>, RegExp> = {
   ask_code: /^Next: [Cc]all agentchat_verify_otp with (pending_id `[^`]+`|the same pending_id) and the \d+-digit code\.( If you can't read \S+ yourself, ask the user for the code\.)?$/,
   ask_param: /^Next: call agentchat_register again with a different `(email|handle)`\.$/,
   offer_new_code: /^Next: if the user wants a new code, (wait \d+ seconds, then )?call agentchat_register again with the same email and handle\.$/,
@@ -227,7 +243,12 @@ describe('the contract’s sign-up cases', () => {
     expect(CONTRACT.wait_limit_s).toBe(60)
     expect(new Set(Object.values(CONTRACT.verify_steps))).toEqual(new Set(['verify', 'recover_verify', 'rotate_key_verify']))
     expect(new Set(Object.values(CONTRACT.start_steps))).toEqual(new Set(['register', 'recover', 'rotate_key']))
-    for (const c of CASES) expect(actionOf(c), c.name).toBe(c.expect.action)
+    for (const c of CASES) {
+      // A `connect` answer is a 2xx only agentchat_verify_otp gets, and it takes it
+      // before the shared rule (connectAnswerOf); the rule itself never sees one.
+      if (isToolConnector(c)) expect(verifyOtp.connectAnswerOf(c.response.body), c.name).not.toBeNull()
+      else expect(actionOf(c), c.name).toBe(c.expect.action)
+    }
   })
 
   it('are the contract version this code reads, with every action known and a text for every case', () => {
@@ -235,13 +256,13 @@ describe('the contract’s sign-up cases', () => {
     expect(CONTRACT.wait_limit_s).toBe(60)
     expect(CONTRACT.start_steps).toEqual({ register: 'register', recover: 'recover', rotate_key: 'rotate_key' })
     expect(CONTRACT.verify_steps).toEqual({ register: 'verify', recover: 'recover_verify', rotate_key: 'rotate_key_verify' })
-    expect(new Set(CASES.map((c) => c.name)).size).toBe(CASES.length)
-    for (const c of CASES) expect(CONTRACT.actions, c.name).toContain(c.expect.action)
+    expect(new Set(ALL_CASES.map((c) => c.name)).size).toBe(ALL_CASES.length)
+    for (const c of ALL_CASES) expect(CONTRACT.actions, c.name).toContain(c.expect.action)
     expect(Object.keys(TEXTS.tools).sort()).toEqual(TOOL_CASES.map((c) => c.name).sort())
     expect(Object.keys(TEXTS.rendered).sort()).toEqual(OTHER_CASES.map((c) => c.name).sort())
   })
 
-  it.each(CASES.map((c) => [c.name, c] as const))('%s: the flow read from the answer is the contract’s', (_name, c) => {
+  it.each(ALL_CASES.map((c) => [c.name, c] as const))('%s: the flow read from the answer is the contract’s', (_name, c) => {
     const flow = flowOf(c.response.body)
     if (c.expect.flow === null) {
       expect(flow).toBeNull()
@@ -251,6 +272,18 @@ describe('the contract’s sign-up cases', () => {
     expect(pick(flow as unknown as Record<string, unknown>, READ_FIELDS)).toEqual(pick(c.expect.flow, READ_FIELDS))
     expect(pick(flow as unknown as Record<string, unknown>, DETAIL_FIELDS)).toEqual(pick(flowSource(c.response.body), DETAIL_FIELDS))
     expect(c.response.body['message']).toBe(c.expect.message)
+  })
+
+  it('connector sign-in: verify_otp runs its connect answer; no tool here takes `finish`, and the rest are the ones set apart', () => {
+    // On the tool: the verify step's `connect` answer, and only that one.
+    expect(TOOL_CASES.filter((c) => c.expect.action === 'connect').map((c) => c.name)).toEqual(['verify-connector-done'])
+    // Set apart: every start with `finish`, and recovery's `connect` answer.
+    expect(CONNECTOR_CASES.map((c) => c.request.kind).sort()).toEqual(['recover', 'recover_verify', 'register'])
+    expect(CONTRACT.actions).toContain('connect')
+    for (const c of OTHER_CASES) expect(c.expect.action, c.name).not.toBe('connect')
+    // Once agentchat_register can start a connector sign-up, its cases join
+    // the tool cases too, and this split goes.
+    expect(Object.keys(registerAccount.INPUT_SHAPE)).not.toContain('finish')
   })
 
   it('when the texts change on purpose: SIGNUP_TEXTS_WRITE=1 rewrites them (then fails, to be reviewed)', async () => {
@@ -507,6 +540,18 @@ describe('rendering rules', () => {
   })
 })
 
+/** A verify result as an SDK hands it over (the flow fields included), with `extra` on top. */
+const minted = (extra: Record<string, unknown> = {}) =>
+  ({
+    agent: { handle: 'example-relay' },
+    apiKey: 'ac_example-not-a-real-key',
+    client: {} as AgentChatClient,
+    message: 'Email verified. Logged in as @example-relay.',
+    next_step: 'done',
+    status: 'approved',
+    ...extra,
+  }) as Awaited<ReturnType<typeof AgentChatClient.verify>>
+
 describe('verify success: the key, and the server’s words when the SDK hands them over', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -527,17 +572,96 @@ describe('verify success: the key, and the server’s words when the SDK hands t
   })
 
   it('with an SDK whose verify result carries the flow fields: the server’s message comes first', async () => {
-    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue({
-      agent: { handle: 'example-relay' },
-      apiKey: 'ac_example-not-a-real-key',
-      client: {} as AgentChatClient,
-      message: 'Email verified. Logged in as @example-relay.',
-      next_step: 'done',
-      status: 'approved',
-    } as Awaited<ReturnType<typeof AgentChatClient.verify>>)
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted())
     const payload = JSON.parse(await verifyText(() => json(500, {}))) as Record<string, unknown>
     expect(Object.keys(payload).slice(0, 4)).toEqual(['ok', 'message', 'handle', 'api_key'])
     expect(payload['message']).toBe('Email verified. Logged in as @example-relay.')
+  })
+})
+
+describe('verify success: the server’s reachability as it came, and `then` pointing at it', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const done = byName('verify-done')
+  const REACHABILITY = done.response.body['reachability'] as Record<string, unknown>
+  /** The stdio composition's save, succeeding. */
+  const saved = () => ({ saved: true as const, path: '/home/relay/.agentchat/credentials', alreadyThere: false, conflict: null })
+
+  it('the contract’s verify-done carries a new account’s reachability: state none, the ways in its text', () => {
+    expect(REACHABILITY).toMatchObject({ version: 1, state: 'none', via: null, problem: null })
+    expect(typeof REACHABILITY['text']).toBe('string')
+    // The server's message points at it; `then` adds the identity line.
+    expect(done.expect.message).toContain('reachability.text')
+  })
+
+  it('hosted: the server’s reachability unchanged, right before `then`, which points at it', async () => {
+    const payload = JSON.parse(await textOf(done)) as Record<string, unknown>
+    expect(payload['reachability']).toEqual(REACHABILITY)
+    expect(Object.keys(payload).slice(-2)).toEqual(['reachability', 'then'])
+    expect(payload['then']).toBe(verifyOtp.THEN)
+    expect(payload['api_key']).toBe('ac_example-not-a-real-key')
+  })
+
+  it('stdio, the key saved: the same reachability and `then`', async () => {
+    const payload = JSON.parse(await textOf(done, { saveKey: saved })) as Record<string, unknown>
+    expect(payload['key_saved_in']).toBe('/home/relay/.agentchat/credentials')
+    expect(payload['api_key']).toBeUndefined()
+    expect(payload['reachability']).toEqual(REACHABILITY)
+    expect(Object.keys(payload).slice(-2)).toEqual(['reachability', 'then'])
+    expect(payload['then']).toBe(verifyOtp.THEN)
+  })
+
+  it('stdio, the key not saved: handed back with the same reachability and `then`', async () => {
+    const notSaved = () => ({ saved: false as const, path: '', reason: 'the home already holds another agent’s key (@other)' })
+    const payload = JSON.parse(await textOf(done, { saveKey: notSaved })) as Record<string, unknown>
+    expect(payload['api_key']).toBe('ac_example-not-a-real-key')
+    expect(String(payload['not_saved'])).toContain('another agent’s key')
+    expect(payload['reachability']).toEqual(REACHABILITY)
+    expect(payload['then']).toBe(verifyOtp.THEN)
+  })
+
+  it('a state and fields this code does not know pass through as they came', async () => {
+    const later = { ...REACHABILITY, state: 'added_later', wake_hint: { kind: 'new' } }
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted({ reachability: later }))
+    const hosted = JSON.parse(await verifyText(() => json(500, {}))) as Record<string, unknown>
+    expect(hosted['reachability']).toEqual(later)
+    expect(hosted['then']).toBe(verifyOtp.THEN)
+    const stdio = JSON.parse(await verifyText(() => json(500, {}), { saveKey: saved })) as Record<string, unknown>
+    expect(stdio['reachability']).toEqual(later)
+  })
+
+  it('without reachability (a server that predates it): no such key, and `then` is the identity line alone', async () => {
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted())
+    for (const extra of [{}, { saveKey: saved }] as Array<Partial<ToolContext>>) {
+      const payload = JSON.parse(await verifyText(() => json(500, {}), extra)) as Record<string, unknown>
+      expect(payload).not.toHaveProperty('reachability')
+      expect(payload['then']).toBe(verifyOtp.ANCHOR_LINE)
+    }
+  })
+
+  it('a reachability that is not one (through the installed SDK): the key kept, no such key, `then` the identity line alone', async () => {
+    for (const odd of ['x', [], null, 7, {}, { state: 'none' }, { text: 't' }, { state: 1, text: 't' }, { state: 'none', text: 2 }]) {
+      for (const extra of [{}, { saveKey: saved }] as Array<Partial<ToolContext>>) {
+        const shown = await verifyText(() => json(201, { ...done.response.body, reachability: odd }), extra)
+        const payload = JSON.parse(shown) as Record<string, unknown>
+        expect(payload['ok'], `${JSON.stringify(odd)}: ${shown}`).toBe(true)
+        if (extra.saveKey === undefined) expect(payload['api_key']).toBe('ac_example-not-a-real-key')
+        else expect(payload['key_saved_in']).toBe('/home/relay/.agentchat/credentials')
+        expect(payload).not.toHaveProperty('reachability')
+        expect(payload['then']).toBe(verifyOtp.ANCHOR_LINE)
+      }
+    }
+  })
+
+  it('`then` keeps the identity line and adds one plain instruction: no condition, no link, no wake words of its own', () => {
+    expect(verifyOtp.THEN.startsWith(`${verifyOtp.ANCHOR_LINE} `)).toBe(true)
+    const wake = verifyOtp.THEN.slice(verifyOtp.ANCHOR_LINE.length + 1)
+    expect(wake).toBe('Then do what reachability.text in this answer says now, before you stop (agentchat_get_my_status shows it too).')
+    expect(wake).not.toMatch(/\b(if|unless|webhook|wake link|wake check|integration)\b/i)
+    expect(verifyOtp.THEN).not.toMatch(/https?:\/\//)
+    expect(verifyOtp.thenOf(undefined)).toBe(verifyOtp.ANCHOR_LINE)
   })
 })
 

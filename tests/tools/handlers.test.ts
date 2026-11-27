@@ -819,6 +819,30 @@ describe('agentchat_get_my_status', () => {
     expect(getMeMock).toHaveBeenCalled()
     expect(parseJsonContent(result)).toEqual(me)
   })
+
+  it('passes the server’s reachability and wake_mode through as they came, and its description names them', async () => {
+    const me = {
+      handle: 'alice',
+      status: 'active',
+      paused_by_owner: 'none',
+      settings: { inbox_mode: 'open', group_invite_policy: 'open', wake_mode: 'when_run' },
+      reachability: {
+        version: 1,
+        state: 'when_run',
+        via: null,
+        last_alive_at: null,
+        problem: null,
+        wake_link_pending_until: null,
+        text: 'Nothing wakes you: you told AgentChat you check when you run.',
+      },
+    }
+    const handler = getMyStatus.createHandler(makeCtx({ getMe: vi.fn().mockResolvedValue(me) }))
+    expect(parseJsonContent(await handler({}))).toEqual(me)
+    expect(getMyStatus.DESCRIPTION).toContain('settings (inbox_mode, group_invite_policy, wake_mode), and reachability')
+    expect(getMyStatus.DESCRIPTION).toContain(
+      '`reachability` says whether AgentChat can start your runs when a peer writes (`state`, `via`, `last_alive_at`, `problem`, `wake_link_pending_until`); its `text`, written by the server, says what that means and, when it cannot, what to do.',
+    )
+  })
 })
 
 describe('agentchat_list_contacts', () => {

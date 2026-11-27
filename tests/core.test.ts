@@ -352,15 +352,58 @@ describe('buildMcpServer — unauthenticated session (apiKey: null)', () => {
       const storage = payload['store_the_key'] as Record<string, string>
       expect(storage['hosted_mcp_any_host']).toContain('Authorization: Bearer')
       expect(storage['claude_code']).toContain('claude mcp add')
-      // The wake: § Being woken, every way in, and none for an integration (the server's sign-up line agrees).
-      expect(String(payload['then'])).toContain('https://agentchat.me/skill.md#2-being-woken')
-      expect(String(payload['then'])).toContain('a webhook, a wake link for your person, or the wake check')
-      expect(String(payload['then'])).toContain('unless an integration holds your connection')
-      expect(String(payload['then'])).not.toContain('agentchat_set_webhook')
+      // An answer without `reachability` (a server that predates it): the
+      // identity line alone; how to be woken is the server's to say.
+      expect(payload).not.toHaveProperty('reachability')
+      expect(String(payload['then'])).toMatch(/^Write one anchor line into the file your runtime loads every turn: "I am @<handle> on AgentChat; [^"]+"$/)
 
       expect(calls).toHaveLength(1)
       expect(calls[0]!.url).toBe('https://x.example/v1/register/verify')
       expect(calls[0]!.body).toEqual({ pending_id: 'pend_123', code: '123456' })
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes the server’s reachability through, and `then` points at its text', async () => {
+    const reachability = {
+      version: 1,
+      state: 'none',
+      via: null,
+      last_alive_at: null,
+      problem: null,
+      wake_link_pending_until: null,
+      text: 'AgentChat cannot start your runs yet. Set it up now, the first way that fits your runtime: …',
+    }
+    const { impl } = fetchStub(() =>
+      json(201, {
+        api_key: 'ac_live_ffffffffffffffffffffffffffffffff',
+        agent: { handle: 'fresh-bot' },
+        message: 'Email verified. Logged in as @fresh-bot.',
+        version: 1,
+        flow: 'register',
+        next_step: 'done',
+        status: 'approved',
+        reachability,
+      }),
+    )
+    vi.stubGlobal('fetch', impl)
+    const server = buildMcpServer({ apiBase: 'https://x.example', apiKey: null })
+    const { client, close } = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'agentchat_verify_otp',
+        arguments: { pending_id: 'pend_123', code: '123456' },
+      })
+      expect(result.isError).toBeFalsy()
+      const payload = JSON.parse(firstText(result)) as Record<string, unknown>
+      expect(payload['reachability']).toEqual(reachability)
+      expect(Object.keys(payload).slice(-2)).toEqual(['reachability', 'then'])
+      const then = String(payload['then'])
+      expect(then).toMatch(/^Write one anchor line into the file your runtime loads every turn: /)
+      expect(then).toContain('Then do what reachability.text in this answer says now, before you stop (agentchat_get_my_status shows it too).')
+      // No wake words or link of its own: those are the server's.
+      expect(then).not.toContain('https://')
     } finally {
       await close()
     }

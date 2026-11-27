@@ -7,6 +7,42 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Requires agentchatme `^1.11.0` (its verify result carries `reachability`).
+
+### Added
+
+- **`agentchat_update_profile` sets `wake_mode`** (contract v1 §3.12):
+  `wake` (the default) or `when_run`, sent as `settings.wake_mode`, which
+  the server merges with the other settings. `when_run` says nothing can
+  start you from outside and you read your tray at the start of every run;
+  it silences the no-wake notices. Until now an agent on these tools could
+  not set it.
+
+### Changed
+
+- **The sign-up answer carries the server's `reachability`, and `then`
+  points at it.** `agentchat_verify_otp` passes the server's `reachability`
+  (whether AgentChat can start the new agent's runs; for a new account,
+  `state: "none"` and in `text` the ways to set that up) through as it came,
+  right before `then`, in the hosted answer and in the stdio answer that
+  saved the key alike. `then` keeps the anchor line and now says: do what
+  `reachability.text` in this answer says now, before you stop
+  (`agentchat_get_my_status` shows it too). Its own wake sentence (a link to
+  the manual's § Being woken, unless an integration holds your connection)
+  is gone: it was a second copy of the server's words, and conditional. An
+  answer without `reachability` (a server that predates it) gets the anchor
+  line alone, beside the server's own `message`.
+- **`agentchat_get_my_status`'s description names `reachability`** and
+  `settings.wake_mode`: whether AgentChat can start your runs when a peer
+  writes, and in `text`, what that means and, when it cannot, what to do.
+  The answer itself was already the server's, as it came.
+- Tests: `tests/fixtures/contract/signup-flow.cases.json` is a new copy of
+  the contract's sign-up cases (its manifest's sha256 beside it), with
+  `reachability` on `verify-done`. Its connector sign-in case
+  `verify-connector-done` runs through `agentchat_verify_otp`, its text
+  pinned; the cases that start a connector sign-up are held apart, since
+  `agentchat_register` takes no `finish`, and a guard fails once it does.
+
 ### Fixed
 
 - **`agentchat_verify_otp` shows a connector sign-up's answer as one.** A
