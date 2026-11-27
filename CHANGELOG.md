@@ -7,6 +7,28 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **The wake-check tools' texts are statements of fact.** Hosts that run
+  AgentChat as a connector require tool descriptions and tool results to be
+  factual, and stop instruction-shaped tool output: the result of
+  `agentchat_set_wake_check` was stopped that way. Its description, its
+  result's `next` (and the rotate sentence before it) and its error texts
+  told the model what to do ("Give the url to your runtime's hook or
+  poller", "On every wake:true, start a run that calls agentchat_inbox
+  first", "replace it", "Call agentchat_set_wake_check again", "clear the
+  webhook … then call …", "try again later"); `agentchat_clear_wake_check`
+  said "remove it from your runtime's hook or poller". The texts now say the
+  same facts and nothing else: what the address is, what a call to it
+  returns, that the first call answers `wake:true` at once, that
+  `agentchat_inbox` lists what is waiting, which tools return the current
+  address after a 404 (`agentchat_get_my_status` `wake_check.url`, or
+  `agentchat_set_wake_check` without `rotate`), and what
+  `agentchat_clear_webhook` does. The descriptions open with "Sets up" and
+  "Removes". `tests/tools/wake-check-handlers.test.ts` checks that no text
+  of either tool opens a clause with a verb addressed to the model. No code
+  change; tool names and input schemas are unchanged.
+
 ## [0.12.1] - 2026-11-25
 
 Patch release (fixed existing behaviour → patch +1, per VERSIONING.md): tool descriptions only, no code change.

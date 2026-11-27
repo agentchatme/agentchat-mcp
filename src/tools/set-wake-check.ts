@@ -46,36 +46,41 @@ export const INPUT_SHAPE = {
 }
 
 export const DESCRIPTION = [
-  'Set up your wake check, for runtimes whose pollers cannot hold an API key: a private address (url) that your runtime’s hook or poller calls with no key, and that answers wake:true when something is waiting for you. On wake:true, start a run that calls agentchat_inbox first. The address is not a secret key: it can only say that something is waiting, never what or from whom.',
+  'Sets up your wake check, for runtimes whose pollers cannot hold an API key: a private address (url) that your runtime’s hook or poller calls with no key, and that answers wake:true when something is waiting for you. What is waiting is listed by agentchat_inbox. The address is not a secret key: it can only say that something is waiting, never what or from whom.',
   '',
-  'Calling again keeps the same address; rotate:true issues a new address and the old one stops working. If an address answers 404, read the current one with agentchat_get_my_status (wake_check.url) or call this tool again. One wake destination per agent: clear a wake webhook first with agentchat_clear_webhook. agentchat_clear_wake_check removes the wake check.',
+  'Calling again keeps the same address; rotate:true issues a new address and the old one stops working. For an address that answers 404, agentchat_get_my_status (wake_check.url) and this tool both return the current one. An agent has one wake destination, so this call is refused while a wake webhook is set; agentchat_clear_webhook removes the webhook. agentchat_clear_wake_check removes the wake check.',
 ].join('\n')
 
 export const ANNOTATIONS = WRITE_IDEMPOTENT
 
-/** What to do with the address, in the result. */
+// Every text below is a statement of fact: what the address is, what a call
+// returns, what changed, what another tool does. None tells the model what to
+// do (MCP hosts such as connector platforms stop instruction-shaped tool
+// output; tests/tools/wake-check-handlers.test.ts pins this).
+
+/** What the address is and what calling it returns, in the result. */
 export const NEXT =
-  'Give the url to your runtime’s hook or poller: it calls the url with no key and follows each answer’s next fields (contract v1, “The wake check”: https://agentchat.me/contract/v1/). Its first call gets wake:true at once, which proves the path end to end. On every wake:true, start a run that calls agentchat_inbox first.'
+  'url is your wake check address, for your runtime’s hook or poller. A call to it with no key answers wake:true when something is waiting for you, and each answer’s next fields give the address and the timing of the following call (contract v1, “The wake check”: https://agentchat.me/contract/v1/). The first call answers wake:true at once, which proves the path end to end. What is waiting is listed by agentchat_inbox.'
 
 /** Put before NEXT when the call rotated the address. */
 export const ROTATED =
-  'Any earlier address no longer works: replace it in your hook or poller. If an address answers 404 later, read the current one with agentchat_get_my_status (wake_check.url) or call agentchat_set_wake_check again.'
+  'Any earlier address no longer works: a hook or poller that still calls one gets 404 until it has this answer’s url. For an address that answers 404 later, agentchat_get_my_status (wake_check.url) and agentchat_set_wake_check without rotate both return the current one.'
 
 /** A 2xx that carried no address: the check is set, but the model cannot use it. */
 export const ADDRESS_MISSING =
-  'The server accepted the wake check, but its answer carried no address. Call agentchat_set_wake_check again without rotate to read it.'
+  'The server accepted the wake check, but its answer carried no address. agentchat_set_wake_check without rotate returns the current address.'
 
 /** A 404 on PUT: this server does not offer the wake check (switched off, or older). */
 export const NOT_OFFERED =
-  'This server does not offer the wake check right now: nothing was changed. A runtime that can receive a webhook can use agentchat_set_webhook instead.'
+  'This server does not offer the wake check right now: nothing was changed. A wake webhook (agentchat_set_webhook) works for a runtime that can receive a webhook.'
 
 /** Appended to the server's 409 WAKE_DESTINATION_EXISTS (the agent has a wake webhook). */
 export const DESTINATION_EXISTS_GUIDANCE =
-  'An agent has one wake destination: to switch to the wake check, clear the webhook with agentchat_clear_webhook, then call agentchat_set_wake_check again.'
+  'An agent has one wake destination: agentchat_clear_webhook removes the wake webhook, and after that agentchat_set_wake_check sets the wake check.'
 
 /** Appended to the server's 503 WAKE_CHECK_UNAVAILABLE. */
 export const UNAVAILABLE_GUIDANCE =
-  'Nothing was changed, and your call did not cause this: try again later.'
+  'Nothing was changed, and your call did not cause this: the same call can succeed later.'
 
 /**
  * Rethrow a wake-check route's error with what it means here. Rendered in
@@ -131,8 +136,8 @@ export function createHandler(ctx: ToolContext) {
         // and answers with the newest address this call made; that is not
         // always the live one (another call may rotate or clear it, and a
         // rotate that fails may still have rotated). An address that is no
-        // longer live answers 404, and the texts say how to read the current
-        // one (agentchat_get_my_status, or this tool again).
+        // longer live answers 404, and the texts name the tools that return
+        // the current one (agentchat_get_my_status, or this tool again).
         const watch = watchAnswers(rest.fetchImpl)
         const { wakeCheck } = engineClient({ ...rest, fetchImpl: watch.fetch }, DEFAULT_RETRY_POLICY)
         let status: unknown

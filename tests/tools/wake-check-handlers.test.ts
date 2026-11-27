@@ -243,24 +243,90 @@ describe('agentchat_set_wake_check handler', () => {
     expect(logged).not.toContain('/v1/wake-check/')
   })
 
-  it('description: who it is for, that the address is not a secret key, what a wake starts, and what a rotate does', () => {
+  it('description: who it is for, that the address is not a secret key, where what is waiting is listed, and what a rotate does', () => {
     const text = setWakeCheck.DESCRIPTION
     expect(text).toContain('for runtimes whose pollers cannot hold an API key')
     expect(text).toContain('hook or poller calls with no key')
     expect(text).toContain('The address is not a secret key: it can only say that something is waiting')
-    expect(text).toContain('On wake:true, start a run that calls agentchat_inbox first')
+    expect(text).toContain('What is waiting is listed by agentchat_inbox')
     expect(text).toContain('rotate:true issues a new address and the old one stops working')
-    expect(text).toContain('If an address answers 404, read the current one with agentchat_get_my_status (wake_check.url) or call this tool again')
-    expect(setWakeCheck.ROTATED).toContain('read the current one with agentchat_get_my_status (wake_check.url)')
-    expect(text).toContain('agentchat_clear_webhook')
-    expect(text).toContain('agentchat_clear_wake_check')
+    expect(text).toContain(
+      'For an address that answers 404, agentchat_get_my_status (wake_check.url) and this tool both return the current one',
+    )
+    expect(setWakeCheck.ROTATED).toContain(
+      'agentchat_get_my_status (wake_check.url) and agentchat_set_wake_check without rotate both return the current one',
+    )
+    expect(text).toContain('this call is refused while a wake webhook is set; agentchat_clear_webhook removes the webhook')
+    expect(text).toContain('agentchat_clear_wake_check removes the wake check')
     expect(text.length).toBeLessThanOrEqual(800)
     expect(setWakeCheck.ANNOTATIONS).toEqual(WRITE_IDEMPOTENT)
+  })
+
+  it('next: what the address is, how its answers pace the poller, that the first call proves the path, and where what is waiting is listed', () => {
+    const text = setWakeCheck.NEXT
+    expect(text).toContain('url is your wake check address, for your runtime’s hook or poller')
+    expect(text).toContain('A call to it with no key answers wake:true when something is waiting for you')
+    expect(text).toContain('contract v1, “The wake check”: https://agentchat.me/contract/v1/')
+    expect(text).toContain('The first call answers wake:true at once, which proves the path end to end')
+    expect(text).toContain('What is waiting is listed by agentchat_inbox')
+  })
+})
+
+// ─── The texts are facts, never instructions ───────────────────────────────
+//
+// MCP hosts that run AgentChat as a connector require tool descriptions and
+// tool results to be factual, and stop instruction-shaped tool output. Every
+// model-facing text of the two wake-check tools says what is, what a call
+// returns, what changed or what another tool does: no clause opens with a
+// verb addressed to the model, and none says what the model should do.
+
+/** Verbs that, opening a clause, address the model. */
+const IMPERATIVE = /(?:^|[.:;,!?—]\s*|\n)(?:give|start|call|replace|clear|remove|read|try|use|set|follow|pass|put|hand|run|stop|check|keep|add|send|open|ask|wait|retry|switch)\b/i
+const ADVICE = /\byou (?:should|must|need to|have to)\b|\bplease\b|\bmake sure\b|\bbe sure\b/i
+
+describe('wake-check texts: statements of fact', () => {
+  it('no description, parameter text, result or error text of either tool tells the model what to do', () => {
+    const params = z.toJSONSchema(z.object(setWakeCheck.INPUT_SHAPE), { target: 'draft-7', io: 'input' })[
+      'properties'
+    ] as Record<string, Record<string, unknown>>
+    const texts: Record<string, string> = {
+      'set DESCRIPTION': setWakeCheck.DESCRIPTION,
+      'set rewake': String(params['rewake']!['description']),
+      'set rotate': String(params['rotate']!['description']),
+      'set NEXT': setWakeCheck.NEXT,
+      'set ROTATED + NEXT': `${setWakeCheck.ROTATED} ${setWakeCheck.NEXT}`,
+      'set ADDRESS_MISSING': setWakeCheck.ADDRESS_MISSING,
+      'set NOT_OFFERED': setWakeCheck.NOT_OFFERED,
+      'set DESTINATION_EXISTS_GUIDANCE': setWakeCheck.DESTINATION_EXISTS_GUIDANCE,
+      'set UNAVAILABLE_GUIDANCE': setWakeCheck.UNAVAILABLE_GUIDANCE,
+      'clear DESCRIPTION': clearWakeCheck.DESCRIPTION,
+      'clear CLEARED_NEXT': clearWakeCheck.CLEARED_NEXT,
+      'clear NOT_OFFERED': clearWakeCheck.NOT_OFFERED,
+    }
+    for (const [name, text] of Object.entries(texts)) {
+      expect(text.length, name).toBeGreaterThan(0)
+      expect(text.match(IMPERATIVE)?.[0] ?? null, name).toBeNull()
+      expect(text.match(ADVICE)?.[0] ?? null, name).toBeNull()
+    }
+  })
+
+  it('the guard catches the instruction shapes it is there for', () => {
+    for (const text of [
+      'Give the url to your runtime’s hook or poller.',
+      'On every wake:true, start a run that calls agentchat_inbox first.',
+      'Any earlier address no longer works: replace it in your hook or poller.',
+      'Call agentchat_set_wake_check again without rotate to read it.',
+      'to switch to the wake check, clear the webhook with agentchat_clear_webhook',
+      'Nothing was changed: try again later.',
+      'You should call agentchat_inbox.',
+    ]) {
+      expect(IMPERATIVE.test(text) || ADVICE.test(text), text).toBe(true)
+    }
   })
 })
 
 describe('agentchat_clear_wake_check handler', () => {
-  it('DELETEs /v1/agents/me/wake-check with the key, and says to take the address out of the poller', async () => {
+  it('DELETEs /v1/agents/me/wake-check with the key, and says the address now answers 404, also to the poller', async () => {
     const { impl, calls } = fetchStub(() => json(200, { cleared: true }))
     const result = await clearWakeCheck.createHandler(makeRealCtx(impl))({})
     expect(result.isError).toBeFalsy()
