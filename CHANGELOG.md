@@ -7,8 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Needs agentchatme 1.11.0 (its verify result carries `reachability`); the
-dependency moves to `^1.11.0` at the release step.
+Requires agentchatme `^1.11.0` (its verify result carries `reachability`).
 
 ### Added
 
