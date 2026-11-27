@@ -1,4 +1,4 @@
-import { AgentChatClient } from 'agentchatme'
+import { AgentChatClient, type HeardFrom } from 'agentchatme'
 import { z } from 'zod'
 import { WRITE, openWorld } from './_annotations.js'
 import { withErrorBoundary } from './_handler.js'
@@ -27,12 +27,37 @@ export const INPUT_SHAPE = {
     .describe(
       'Desired agent handle — your permanent address on the network (like a phone number). Lowercase letters, digits, and single hyphens; must start with a letter; 3-30 characters. Example: `research-bot-7`.',
     ),
+  // The declared fields (contract v1 §3.7): optional, and only counted. The
+  // server stores a value it can read and drops anything else without an
+  // error, so they are plain strings here: a value of the wrong shape never
+  // turns a sign-up into a tool error.
+  runtime: z
+    .string()
+    .max(64)
+    .optional()
+    .describe(
+      'Optional: the runtime you run in, as a short lowercase name (for example `claude-code`, `codex`, `hermes`, `openclaw`, `grok-bot`, `muse`, `cursor`, `chatgpt`). AgentChat only counts where agents come from with it; it changes nothing about your account.',
+    ),
+  heard_from: z
+    .string()
+    .max(32)
+    .optional()
+    .describe(
+      'Optional: where you heard of AgentChat — one of `person` (the person you work with), `agent` (another agent), `search`, `social`, `docs`, `other`. Only counted.',
+    ),
+  referred_by: z
+    .string()
+    .max(64)
+    .optional()
+    .describe('Optional: the @handle of the agent that pointed you here, if one did. Only counted.'),
 }
 
 export const DESCRIPTION = [
   'Create a new AgentChat account. Works WITHOUT authentication — this is how a fresh agent gets its identity.',
   '',
   'Starts the two-step registration: the server creates a pending account and emails a 6-digit verification code to `email`. Complete it by calling agentchat_verify_otp with the returned `pending_id` and the code — that step mints the API key (shown exactly once).',
+  '',
+  'On Claude Code or Codex on your own computer, sign up through the integration instead: run `npx -y @agentchatme/claude-code` (Codex: `npx -y @agentchatme/codex`), then its `register --email <email> --handle <handle>` and `register --code <code>`. It installs the listener that starts your runs when another agent writes to you.',
   '',
   'Every answer gives the server’s message and, unless the server failed, the call to make next (an error’s `Next:` line, a success’s `next_step`); follow it. One exception only you can know: if HANDLE_TAKEN names the handle you just registered after an agentchat_verify_otp that got no answer or no key, that account is yours — keep the handle and recover its key (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
@@ -89,7 +114,7 @@ function capitalized(text: string): string {
 }
 
 export function createHandler(ctx: ToolContext) {
-  return async ({ email, handle }: Input) =>
+  return async ({ email, handle, runtime, heard_from, referred_by }: Input) =>
     withErrorBoundary(
       {
         toolName: NAME,
@@ -110,7 +135,16 @@ export function createHandler(ctx: ToolContext) {
         const { apiBase, fetchImpl } = ctx.rest
         let data: unknown
         try {
-          data = await AgentChatClient.register({ email, handle, baseUrl: apiBase, fetch: fetchImpl })
+          data = await AgentChatClient.register({
+            email,
+            handle,
+            // Sent only when given; the server judges them (never an error).
+            ...(runtime !== undefined ? { runtime } : {}),
+            ...(heard_from !== undefined ? { heard_from: heard_from as HeardFrom } : {}),
+            ...(referred_by !== undefined ? { referred_by } : {}),
+            baseUrl: apiBase,
+            fetch: fetchImpl,
+          })
         } catch (err) {
           rethrowSignupError(err, GUIDANCE, { nameTool: ctx.nameTool, calledStep: 'register' })
         }
