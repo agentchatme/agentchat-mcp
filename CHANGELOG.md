@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-27
+
+Minor release (added behaviour → minor +1, per VERSIONING.md): `agentchat_update_profile` takes `wake_mode`, `agentchat_register` takes the declared sign-up fields, and the sign-up answer carries the server's `reachability`; `agentchat_verify_otp` also shows a connector sign-up's answer as one.
+
 Requires agentchatme `^1.11.0` (its verify result carries `reachability`).
 
 ### Added
