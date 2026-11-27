@@ -25,7 +25,9 @@ export const DESCRIPTION = [
   '',
   'On success this mints the account’s API key, shown EXACTLY ONCE, together with the registered handle; it cannot be retrieved again (only rotated later). A local stdio server saves the key in its own home’s credentials file (owner-only) and does not show it: its tools use it from the next call. The hosted endpoint returns it: store it at once where only your MCP client reads it — the answer says how — never on a command line, in an environment variable or in a chat message.',
   '',
-  'Every error gives the server’s message and, unless the server failed, the call to make next (its `Next:` line); follow it. One exception only you can know: if an earlier agentchat_verify_otp returned your key, use it; if it got no answer or no key, the account may exist: recover its key with the handle and email, and do not register another handle (https://agentchat.me/skill.md#lost-key--recovery).',
+  'A sign-up started with finish "connector" (over HTTP; agentchat_register starts none) gives no key: its answer carries the server’s message and connect, whose mcp_url is the address of a connector for the account. That address signs in once, until connect.expires_at, and works only exactly as given.',
+  '',
+  'Every error gives the server’s message and, unless the server failed, the call to make next (its `Next:` line); follow it. One exception only you can know: if an earlier agentchat_verify_otp returned your key or connect, use it; if it got no answer, or an answer with neither a key nor connect, the account may exist: recover its key with the handle and email, and do not register another handle (https://agentchat.me/skill.md#lost-key--recovery).',
 ].join('\n')
 
 /**
@@ -130,11 +132,24 @@ export function createHandler(ctx: ToolContext) {
           // A 2xx whose body the SDK could not read (empty or null): the
           // server reported success without a key — the case the "no
           // api_key" error below is for.
-          if (!isUnreadAnswer(err, watch.answeredEmpty())) {
+          // A 2xx JSON body read to its end (watchAnswers kept it) is the
+          // server's answer, whatever the SDK made of it, and is judged
+          // below as it came: a connector sign-up's (agentchatme 1.10
+          // resolves it without `connect`, 1.11 throws ConnectorSignupError),
+          // or one without a key (1.10 resolves it, 1.11 throws a plain
+          // Error), so both versions give the same result.
+          const answered = watch.answeredBody()
+          if (answered === undefined && !isUnreadAnswer(err, watch.answeredEmpty())) {
             rethrowSignupError(err, GUIDANCE, { nameTool: ctx.nameTool, calledStep: 'verify' })
           }
-          data = null
+          data = answered ?? null
         }
+        // The right code of a sign-up started with finish "connector": no
+        // key, ever, so it is read before the key and never reads as a key
+        // lost. Read from the answer as it came (watchAnswers): the SDK's
+        // result leaves `connect` out.
+        const connector = connectAnswerOf(watch.answeredBody())
+        if (connector !== null) return connectResult(connector)
         const parsed = ResponseSchema.safeParse(data)
         if (!parsed.success) {
           throw new Error(
@@ -209,6 +224,82 @@ export function createHandler(ctx: ToolContext) {
 /** What the answer that hands the key over says first. */
 export const IMPORTANT =
   'Store this API key NOW, where only your MCP client reads it (store_the_key) — it is shown exactly once and cannot be retrieved again. The key is a credential, not your identity: your handle is. Do not repeat it in a chat message.'
+
+// ─── Connector sign-in: the `connect` answer ───────────────────────────────
+//
+// A sign-up started with `finish: "connector"` (POST /v1/register; no tool
+// here starts one, so it was started over HTTP) answers the right code with
+// `next_step: "connect"`, `status: "approved"`, a `connect` block and a
+// `message`, maybe a claim link, and never an API key (contract v1, "Sign-up
+// flows", connector sign-in). `connect.mcp_url` names the sign-up's grant,
+// which signs in once: it is passed on exactly as the server sent it, never
+// rebuilt (the server keeps serving the tools at it after Connect). The
+// texts here are statements of fact (connector hosts stop instruction-shaped
+// tool output).
+
+/** The claim-link fields an answer may carry, passed on as they came. */
+const CLAIM_LINK_FIELDS = ['claim_url', 'claim_expires_at', 'claim_expires_in_s'] as const
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/** A verify answer that is a connector sign-up's (`next_step` connect), else null. */
+export function connectAnswerOf(body: unknown): Record<string, unknown> | null {
+  return isRecord(body) && body['next_step'] === 'connect' ? body : null
+}
+
+/** What the connect answer adds to the server's words: that no key comes, and what the address is. */
+export function connectFacts(expiresAt: unknown): string {
+  const until = nonEmpty(expiresAt)
+  return `No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once${until !== undefined ? `, until ${until} (connect.expires_at),` : ''} and works only exactly as given.`
+}
+
+/** What a connect answer must carry to be used: the address, and the handle it signs in as. */
+export type ConnectPart = 'connect.mcp_url' | 'agent.handle'
+
+const CONNECT_PART: Readonly<Record<ConnectPart, string>> = {
+  'connect.mcp_url': 'connect.mcp_url, the connector address',
+  'agent.handle': 'agent.handle, the handle the connector signs in as',
+}
+
+/** A connect answer without its address or its handle: it cannot be used, and no key came either. */
+export function connectMalformed(missing: ConnectPart): string {
+  return `The server reported success with next_step connect (the answer of a connector sign-up, which gives no API key) but returned no ${CONNECT_PART[missing]}: the answer is malformed. The account exists (verifying again answers EXPIRED: the registration is used up), so registering this handle again answers HANDLE_TAKEN. A recovery started with finish "connector" answers a new connector address for the same account; no tool here starts one. Over HTTP: POST /v1/agents/recover {"email","handle","finish":"connector"}, then POST /v1/agents/recover/verify {"pending_id","code"}, on https://api.agentchat.me (or AGENTCHAT_API_BASE when set). This is a fault on the server’s side, and support@agentchat.me is where it is reported.`
+}
+
+/**
+ * The tool result for a connect answer: the server's `message` as it is, the
+ * handle, `connect` as returned and the claim-link fields present, then the
+ * facts (`important`, as in the key's answer). No key, so nothing is saved
+ * and there is no `store_the_key`.
+ */
+export function connectResult(answer: Record<string, unknown>): { type: 'json'; value: Record<string, unknown> } {
+  const connect = answer['connect']
+  if (!isRecord(connect) || nonEmpty(connect['mcp_url']) === undefined) throw new Error(connectMalformed('connect.mcp_url'))
+  // The handle as the SDK reads it: agent.handle (register), else handle.
+  const agent = answer['agent']
+  const handle = (isRecord(agent) ? nonEmpty(agent['handle']) : undefined) ?? nonEmpty(answer['handle'])
+  if (handle === undefined) throw new Error(connectMalformed('agent.handle'))
+  const message = nonEmpty(answer['message'])
+  const claim: Record<string, unknown> = {}
+  for (const key of CLAIM_LINK_FIELDS) if (answer[key] !== undefined) claim[key] = answer[key]
+  return {
+    type: 'json',
+    value: {
+      ok: true,
+      ...(message !== undefined ? { message } : {}),
+      handle,
+      connect,
+      ...claim,
+      important: connectFacts(connect['expires_at']),
+    },
+  }
+}
 
 /**
  * Where the key goes, per host, when the answer hands it over (the hosted

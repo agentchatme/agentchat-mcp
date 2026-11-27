@@ -55,6 +55,32 @@ describe('watchAnswers', () => {
     expect(seen).toEqual([true, false, true, true, false, false])
   })
 
+  it('keeps the last 2xx body as JSON once it has ended, and nothing for any other answer', async () => {
+    const watch = watchAnswers(
+      sequence([
+        () => new Response('{"next_step":"connect","connect":{"mcp_url":"https://x.test/c/1"}}', { status: 201 }),
+        () => new Response('', { status: 200 }),
+        () => new Response(' null ', { status: 200 }),
+        () => new Response(null, { status: 204 }),
+        () => new Response('{"code":"EXPIRED"}', { status: 400 }),
+        () => new Response('<html>ok</html>', { status: 200 }),
+      ]),
+    )
+    expect(watch.answeredBody()).toBeUndefined()
+    const first = await watch.fetch('https://x.test/a')
+    expect(watch.answeredBody()).toBeUndefined() // not ended yet
+    await first.text()
+    expect(watch.answeredBody()).toEqual({ next_step: 'connect', connect: { mcp_url: 'https://x.test/c/1' } })
+    const seen: unknown[] = []
+    for (let i = 0; i < 5; i += 1) {
+      const res = await watch.fetch('https://x.test/a')
+      await res.text()
+      seen.push(watch.answeredBody())
+    }
+    // '' · null · 204 · 400 (not a 2xx) · not JSON
+    expect(seen).toEqual([undefined, null, undefined, undefined, undefined])
+  })
+
   it('decides only when the body has ended: before that, nothing is empty', async () => {
     const watch = watchAnswers(sequence([() => new Response('', { status: 200 })]))
     const res = await watch.fetch('https://x.test/a')

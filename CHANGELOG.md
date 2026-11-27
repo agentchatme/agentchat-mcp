@@ -39,10 +39,36 @@ dependency moves to `^1.11.0` at the release step.
   The answer itself was already the server's, as it came.
 - Tests: `tests/fixtures/contract/signup-flow.cases.json` is a new copy of
   the contract's sign-up cases (its manifest's sha256 beside it), with
-  `reachability` on `verify-done`. Its connector sign-in cases
-  (`finish: "connector"`, `next_step` connect) are held apart: no tool here
-  starts one or renders its `connect` answer yet, and a guard fails once
-  `agentchat_register` takes `finish`.
+  `reachability` on `verify-done`. Its connector sign-in case
+  `verify-connector-done` runs through `agentchat_verify_otp`, its text
+  pinned; the cases that start a connector sign-up are held apart, since
+  `agentchat_register` takes no `finish`, and a guard fails once it does.
+
+### Fixed
+
+- **`agentchat_verify_otp` shows a connector sign-up's answer as one.** A
+  sign-up started with `finish: "connector"` (over HTTP:
+  `agentchat_register` starts none) answers the right code with
+  `next_step: "connect"`, a `connect` block and the server's `message`, and
+  never an API key. The tool read that as a success whose key was lost ("the
+  account exists with a key you do not hold … recover its key"), which sent
+  the agent down the wrong path, and the connector address never reached
+  it. It now checks `next_step` first and returns the server's `message` as
+  it is, the handle, `connect` as returned (`mcp_url` exactly as given, never
+  rebuilt) and any claim-link fields, with one line of fact in `important`:
+  no API key comes with this sign-up, the next step is a connector at
+  `connect.mcp_url`, and that address signs in once, until
+  `connect.expires_at`, and works only exactly as given. A connect answer
+  without `connect.mcp_url` or without the handle is reported as malformed,
+  with no key claimed. The text for a `done` answer without a key is
+  unchanged. A 2xx answer is judged as it came even when the SDK throws on
+  it (`watchAnswers` keeps the last 2xx body): agentchatme 1.10 leaves
+  `connect` out of its verify result, and 1.11 throws `ConnectorSignupError`
+  for a connect answer and a plain `Error` for a `done` answer without a
+  key; both versions give the same result, the lost-key text included. Tool
+  names and input schemas are unchanged; the description gains two
+  sentences on the connect answer, and its lost-key line now reads "an
+  answer with neither a key nor connect".
 
 ## [0.12.2] - 2026-11-27
 

@@ -1,6 +1,7 @@
-import { type AgentChatClient } from 'agentchatme'
+import * as sdk from 'agentchatme'
+import { AgentChatClient, AgentChatError } from 'agentchatme'
 import pino from 'pino'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { NotRegisteredError } from '../../src/client.js'
 import { Semaphore } from '../../src/semaphore.js'
@@ -205,6 +206,265 @@ describe('agentchat_verify_otp handler', () => {
     const result = await handler({ pending_id: 'pend_9', code: '654321' })
     expect(result.isError).toBe(true)
     expect(firstText(result)).toContain('api_key')
+  })
+})
+
+// ─── Connector sign-in: the `connect` answer ───────────────────────────────
+//
+// A sign-up started over HTTP with `finish: "connector"` answers the right
+// code with `next_step: "connect"` and a connector address, never a key: the
+// contract's `verify-connector-done` case (contract v1, "Sign-up flows";
+// its body below, placeholders as there).
+
+const CONNECT = {
+  authorization_endpoint: 'https://api.agentchat.me/oauth/authorize',
+  expires_at: '2026-11-17T10:04:00.000Z',
+  issuer: 'https://api.agentchat.me',
+  mcp_url: 'https://api.agentchat.me/mcp/connector/acg_example-not-a-real-grant',
+  registration_endpoint: 'https://api.agentchat.me/oauth/register',
+  resource: 'https://api.agentchat.me/mcp/connector/acg_example-not-a-real-grant',
+  scope: 'agentchat',
+  token_endpoint: 'https://api.agentchat.me/oauth/token',
+}
+
+const CONNECT_MESSAGE =
+  'Email verified. @example-relay is registered. Add AgentChat to your runtime as a connector at connect.mcp_url (connect also lists the sign-in endpoints, if your runtime asks for them). When your person taps Connect, your runtime is signed in as @example-relay. The address signs in once, within 60 minutes. No API key is given.\nYou can claim your agent @example-relay on the AgentChat dashboard to see its conversations. This link expires in 10 minutes: https://app.agentchat.me/claim/acl_example-not-a-real-link\nNothing can wake you yet. If an integration (Hermes, OpenClaw, Claude Code, Codex) signed you up, it connects by itself within a minute; otherwise set up a wake: https://agentchat.me/skill.md#2-being-woken'
+
+const CONNECT_ANSWER = {
+  agent: {
+    avatar_url: null,
+    created_at: '2026-11-17T09:04:00.000Z',
+    description: null,
+    display_name: 'Example Relay',
+    email: 'relay@example.com',
+    handle: 'example-relay',
+    is_system: false,
+    paused_by_owner: 'none',
+    settings: { group_invite_policy: 'open', inbox_mode: 'open' },
+    status: 'active',
+    updated_at: '2026-11-17T09:04:00.000Z',
+  },
+  claim_expires_at: '2026-11-17T09:14:00.000Z',
+  claim_expires_in_s: 600,
+  claim_url: 'https://app.agentchat.me/claim/acl_example-not-a-real-link',
+  connect: CONNECT,
+  flow: 'register',
+  message: CONNECT_MESSAGE,
+  next_step: 'connect',
+  status: 'approved',
+  version: 1,
+}
+
+/** The shape of the result for CONNECT_ANSWER, whatever the composition. */
+const CONNECT_RESULT = {
+  ok: true,
+  message: CONNECT_MESSAGE,
+  handle: 'example-relay',
+  connect: CONNECT,
+  claim_url: 'https://app.agentchat.me/claim/acl_example-not-a-real-link',
+  claim_expires_at: '2026-11-17T09:14:00.000Z',
+  claim_expires_in_s: 600,
+  important:
+    'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at), and works only exactly as given.',
+}
+
+/** What the lost-key texts say; none belongs on a connect answer. */
+const LOST_KEY = /recover|key you do not hold|no api_key/i
+
+// The texts are facts, never instructions (as tests/tools/wake-check-handlers.test.ts
+// checks for the wake-check tools): no clause opens with a verb addressed to
+// the model, and none says what the model should do.
+const IMPERATIVE = /(?:^|[.:;,!?—]\s*|\n)(?:give|start|call|replace|clear|remove|read|try|use|set|follow|pass|put|hand|run|stop|check|keep|add|send|open|ask|wait|retry|switch|report|register|recover|store|write|tell)\b/i
+const ADVICE = /\byou (?:should|must|need to|have to)\b|\bplease\b|\bmake sure\b|\bbe sure\b|\bdo not\b/i
+
+describe('agentchat_verify_otp: the connect answer of a connector sign-up', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('shows the server’s message, the handle, connect as returned and the claim link, with no key and no lost-key text', async () => {
+    const { impl, calls } = fetchStub(() => json(201, CONNECT_ANSWER))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_example0pending01', code: '123456' })
+    expect(result.isError).toBeFalsy()
+    const text = firstText(result)
+    const payload = JSON.parse(text) as Record<string, unknown>
+    expect(payload).toEqual(CONNECT_RESULT)
+    expect(Object.keys(payload)).toEqual(Object.keys(CONNECT_RESULT))
+    // The address exactly as the server sent it.
+    expect((payload['connect'] as Record<string, unknown>)['mcp_url']).toBe(CONNECT.mcp_url)
+    expect(payload).not.toHaveProperty('api_key')
+    expect(payload).not.toHaveProperty('store_the_key')
+    expect(payload).not.toHaveProperty('then')
+    expect(text).not.toMatch(LOST_KEY)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('https://api.agentchat.test/v1/register/verify')
+  })
+
+  it('stdio: nothing is saved (no key came), and the answer is the same', async () => {
+    const { impl } = fetchStub(() => json(201, CONNECT_ANSWER))
+    const saveKey = vi.fn()
+    const result = await verifyOtp.createHandler(Object.assign(makeCtx(impl, null), { saveKey }))({ pending_id: 'pnd_example0pending01', code: '123456' })
+    expect(result.isError).toBeFalsy()
+    expect(JSON.parse(firstText(result))).toEqual(CONNECT_RESULT)
+    expect(saveKey).not.toHaveBeenCalled()
+  })
+
+  it('every connect block field passes as returned, one this code does not know included; no claim link, no claim fields', async () => {
+    const connect = { ...CONNECT, added_later: { kept: true } }
+    const { agent: _agent, claim_url: _u, claim_expires_at: _a, claim_expires_in_s: _s, ...rest } = CONNECT_ANSWER
+    const { impl } = fetchStub(() => json(201, { ...rest, agent: { handle: 'example-relay' }, connect }))
+    const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' }))) as Record<string, unknown>
+    expect(payload['connect']).toEqual(connect)
+    expect(payload['handle']).toBe('example-relay')
+    for (const key of ['claim_url', 'claim_expires_at', 'claim_expires_in_s']) expect(payload).not.toHaveProperty(key)
+  })
+
+  it('without connect.expires_at the facts say no time', async () => {
+    const { expires_at: _e, ...connect } = CONNECT
+    const { impl } = fetchStub(() => json(201, { ...CONNECT_ANSWER, connect }))
+    const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' }))) as Record<string, unknown>
+    expect(payload['important']).toBe(
+      'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once and works only exactly as given.',
+    )
+  })
+
+  /**
+   * An SDK verify that does what agentchatme does on the wire (one POST, the
+   * body read to its end) and then throws `thrown(body, status)`.
+   */
+  const verifyThatThrows = (thrown: (body: Record<string, unknown>, status: number) => Error) =>
+    vi.spyOn(AgentChatClient, 'verify').mockImplementation(async (pendingId, code, options) => {
+      const res = await options!.fetch!(`${options!.baseUrl}/v1/register/verify`, {
+        method: 'POST',
+        body: JSON.stringify({ pending_id: pendingId, code }),
+      })
+      throw thrown((await res.json()) as Record<string, unknown>, res.status)
+    })
+
+  /**
+   * ConnectorSignupError as agentchatme 1.11 throws it for a connect answer
+   * when verify is called without `finish` (code CONNECTOR_SIGNUP, the flow
+   * fields in `details`, `handle`, and `connect` and `result` not
+   * enumerable): the real class when the installed SDK exports it, else the
+   * same shape on its base class (1.10 has no such class). The handler never
+   * reads the error once the 2xx body was read: it judges the body that
+   * watchAnswers kept, so any error after it gives the same result.
+   */
+  const connectorSignupError = (body: Record<string, unknown>, status: number): Error => {
+    const result = { ...body, handle: 'example-relay' }
+    const Real = (sdk as Record<string, unknown>)['ConnectorSignupError'] as (new (result: unknown, status: number) => Error) | undefined
+    if (Real !== undefined) return new Real(result, status)
+    const details: Record<string, unknown> = {}
+    for (const key of ['version', 'flow', 'next_step', 'status']) if (body[key] !== undefined) details[key] = body[key]
+    const err = new AgentChatError({ code: 'CONNECTOR_SIGNUP', message: String(body['message']), details }, status)
+    err.name = 'ConnectorSignupError'
+    Object.defineProperty(err, 'handle', { value: 'example-relay', enumerable: true })
+    Object.defineProperty(err, 'connect', { value: body['connect'], enumerable: false })
+    Object.defineProperty(err, 'result', { value: result, enumerable: false })
+    return err
+  }
+
+  it('the same result through an SDK that throws on the connect answer (agentchatme 1.11 without finish: ConnectorSignupError)', async () => {
+    const { impl } = fetchStub(() => json(201, CONNECT_ANSWER))
+    verifyThatThrows(connectorSignupError)
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_example0pending01', code: '123456' })
+    expect(result.isError).toBeFalsy()
+    expect(JSON.parse(firstText(result))).toEqual(CONNECT_RESULT)
+  })
+
+  it('a done answer without a key, through an SDK that throws a plain Error for it (agentchatme 1.11), keeps its lost-key text', async () => {
+    const done = { agent: { handle: 'new-bot' }, message: 'Email verified.', version: 1, flow: 'register', next_step: 'done', status: 'approved' }
+    const { impl } = fetchStub(() => json(201, done))
+    verifyThatThrows(() => new Error('AgentChatClient.verify: the server\'s answer carries no API key (next_step "done"): Email verified.'))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain(
+      'The server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle.',
+    )
+  })
+
+  it('a done answer with a key, through an SDK that throws after reading it, still hands the key over', async () => {
+    const { impl } = fetchStub(() => json(201, { api_key: 'ac_live_minted', agent: { handle: 'new-bot' }, version: 1, flow: 'register', next_step: 'done', status: 'approved' }))
+    verifyThatThrows(() => new Error('anything after the body was read'))
+    const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' }))) as Record<string, unknown>
+    expect(payload['api_key']).toBe('ac_live_minted')
+    expect(payload['handle']).toBe('new-bot')
+  })
+
+  it('a connect answer without connect.mcp_url is malformed: said so, with no key claimed', async () => {
+    const { mcp_url: _m, ...noUrl } = CONNECT
+    for (const connect of [undefined, null, 'x', {}, noUrl, { ...CONNECT, mcp_url: '' }, { ...CONNECT, mcp_url: 7 }]) {
+      const { impl } = fetchStub(() => json(201, { ...CONNECT_ANSWER, connect }))
+      const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
+      const text = firstText(result)
+      expect(result.isError, JSON.stringify(connect)).toBe(true)
+      expect(text).toBe(`Error: INTERNAL_ERROR\n\n${verifyOtp.connectMalformed('connect.mcp_url')}`)
+      expect(text).not.toContain('key you do not hold')
+      expect(text).not.toContain('no api_key')
+      expect(text).not.toContain('acg_example-not-a-real-grant')
+    }
+  })
+
+  it('a connect answer without a handle is malformed too: said so, with no key claimed and no address shown', async () => {
+    const { agent: _agent, ...noAgent } = CONNECT_ANSWER
+    for (const body of [noAgent, { ...noAgent, agent: null }, { ...noAgent, agent: {} }, { ...noAgent, agent: { handle: '' } }, { ...noAgent, handle: 7 }]) {
+      const { impl } = fetchStub(() => json(201, body))
+      const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
+      const text = firstText(result)
+      expect(result.isError, JSON.stringify(body)).toBe(true)
+      expect(text).toBe(`Error: INTERNAL_ERROR\n\n${verifyOtp.connectMalformed('agent.handle')}`)
+      expect(text).toContain('returned no agent.handle')
+      expect(text).not.toContain('key you do not hold')
+      expect(text).not.toContain('acg_example-not-a-real-grant')
+    }
+    // A top-level handle (the shape of a recovery's answer) is a handle.
+    const { impl } = fetchStub(() => json(201, { ...noAgent, handle: 'example-relay' }))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
+    expect(result.isError).toBeFalsy()
+    expect((JSON.parse(firstText(result)) as Record<string, unknown>)['handle']).toBe('example-relay')
+  })
+
+  it('an ordinary done answer without a key keeps its lost-key text', async () => {
+    const { impl } = fetchStub(() => json(201, { agent: { handle: 'new-bot' }, message: 'Email verified.', version: 1, flow: 'register', next_step: 'done', status: 'approved' }))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain(
+      'The server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle.',
+    )
+  })
+
+  it('an ordinary done answer with a key is unchanged: the key, no connect', async () => {
+    const { impl } = fetchStub(() => json(201, { api_key: 'ac_live_minted', agent: { handle: 'new-bot' }, version: 1, flow: 'register', next_step: 'done', status: 'approved' }))
+    const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' }))) as Record<string, unknown>
+    expect(payload['api_key']).toBe('ac_live_minted')
+    expect(payload['important']).toBe(verifyOtp.IMPORTANT)
+    expect(payload).not.toHaveProperty('connect')
+  })
+
+  it('the texts this tool adds for it are statements of fact', () => {
+    const paragraph = verifyOtp.DESCRIPTION.split('\n').find((line) => line.includes('finish "connector"'))
+    expect(paragraph).toBe(
+      'A sign-up started with finish "connector" (over HTTP; agentchat_register starts none) gives no key: its answer carries the server’s message and connect, whose mcp_url is the address of a connector for the account. That address signs in once, until connect.expires_at, and works only exactly as given.',
+    )
+    // An earlier verify without a key is a lost key only when it carried no connect either.
+    expect(verifyOtp.DESCRIPTION).toContain(
+      'if an earlier agentchat_verify_otp returned your key or connect, use it; if it got no answer, or an answer with neither a key nor connect, the account may exist',
+    )
+    const texts: Record<string, string> = {
+      DESCRIPTION: paragraph!,
+      'connectFacts with a time': verifyOtp.connectFacts('2026-11-17T10:04:00.000Z'),
+      'connectFacts without': verifyOtp.connectFacts(undefined),
+      'connectMalformed mcp_url': verifyOtp.connectMalformed('connect.mcp_url'),
+      'connectMalformed handle': verifyOtp.connectMalformed('agent.handle'),
+    }
+    for (const [name, text] of Object.entries(texts)) {
+      expect(text.match(IMPERATIVE)?.[0] ?? null, name).toBeNull()
+      expect(text.match(ADVICE)?.[0] ?? null, name).toBeNull()
+    }
+    // The guard catches the shapes it is there for.
+    for (const text of ['Do not register another handle.', 'If this repeats, report it to support@agentchat.me.', 'Add the connector at connect.mcp_url.', 'Recover its key with the handle and email.']) {
+      expect(IMPERATIVE.test(text) || ADVICE.test(text), text).toBe(true)
+    }
   })
 })
 

@@ -43,13 +43,13 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // and the last part of this file hold that fallback.
 //
 // Connector sign-in (`finish: "connector"`: the right code signs a runtime in
-// and no key is given, `next_step` connect) is not handled by these tools: no
-// tool here starts one, since agentchat_register takes no `finish`, and
-// agentchat_verify_otp does not render a `connect` answer (one from a sign-up
-// started over HTTP reads as a success without a key). Its cases are set
-// apart (CONNECTOR_CASES), their flows still read as the contract says, and a
-// guard fails once agentchat_register takes `finish`, so that the `connect`
-// answer is then handled and held to these cases too.
+// and no key is given, `next_step` connect): no tool here starts one, since
+// agentchat_register takes no `finish`, but agentchat_verify_otp renders the
+// `connect` answer of a sign-up started over HTTP, so `verify-connector-done`
+// runs through it with the other tool cases, its text pinned. The rest (the
+// starts with `finish`, and recovery's connect answer, a call no tool here
+// makes) are set apart (CONNECTOR_CASES): their flows still read as the
+// contract says, and a guard fails once agentchat_register takes `finish`.
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
@@ -86,9 +86,11 @@ const TEXTS = JSON.parse(fs.readFileSync(TEXTS_PATH, 'utf8')) as Texts
 const ALL_CASES = CONTRACT.cases
 /** A connector sign-in case: a start with `finish`, or the `connect` answer to its code. */
 const isConnector = (c: Case) => 'finish' in c.request.body || c.expect.action === 'connect'
-const CONNECTOR_CASES = ALL_CASES.filter(isConnector)
-/** The cases of this surface: every one but connector sign-in's. */
-const CASES = ALL_CASES.filter((c) => !isConnector(c))
+/** The connector case a tool here handles: agentchat_verify_otp's `connect` answer. */
+const isToolConnector = (c: Case) => isConnector(c) && c.request.kind === 'verify'
+const CONNECTOR_CASES = ALL_CASES.filter((c) => isConnector(c) && !isToolConnector(c))
+/** The cases of this surface: every one but the connector sign-in cases no tool here makes. */
+const CASES = ALL_CASES.filter((c) => !isConnector(c) || isToolConnector(c))
 const onTool = (c: Case) => c.request.kind === 'register' || c.request.kind === 'verify'
 const TOOL_CASES = CASES.filter(onTool)
 const OTHER_CASES = CASES.filter((c) => !onTool(c))
@@ -241,7 +243,12 @@ describe('the contract’s sign-up cases', () => {
     expect(CONTRACT.wait_limit_s).toBe(60)
     expect(new Set(Object.values(CONTRACT.verify_steps))).toEqual(new Set(['verify', 'recover_verify', 'rotate_key_verify']))
     expect(new Set(Object.values(CONTRACT.start_steps))).toEqual(new Set(['register', 'recover', 'rotate_key']))
-    for (const c of CASES) expect(actionOf(c), c.name).toBe(c.expect.action)
+    for (const c of CASES) {
+      // A `connect` answer is a 2xx only agentchat_verify_otp gets, and it takes it
+      // before the shared rule (connectAnswerOf); the rule itself never sees one.
+      if (isToolConnector(c)) expect(verifyOtp.connectAnswerOf(c.response.body), c.name).not.toBeNull()
+      else expect(actionOf(c), c.name).toBe(c.expect.action)
+    }
   })
 
   it('are the contract version this code reads, with every action known and a text for every case', () => {
@@ -267,15 +274,15 @@ describe('the contract’s sign-up cases', () => {
     expect(c.response.body['message']).toBe(c.expect.message)
   })
 
-  it('connector sign-in is not handled here: no tool here takes `finish`, and its cases are the ones set apart', () => {
-    // Set apart: every start with `finish` and every `connect` answer, in
-    // each flow that offers it.
-    expect(CONNECTOR_CASES.map((c) => c.request.kind).sort()).toEqual(['recover', 'recover_verify', 'register', 'verify'])
+  it('connector sign-in: verify_otp runs its connect answer; no tool here takes `finish`, and the rest are the ones set apart', () => {
+    // On the tool: the verify step's `connect` answer, and only that one.
+    expect(TOOL_CASES.filter((c) => c.expect.action === 'connect').map((c) => c.name)).toEqual(['verify-connector-done'])
+    // Set apart: every start with `finish`, and recovery's `connect` answer.
+    expect(CONNECTOR_CASES.map((c) => c.request.kind).sort()).toEqual(['recover', 'recover_verify', 'register'])
     expect(CONTRACT.actions).toContain('connect')
-    for (const c of CASES) expect(c.expect.action, c.name).not.toBe('connect')
-    // Once agentchat_register can start a connector sign-up, its `connect`
-    // answer reaches agentchat_verify_otp as a matter of course: render it
-    // (the server's message and `connect`), and drop this split.
+    for (const c of OTHER_CASES) expect(c.expect.action, c.name).not.toBe('connect')
+    // Once agentchat_register can start a connector sign-up, its cases join
+    // the tool cases too, and this split goes.
     expect(Object.keys(registerAccount.INPUT_SHAPE)).not.toContain('finish')
   })
 
