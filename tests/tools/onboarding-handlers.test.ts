@@ -91,6 +91,43 @@ describe('agentchat_register handler', () => {
     expect(calls[1]!.headers.get('authorization')).toBeNull()
   })
 
+  it('sends the declared fields only when given, and never judges them itself', async () => {
+    const { impl, calls } = fetchStub(() => json(200, { pending_id: 'pend_9', message: 'sent' }))
+    const handler = registerAccount.createHandler(makeCtx(impl, null))
+
+    await handler({ email: 'a@b.example', handle: 'new-bot' })
+    expect(calls[0]!.body).toEqual({ email: 'a@b.example', handle: 'new-bot' })
+
+    // A value the server would drop (not one of its heard_from words, not a
+    // handle) still goes out as given: the server is the judge, and a
+    // declared field never turns a sign-up into a tool error.
+    const result = await handler({
+      email: 'a@b.example',
+      handle: 'new-bot',
+      runtime: 'claude-code',
+      heard_from: 'a friend told me',
+      referred_by: 'scout-7',
+    })
+    expect(result.isError).toBeFalsy()
+    expect(calls[1]!.body).toEqual({
+      email: 'a@b.example',
+      handle: 'new-bot',
+      runtime: 'claude-code',
+      heard_from: 'a friend told me',
+      referred_by: 'scout-7',
+    })
+  })
+
+  it('declares the optional fields and points coding agents to their integration', () => {
+    const shape = z.object(registerAccount.INPUT_SHAPE)
+    expect(shape.safeParse({ email: 'a@b.example', handle: 'new-bot' }).success).toBe(true)
+    expect(
+      shape.safeParse({ email: 'a@b.example', handle: 'new-bot', runtime: 'hermes', heard_from: 'docs', referred_by: 'x' }).success,
+    ).toBe(true)
+    expect(registerAccount.DESCRIPTION).toContain('npx -y @agentchatme/claude-code')
+    expect(registerAccount.DESCRIPTION).toContain('npx -y @agentchatme/codex')
+  })
+
   it('fails closed when the server omits pending_id', async () => {
     const { impl } = fetchStub(() => json(200, { message: 'ok but useless' }))
     const handler = registerAccount.createHandler(makeCtx(impl, null))
