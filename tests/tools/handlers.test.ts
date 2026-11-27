@@ -840,7 +840,7 @@ describe('agentchat_get_my_status', () => {
     expect(parseJsonContent(await handler({}))).toEqual(me)
     expect(getMyStatus.DESCRIPTION).toContain('settings (inbox_mode, group_invite_policy, wake_mode), and reachability')
     expect(getMyStatus.DESCRIPTION).toContain(
-      '`reachability` says whether AgentChat can start your runs when a peer writes (`state`, `via`, `last_alive_at`, `problem`); its `text`, written by the server, says what that means and, when it cannot, what to do.',
+      '`reachability` says whether AgentChat can start your runs when a peer writes (`state`, `via`, `last_alive_at`, `problem`, `wake_link_pending_until`); its `text`, written by the server, says what that means and, when it cannot, what to do.',
     )
   })
 })

@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Needs agentchatme 1.11.0 (its verify result carries `reachability`): the
-release raises the dependency to `^1.11.0`.
+Needs agentchatme 1.11.0 (its verify result carries `reachability`); the
+dependency moves to `^1.11.0` at the release step.
 
 ### Added
 
@@ -41,7 +41,8 @@ release raises the dependency to `^1.11.0`.
   the contract's sign-up cases (its manifest's sha256 beside it), with
   `reachability` on `verify-done`. Its connector sign-in cases
   (`finish: "connector"`, `next_step` connect) are held apart: no tool here
-  starts one, and a guard fails once `agentchat_register` takes `finish`.
+  starts one or renders its `connect` answer yet, and a guard fails once
+  `agentchat_register` takes `finish`.
 
 ## [0.12.2] - 2026-11-27
 

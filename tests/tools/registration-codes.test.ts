@@ -43,10 +43,13 @@ import type { ToolContext } from '../../src/tools/_types.js'
 // and the last part of this file hold that fallback.
 //
 // Connector sign-in (`finish: "connector"`: the right code signs a runtime in
-// and no key is given, `next_step` connect) is not this surface's: no tool
-// here starts one, since agentchat_register takes no `finish`. Its cases are
-// set apart (CONNECTOR_CASES), and a guard fails once a tool here can start
-// one, so that its answers are then handled and held to these cases too.
+// and no key is given, `next_step` connect) is not handled by these tools: no
+// tool here starts one, since agentchat_register takes no `finish`, and
+// agentchat_verify_otp does not render a `connect` answer (one from a sign-up
+// started over HTTP reads as a success without a key). Its cases are set
+// apart (CONNECTOR_CASES), their flows still read as the contract says, and a
+// guard fails once agentchat_register takes `finish`, so that the `connect`
+// answer is then handled and held to these cases too.
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
@@ -264,14 +267,15 @@ describe('the contract’s sign-up cases', () => {
     expect(c.response.body['message']).toBe(c.expect.message)
   })
 
-  it('connector sign-in is not this surface’s: no tool here takes `finish`, and its cases are the ones set apart', () => {
+  it('connector sign-in is not handled here: no tool here takes `finish`, and its cases are the ones set apart', () => {
     // Set apart: every start with `finish` and every `connect` answer, in
     // each flow that offers it.
     expect(CONNECTOR_CASES.map((c) => c.request.kind).sort()).toEqual(['recover', 'recover_verify', 'register', 'verify'])
     expect(CONTRACT.actions).toContain('connect')
     for (const c of CASES) expect(c.expect.action, c.name).not.toBe('connect')
     // Once agentchat_register can start a connector sign-up, its `connect`
-    // answer reaches agentchat_verify_otp: handle it, and drop this split.
+    // answer reaches agentchat_verify_otp as a matter of course: render it
+    // (the server's message and `connect`), and drop this split.
     expect(Object.keys(registerAccount.INPUT_SHAPE)).not.toContain('finish')
   })
 
@@ -529,6 +533,18 @@ describe('rendering rules', () => {
   })
 })
 
+/** A verify result as an SDK hands it over (the flow fields included), with `extra` on top. */
+const minted = (extra: Record<string, unknown> = {}) =>
+  ({
+    agent: { handle: 'example-relay' },
+    apiKey: 'ac_example-not-a-real-key',
+    client: {} as AgentChatClient,
+    message: 'Email verified. Logged in as @example-relay.',
+    next_step: 'done',
+    status: 'approved',
+    ...extra,
+  }) as Awaited<ReturnType<typeof AgentChatClient.verify>>
+
 describe('verify success: the key, and the server’s words when the SDK hands them over', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -549,14 +565,7 @@ describe('verify success: the key, and the server’s words when the SDK hands t
   })
 
   it('with an SDK whose verify result carries the flow fields: the server’s message comes first', async () => {
-    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue({
-      agent: { handle: 'example-relay' },
-      apiKey: 'ac_example-not-a-real-key',
-      client: {} as AgentChatClient,
-      message: 'Email verified. Logged in as @example-relay.',
-      next_step: 'done',
-      status: 'approved',
-    } as Awaited<ReturnType<typeof AgentChatClient.verify>>)
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted())
     const payload = JSON.parse(await verifyText(() => json(500, {}))) as Record<string, unknown>
     expect(Object.keys(payload).slice(0, 4)).toEqual(['ok', 'message', 'handle', 'api_key'])
     expect(payload['message']).toBe('Email verified. Logged in as @example-relay.')
@@ -572,17 +581,6 @@ describe('verify success: the server’s reachability as it came, and `then` poi
   const REACHABILITY = done.response.body['reachability'] as Record<string, unknown>
   /** The stdio composition's save, succeeding. */
   const saved = () => ({ saved: true as const, path: '/home/relay/.agentchat/credentials', alreadyThere: false, conflict: null })
-  /** A verify result as an SDK hands it over, with `extra` on top. */
-  const minted = (extra: Record<string, unknown>) =>
-    ({
-      agent: { handle: 'example-relay' },
-      apiKey: 'ac_example-not-a-real-key',
-      client: {} as AgentChatClient,
-      message: 'Email verified. Logged in as @example-relay.',
-      next_step: 'done',
-      status: 'approved',
-      ...extra,
-    }) as Awaited<ReturnType<typeof AgentChatClient.verify>>
 
   it('the contract’s verify-done carries a new account’s reachability: state none, the ways in its text', () => {
     expect(REACHABILITY).toMatchObject({ version: 1, state: 'none', via: null, problem: null })
@@ -628,11 +626,25 @@ describe('verify success: the server’s reachability as it came, and `then` poi
   })
 
   it('without reachability (a server that predates it): no such key, and `then` is the identity line alone', async () => {
-    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted({}))
+    vi.spyOn(AgentChatClient, 'verify').mockResolvedValue(minted())
     for (const extra of [{}, { saveKey: saved }] as Array<Partial<ToolContext>>) {
       const payload = JSON.parse(await verifyText(() => json(500, {}), extra)) as Record<string, unknown>
       expect(payload).not.toHaveProperty('reachability')
       expect(payload['then']).toBe(verifyOtp.ANCHOR_LINE)
+    }
+  })
+
+  it('a reachability that is not one (through the installed SDK): the key kept, no such key, `then` the identity line alone', async () => {
+    for (const odd of ['x', [], null, 7, {}, { state: 'none' }, { text: 't' }, { state: 1, text: 't' }, { state: 'none', text: 2 }]) {
+      for (const extra of [{}, { saveKey: saved }] as Array<Partial<ToolContext>>) {
+        const shown = await verifyText(() => json(201, { ...done.response.body, reachability: odd }), extra)
+        const payload = JSON.parse(shown) as Record<string, unknown>
+        expect(payload['ok'], `${JSON.stringify(odd)}: ${shown}`).toBe(true)
+        if (extra.saveKey === undefined) expect(payload['api_key']).toBe('ac_example-not-a-real-key')
+        else expect(payload['key_saved_in']).toBe('/home/relay/.agentchat/credentials')
+        expect(payload).not.toHaveProperty('reachability')
+        expect(payload['then']).toBe(verifyOtp.ANCHOR_LINE)
+      }
     }
   })
 

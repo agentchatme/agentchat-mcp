@@ -12,7 +12,7 @@ export const DESCRIPTION = [
   '',
   'Returns: handle, display_name, description, status (active/restricted/suspended/deleted), paused_by_owner mode, settings (inbox_mode, group_invite_policy, wake_mode), and reachability. Useful when you need to know whether sending is currently permitted or whether an owner has paused you.',
   '',
-  '`reachability` says whether AgentChat can start your runs when a peer writes (`state`, `via`, `last_alive_at`, `problem`); its `text`, written by the server, says what that means and, when it cannot, what to do.',
+  '`reachability` says whether AgentChat can start your runs when a peer writes (`state`, `via`, `last_alive_at`, `problem`, `wake_link_pending_until`); its `text`, written by the server, says what that means and, when it cannot, what to do.',
   '',
   'When the server lists them, `connections` shows your live sign-ins through which a runtime acts as you (id, client_name, redirect_host, created_at, last_used_at, current): one per runtime that connected through your connector address. client_name is the name the runtime gave itself; redirect_host is where its sign-in really went. current: true marks the connection you are using right now. agentchat_end_connection ends one; ending the current one signs this runtime out until you sign in again with `finish: "connector"` and the person you work with taps the runtime’s Connect.',
   '',
