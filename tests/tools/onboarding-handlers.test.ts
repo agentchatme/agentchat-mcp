@@ -1,3 +1,4 @@
+import * as sdk from 'agentchatme'
 import { AgentChatClient, AgentChatError } from 'agentchatme'
 import pino from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -264,7 +265,7 @@ const CONNECT_RESULT = {
   claim_expires_at: '2026-11-17T09:14:00.000Z',
   claim_expires_in_s: 600,
   important:
-    'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address is single-use: it names this sign-up’s grant, works only exactly as given, and signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at).',
+    'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at), and works only exactly as given.',
 }
 
 /** What the lost-key texts say; none belongs on a connect answer. */
@@ -323,24 +324,71 @@ describe('agentchat_verify_otp: the connect answer of a connector sign-up', () =
     const { impl } = fetchStub(() => json(201, { ...CONNECT_ANSWER, connect }))
     const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' }))) as Record<string, unknown>
     expect(payload['important']).toBe(
-      'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address is single-use: it names this sign-up’s grant, works only exactly as given, and signs in once.',
+      'No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once and works only exactly as given.',
     )
   })
 
-  it('the same result through an SDK that throws on the connect answer (agentchatme 1.11 without finish: ConnectorSignupError)', async () => {
-    const { impl } = fetchStub(() => json(201, CONNECT_ANSWER))
+  /**
+   * An SDK verify that does what agentchatme does on the wire (one POST, the
+   * body read to its end) and then throws `thrown(body, status)`.
+   */
+  const verifyThatThrows = (thrown: (body: Record<string, unknown>, status: number) => Error) =>
     vi.spyOn(AgentChatClient, 'verify').mockImplementation(async (pendingId, code, options) => {
-      // As the SDK does: one POST, the body read, then the throw.
       const res = await options!.fetch!(`${options!.baseUrl}/v1/register/verify`, {
         method: 'POST',
         body: JSON.stringify({ pending_id: pendingId, code }),
       })
-      const body = (await res.json()) as Record<string, unknown>
-      throw new AgentChatError({ code: 'CONNECTOR_SIGNUP', message: String(body['message']), details: { next_step: 'connect', status: 'approved' } }, res.status)
+      throw thrown((await res.json()) as Record<string, unknown>, res.status)
     })
+
+  /**
+   * ConnectorSignupError as agentchatme 1.11 throws it for a connect answer
+   * when verify is called without `finish` (code CONNECTOR_SIGNUP, the flow
+   * fields in `details`, `handle`, and `connect` and `result` not
+   * enumerable): the real class when the installed SDK exports it, else the
+   * same shape on its base class (1.10 has no such class). The handler never
+   * reads the error once the 2xx body was read: it judges the body that
+   * watchAnswers kept, so any error after it gives the same result.
+   */
+  const connectorSignupError = (body: Record<string, unknown>, status: number): Error => {
+    const result = { ...body, handle: 'example-relay' }
+    const Real = (sdk as Record<string, unknown>)['ConnectorSignupError'] as (new (result: unknown, status: number) => Error) | undefined
+    if (Real !== undefined) return new Real(result, status)
+    const details: Record<string, unknown> = {}
+    for (const key of ['version', 'flow', 'next_step', 'status']) if (body[key] !== undefined) details[key] = body[key]
+    const err = new AgentChatError({ code: 'CONNECTOR_SIGNUP', message: String(body['message']), details }, status)
+    err.name = 'ConnectorSignupError'
+    Object.defineProperty(err, 'handle', { value: 'example-relay', enumerable: true })
+    Object.defineProperty(err, 'connect', { value: body['connect'], enumerable: false })
+    Object.defineProperty(err, 'result', { value: result, enumerable: false })
+    return err
+  }
+
+  it('the same result through an SDK that throws on the connect answer (agentchatme 1.11 without finish: ConnectorSignupError)', async () => {
+    const { impl } = fetchStub(() => json(201, CONNECT_ANSWER))
+    verifyThatThrows(connectorSignupError)
     const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_example0pending01', code: '123456' })
     expect(result.isError).toBeFalsy()
     expect(JSON.parse(firstText(result))).toEqual(CONNECT_RESULT)
+  })
+
+  it('a done answer without a key, through an SDK that throws a plain Error for it (agentchatme 1.11), keeps its lost-key text', async () => {
+    const done = { agent: { handle: 'new-bot' }, message: 'Email verified.', version: 1, flow: 'register', next_step: 'done', status: 'approved' }
+    const { impl } = fetchStub(() => json(201, done))
+    verifyThatThrows(() => new Error('AgentChatClient.verify: the server\'s answer carries no API key (next_step "done"): Email verified.'))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' })
+    expect(result.isError).toBe(true)
+    expect(firstText(result)).toContain(
+      'The server reported success but returned no api_key: the account exists with a key you do not hold (verifying again answers EXPIRED: the registration is used up). Do not register another handle.',
+    )
+  })
+
+  it('a done answer with a key, through an SDK that throws after reading it, still hands the key over', async () => {
+    const { impl } = fetchStub(() => json(201, { api_key: 'ac_live_minted', agent: { handle: 'new-bot' }, version: 1, flow: 'register', next_step: 'done', status: 'approved' }))
+    verifyThatThrows(() => new Error('anything after the body was read'))
+    const payload = JSON.parse(firstText(await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pend_9', code: '654321' }))) as Record<string, unknown>
+    expect(payload['api_key']).toBe('ac_live_minted')
+    expect(payload['handle']).toBe('new-bot')
   })
 
   it('a connect answer without connect.mcp_url is malformed: said so, with no key claimed', async () => {
@@ -350,11 +398,30 @@ describe('agentchat_verify_otp: the connect answer of a connector sign-up', () =
       const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
       const text = firstText(result)
       expect(result.isError, JSON.stringify(connect)).toBe(true)
-      expect(text).toBe(`Error: INTERNAL_ERROR\n\n${verifyOtp.CONNECT_ADDRESS_MISSING}`)
+      expect(text).toBe(`Error: INTERNAL_ERROR\n\n${verifyOtp.connectMalformed('connect.mcp_url')}`)
       expect(text).not.toContain('key you do not hold')
       expect(text).not.toContain('no api_key')
       expect(text).not.toContain('acg_example-not-a-real-grant')
     }
+  })
+
+  it('a connect answer without a handle is malformed too: said so, with no key claimed and no address shown', async () => {
+    const { agent: _agent, ...noAgent } = CONNECT_ANSWER
+    for (const body of [noAgent, { ...noAgent, agent: null }, { ...noAgent, agent: {} }, { ...noAgent, agent: { handle: '' } }, { ...noAgent, handle: 7 }]) {
+      const { impl } = fetchStub(() => json(201, body))
+      const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
+      const text = firstText(result)
+      expect(result.isError, JSON.stringify(body)).toBe(true)
+      expect(text).toBe(`Error: INTERNAL_ERROR\n\n${verifyOtp.connectMalformed('agent.handle')}`)
+      expect(text).toContain('returned no agent.handle')
+      expect(text).not.toContain('key you do not hold')
+      expect(text).not.toContain('acg_example-not-a-real-grant')
+    }
+    // A top-level handle (the shape of a recovery's answer) is a handle.
+    const { impl } = fetchStub(() => json(201, { ...noAgent, handle: 'example-relay' }))
+    const result = await verifyOtp.createHandler(makeCtx(impl, null))({ pending_id: 'pnd_1', code: '123456' })
+    expect(result.isError).toBeFalsy()
+    expect((JSON.parse(firstText(result)) as Record<string, unknown>)['handle']).toBe('example-relay')
   })
 
   it('an ordinary done answer without a key keeps its lost-key text', async () => {
@@ -377,13 +444,18 @@ describe('agentchat_verify_otp: the connect answer of a connector sign-up', () =
   it('the texts this tool adds for it are statements of fact', () => {
     const paragraph = verifyOtp.DESCRIPTION.split('\n').find((line) => line.includes('finish "connector"'))
     expect(paragraph).toBe(
-      'A sign-up started with finish "connector" (over HTTP; agentchat_register starts none) gives no key: its answer carries the server’s message and connect, whose mcp_url is the single-use address of a connector for the account.',
+      'A sign-up started with finish "connector" (over HTTP; agentchat_register starts none) gives no key: its answer carries the server’s message and connect, whose mcp_url is the address of a connector for the account. That address signs in once, until connect.expires_at, and works only exactly as given.',
+    )
+    // An earlier verify without a key is a lost key only when it carried no connect either.
+    expect(verifyOtp.DESCRIPTION).toContain(
+      'if an earlier agentchat_verify_otp returned your key or connect, use it; if it got no answer, or an answer with neither a key nor connect, the account may exist',
     )
     const texts: Record<string, string> = {
       DESCRIPTION: paragraph!,
       'connectFacts with a time': verifyOtp.connectFacts('2026-11-17T10:04:00.000Z'),
       'connectFacts without': verifyOtp.connectFacts(undefined),
-      CONNECT_ADDRESS_MISSING: verifyOtp.CONNECT_ADDRESS_MISSING,
+      'connectMalformed mcp_url': verifyOtp.connectMalformed('connect.mcp_url'),
+      'connectMalformed handle': verifyOtp.connectMalformed('agent.handle'),
     }
     for (const [name, text] of Object.entries(texts)) {
       expect(text.match(IMPERATIVE)?.[0] ?? null, name).toBeNull()

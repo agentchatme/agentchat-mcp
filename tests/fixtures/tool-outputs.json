@@ -4346,7 +4346,7 @@
             "claim_url": "https://app.agentchat.me/claim/acl_example-not-a-real-link",
             "claim_expires_at": "2026-11-17T09:14:00.000Z",
             "claim_expires_in_s": 600,
-            "important": "No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address is single-use: it names this sign-up’s grant, works only exactly as given, and signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at)."
+            "important": "No API key comes with this sign-up: the next step is a connector at connect.mcp_url. That address signs in once, until 2026-11-17T10:04:00.000Z (connect.expires_at), and works only exactly as given."
           }
         }
       ]

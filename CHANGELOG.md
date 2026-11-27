@@ -20,14 +20,18 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   it is, the handle, `connect` as returned (`mcp_url` exactly as given, never
   rebuilt) and any claim-link fields, with one line of fact in `important`:
   no API key comes with this sign-up, the next step is a connector at
-  `connect.mcp_url`, and that address is single-use and signs in once, until
-  `connect.expires_at`. A connect answer without `connect.mcp_url` is
-  reported as malformed, with no key claimed. The text for a `done` answer
-  without a key is unchanged. The answer is read as it came (`watchAnswers`
-  keeps the last 2xx body): agentchatme 1.10 leaves `connect` out of its
-  verify result and 1.11 throws `ConnectorSignupError` for it, and both give
-  the same result. Tool names and input schemas are unchanged; the
-  description gains one sentence on the connect answer.
+  `connect.mcp_url`, and that address signs in once, until
+  `connect.expires_at`, and works only exactly as given. A connect answer
+  without `connect.mcp_url` or without the handle is reported as malformed,
+  with no key claimed. The text for a `done` answer without a key is
+  unchanged. A 2xx answer is judged as it came even when the SDK throws on
+  it (`watchAnswers` keeps the last 2xx body): agentchatme 1.10 leaves
+  `connect` out of its verify result, and 1.11 throws `ConnectorSignupError`
+  for a connect answer and a plain `Error` for a `done` answer without a
+  key; both versions give the same result, the lost-key text included. Tool
+  names and input schemas are unchanged; the description gains two
+  sentences on the connect answer, and its lost-key line now reads "an
+  answer with neither a key nor connect".
 
 ## [0.12.2] - 2026-11-27
 
